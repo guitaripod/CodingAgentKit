@@ -9,11 +9,9 @@ public struct AgentAPIClient: Sendable {
     let builder: RequestBuilder
     let http: HTTPClient
 
-    public init(
-        config: ServerConfig, http: HTTPClient = HTTPClient(logger: AgentLog.logger("claudecode"))
-    ) {
+    public init(config: ServerConfig, http: HTTPClient? = nil) {
         self.builder = RequestBuilder(config: config)
-        self.http = http
+        self.http = http ?? HTTPClient(policy: config.policy, logger: AgentLog.logger("claudecode"))
     }
 
     private func decode<T: Decodable>(_ data: Data) throws -> T {

@@ -1,8 +1,8 @@
 import AgentCore
 import Foundation
 
-enum ClaudeCodeEventDecoder {
-    static func decode(_ event: SSEvent) -> BackendEvent? {
+public enum ClaudeCodeEventDecoder {
+    public static func decode(_ event: SSEvent) -> BackendEvent? {
         guard let data = event.data.data(using: .utf8) else { return nil }
 
         switch event.type {
@@ -23,7 +23,7 @@ enum ClaudeCodeEventDecoder {
         case "agent_error":
             let message =
                 (try? JSONCoding.decoder.decode(AAError.self, from: data))?.message ?? "agent error"
-            return .failure(message)
+            return .failure(BackendFailure(message: message))
 
         default:
             return .unknown(type: event.type ?? "")

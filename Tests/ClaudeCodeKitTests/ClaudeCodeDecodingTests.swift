@@ -33,7 +33,7 @@ import Testing
             return
         }
         guard
-            case .failure(let message)? = ClaudeCodeEventDecoder.decode(
+            case .failure(let failure)? = ClaudeCodeEventDecoder.decode(
                 SSEvent(
                     id: nil, type: "agent_error",
                     data: #"{"level":"error","message":"boom","time":"2026-07-06T15:00:00Z"}"#))
@@ -41,7 +41,7 @@ import Testing
             Issue.record("expected failure")
             return
         }
-        #expect(message == "boom")
+        #expect(failure.message == "boom")
     }
 
     @Test func unknownEventTypeFallsBack() {

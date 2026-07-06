@@ -94,7 +94,7 @@ import Testing
                     createdAt: Date(timeIntervalSince1970: 0)),
                 replaceParts: true))
         reducer.apply(.status(.running))
-        reducer.apply(.failure("boom"))
+        reducer.apply(.failure(BackendFailure(message: "boom")))
         reducer.apply(.unknown(type: "session.status"))
 
         #expect(reducer.snapshot.map(\.id) == ["m"])

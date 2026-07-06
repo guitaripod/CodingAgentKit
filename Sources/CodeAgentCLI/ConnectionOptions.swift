@@ -47,14 +47,24 @@ struct ConnectionOptions: ParsableArguments {
         }
         return url
     }
-}
 
-extension ModelSelection {
-    static func parse(_ raw: String) -> ModelSelection? {
-        guard let slash = raw.firstIndex(of: "/") else { return nil }
-        let provider = String(raw[..<slash])
-        let model = String(raw[raw.index(after: slash)...])
-        guard !provider.isEmpty, !model.isEmpty else { return nil }
-        return ModelSelection(providerID: provider, modelID: model)
+    func resolvedURL() throws -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        switch backend {
+        case .opencode:
+            return try resolveURL(host ?? environment["OPENCODE_HOST"] ?? "http://127.0.0.1:4096")
+        case .claude:
+            return try resolveURL(host ?? environment["AGENTAPI_HOST"] ?? "http://127.0.0.1:3284")
+        }
+    }
+
+    func credentials() -> BasicCredentials? {
+        let environment = ProcessInfo.processInfo.environment
+        guard backend == .opencode else { return nil }
+        guard let resolvedPassword = password ?? environment["OPENCODE_SERVER_PASSWORD"] else {
+            return nil
+        }
+        let resolvedUser = environment["OPENCODE_SERVER_USERNAME"] ?? username
+        return BasicCredentials(username: resolvedUser, password: resolvedPassword)
     }
 }

@@ -13,7 +13,7 @@ public enum ToolStatus: String, Sendable, Hashable, Codable {
     case error
 }
 
-public struct ToolCall: Sendable, Hashable {
+public struct ToolCall: Sendable, Hashable, Codable {
     public let id: String
     public var name: String
     public var status: ToolStatus
@@ -38,7 +38,7 @@ public struct ToolCall: Sendable, Hashable {
     }
 }
 
-public struct FileReference: Sendable, Hashable {
+public struct FileReference: Sendable, Hashable, Codable {
     public var path: String?
     public var mime: String?
     public var url: String?
@@ -54,7 +54,7 @@ public struct FileReference: Sendable, Hashable {
     }
 }
 
-public struct MessagePart: Identifiable, Sendable, Hashable {
+public struct MessagePart: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var kind: Kind
 
@@ -87,7 +87,54 @@ public struct MessagePart: Identifiable, Sendable, Hashable {
     }
 }
 
-public struct ChatMessage: Identifiable, Sendable, Hashable {
+extension MessagePart.Kind: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case tag
+        case value
+    }
+
+    private enum Tag: String, Codable {
+        case text
+        case reasoning
+        case tool
+        case file
+        case unknown
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Tag.self, forKey: .tag) {
+        case .text: self = .text(try container.decode(String.self, forKey: .value))
+        case .reasoning: self = .reasoning(try container.decode(String.self, forKey: .value))
+        case .tool: self = .tool(try container.decode(ToolCall.self, forKey: .value))
+        case .file: self = .file(try container.decode(FileReference.self, forKey: .value))
+        case .unknown: self = .unknown(type: try container.decode(String.self, forKey: .value))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let value):
+            try container.encode(Tag.text, forKey: .tag)
+            try container.encode(value, forKey: .value)
+        case .reasoning(let value):
+            try container.encode(Tag.reasoning, forKey: .tag)
+            try container.encode(value, forKey: .value)
+        case .tool(let value):
+            try container.encode(Tag.tool, forKey: .tag)
+            try container.encode(value, forKey: .value)
+        case .file(let value):
+            try container.encode(Tag.file, forKey: .tag)
+            try container.encode(value, forKey: .value)
+        case .unknown(let type):
+            try container.encode(Tag.unknown, forKey: .tag)
+            try container.encode(type, forKey: .value)
+        }
+    }
+}
+
+public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var role: MessageRole
     public let agentType: AgentType

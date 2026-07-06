@@ -103,9 +103,27 @@ struct OCFindMatch: Decodable, Sendable {
     }
 }
 
-struct OCTextPartInput: Encodable, Sendable {
-    let type = "text"
-    let text: String
+enum OCPartInput: Encodable, Sendable {
+    case text(String)
+    case file(mime: String, filename: String?, url: String)
+
+    private enum CodingKeys: String, CodingKey {
+        case type, text, mime, filename, url
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let value):
+            try container.encode("text", forKey: .type)
+            try container.encode(value, forKey: .text)
+        case .file(let mime, let filename, let url):
+            try container.encode("file", forKey: .type)
+            try container.encode(mime, forKey: .mime)
+            try container.encodeIfPresent(filename, forKey: .filename)
+            try container.encode(url, forKey: .url)
+        }
+    }
 }
 
 struct OCModelInput: Encodable, Sendable {
@@ -114,7 +132,7 @@ struct OCModelInput: Encodable, Sendable {
 }
 
 struct OCPromptRequest: Encodable, Sendable {
-    let parts: [OCTextPartInput]
+    let parts: [OCPartInput]
     let model: OCModelInput?
     let agent: String?
 }

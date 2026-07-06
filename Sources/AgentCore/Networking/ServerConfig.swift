@@ -18,9 +18,15 @@ public struct BasicCredentials: Sendable, Hashable {
 public struct ServerConfig: Sendable, Hashable {
     public var baseURL: URL
     public var credentials: BasicCredentials?
+    public var policy: ConnectionPolicy
 
-    public init(baseURL: URL, credentials: BasicCredentials? = nil) {
+    public init(
+        baseURL: URL,
+        credentials: BasicCredentials? = nil,
+        policy: ConnectionPolicy = .default
+    ) {
         self.baseURL = baseURL
         self.credentials = credentials
+        self.policy = policy
     }
 }

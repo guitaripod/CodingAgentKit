@@ -8,7 +8,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsDiffs: true,
         supportsPermissions: true,
         supportsMultipleSessions: true,
-        supportsModelSelection: true
+        supportsModelSelection: true,
+        supportsAttachments: true
     )
 
     let client: OpenCodeClient
@@ -42,9 +43,32 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         let model = prompt.model.map {
             OCModelInput(providerID: $0.providerID, modelID: $0.modelID)
         }
-        let request = OCPromptRequest(
-            parts: [OCTextPartInput(text: prompt.text)], model: model, agent: prompt.agent)
+        var parts: [OCPartInput] = [.text(prompt.text)]
+        for attachment in prompt.attachments {
+            guard let url = Self.attachmentURL(attachment) else { continue }
+            parts.append(.file(mime: attachment.mime, filename: attachment.filename, url: url))
+        }
+        let request = OCPromptRequest(parts: parts, model: model, agent: prompt.agent)
         try await client.promptAsync(sessionID: sessionID, request: request)
+    }
+
+    private static func attachmentURL(_ attachment: PromptAttachment) -> String? {
+        if let url = attachment.url { return url }
+        if let data = attachment.data {
+            return "data:\(attachment.mime);base64,\(data.base64EncodedString())"
+        }
+        return nil
+    }
+
+    public func availableModels() async throws -> [ModelInfo] {
+        try await providers().flatMap(\.models)
+    }
+
+    public func defaultModel() async throws -> ModelSelection? {
+        for provider in try await providers() where provider.defaultModelID != nil {
+            return ModelSelection(providerID: provider.id, modelID: provider.defaultModelID!)
+        }
+        return nil
     }
 
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {

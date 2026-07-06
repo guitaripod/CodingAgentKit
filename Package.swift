@@ -25,13 +25,15 @@ let package = Package(
     name: "CodingAgentKit",
     platforms: [
         .iOS(.v18),
-        .macOS(.v14),
+        .macOS(.v15),
     ],
     products: [
         .library(name: "CodingAgentKit", targets: ["CodingAgentKit"]),
         .library(name: "AgentCore", targets: ["AgentCore"]),
         .library(name: "OpenCodeKit", targets: ["OpenCodeKit"]),
         .library(name: "ClaudeCodeKit", targets: ["ClaudeCodeKit"]),
+        .library(name: "AgentTestSupport", targets: ["AgentTestSupport"]),
+        .library(name: "CodingAgentKitApple", targets: ["CodingAgentKitApple"]),
         .executable(name: "codeagent", targets: ["CodeAgentCLI"]),
     ],
     dependencies: [
@@ -66,6 +68,16 @@ let package = Package(
             dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit"],
             swiftSettings: strict
         ),
+        .target(
+            name: "AgentTestSupport",
+            dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit"],
+            swiftSettings: strict
+        ),
+        .target(
+            name: "CodingAgentKitApple",
+            dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit"],
+            swiftSettings: strict
+        ),
         .executableTarget(
             name: "CodeAgentCLI",
             dependencies: [
@@ -77,7 +89,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AgentCoreTests",
-            dependencies: ["AgentCore"],
+            dependencies: ["AgentCore", "AgentTestSupport"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

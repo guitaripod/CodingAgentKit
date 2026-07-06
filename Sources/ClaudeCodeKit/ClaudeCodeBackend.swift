@@ -1,7 +1,7 @@
 import AgentCore
 import Foundation
 
-public struct ClaudeCodeBackend: CodingAgentBackend {
+public struct ClaudeCodeBackend: PollingBackend {
     public static let sessionID = "agentapi"
 
     public let agentType: AgentType = .claudeCode
@@ -10,7 +10,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsDiffs: false,
         supportsPermissions: false,
         supportsMultipleSessions: false,
-        supportsModelSelection: false
+        supportsModelSelection: false,
+        supportsAttachments: false
     )
 
     let client: AgentAPIClient
@@ -72,9 +73,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
     }
 
-    public func pollingEvents(interval: Duration = .seconds(1)) -> AsyncThrowingStream<
-        BackendEvent, Error
-    > {
+    public func pollingEvents(for sessionID: String, interval: Duration = .seconds(1))
+        -> AsyncThrowingStream<BackendEvent, Error>
+    {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var lastContent: [String: String] = [:]

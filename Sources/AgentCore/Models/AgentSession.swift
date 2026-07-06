@@ -1,6 +1,6 @@
 import Foundation
 
-public struct AgentSession: Identifiable, Sendable, Hashable {
+public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public let agentType: AgentType
     public var title: String

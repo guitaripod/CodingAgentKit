@@ -15,6 +15,14 @@ public struct HTTPClient: Sendable {
         self.logger = logger
     }
 
+    public init(policy: ConnectionPolicy, logger: Logger = AgentLog.logger("http")) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = policy.requestTimeout.timeInterval
+        configuration.timeoutIntervalForResource = policy.resourceTimeout.timeInterval
+        self.session = URLSession(configuration: configuration)
+        self.logger = logger
+    }
+
     @discardableResult
     public func send(_ request: URLRequest) async throws -> Data {
         logger.debug("→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?")")

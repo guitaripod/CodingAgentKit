@@ -9,11 +9,9 @@ public struct OpenCodeClient: Sendable {
     let builder: RequestBuilder
     let http: HTTPClient
 
-    public init(
-        config: ServerConfig, http: HTTPClient = HTTPClient(logger: AgentLog.logger("opencode"))
-    ) {
+    public init(config: ServerConfig, http: HTTPClient? = nil) {
         self.builder = RequestBuilder(config: config)
-        self.http = http
+        self.http = http ?? HTTPClient(policy: config.policy, logger: AgentLog.logger("opencode"))
     }
 
     private func decode<T: Decodable>(_ data: Data) throws -> T {

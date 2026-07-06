@@ -70,14 +70,14 @@ private func decode(_ json: String) -> BackendEvent? {
             return
         }
         guard
-            case .failure(let message)? = decode(
+            case .failure(let failure)? = decode(
                 #"{"type":"session.error","properties":{"sessionID":"ses_S","error":{"name":"ProviderAuthError","data":{"message":"bad key"}}}}"#
             )
         else {
             Issue.record("expected failure")
             return
         }
-        #expect(message == "bad key")
+        #expect(failure.message == "bad key")
     }
 
     @Test func unknownEventFallsBack() {

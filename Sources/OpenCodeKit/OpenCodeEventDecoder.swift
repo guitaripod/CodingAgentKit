@@ -1,13 +1,13 @@
 import AgentCore
 import Foundation
 
-enum OpenCodeEventDecoder {
+public enum OpenCodeEventDecoder {
     struct Envelope: Decodable {
         let type: String
         let properties: JSONValue?
     }
 
-    static func decode(_ event: SSEvent, sessionID: String) -> BackendEvent? {
+    public static func decode(_ event: SSEvent, sessionID: String) -> BackendEvent? {
         guard let data = event.data.data(using: .utf8),
             let envelope = try? JSONCoding.decoder.decode(Envelope.self, from: data)
         else { return nil }
@@ -53,7 +53,7 @@ enum OpenCodeEventDecoder {
         case "session.error":
             let message =
                 properties?["error"].flatMap(OpenCodeMapping.errorMessage) ?? "session error"
-            return .failure(message)
+            return .failure(BackendFailure(message: message))
 
         case "permission.asked":
             guard let id = properties?["id"]?.stringValue else { return nil }

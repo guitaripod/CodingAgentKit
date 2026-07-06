@@ -19,6 +19,8 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
 | `ClaudeCodeKit` | Hand-written agentapi client + event decoder + `ClaudeCodeBackend`, with an SSE stream and a polling fallback. |
 | `CodingAgentKit` | Umbrella that re-exports the three. |
+| `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
+| `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |
 | `codeagent` | Scriptable CLI that exercises the whole stack. |
 
 `OpenCodeKit` and `ClaudeCodeKit` depend only on `AgentCore`; the core never imports a concrete backend.
@@ -26,7 +28,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Requirements
 
 - Swift 6.1+ (developed and CI'd on 6.2).
-- Linux or Apple (iOS 18+/macOS 14+).
+- Linux or Apple (iOS 18+ / macOS 15+).
 
 ## Install
 
@@ -58,20 +60,28 @@ Task {
     try await conversation.send("List the Swift files in this project.")
 }
 
-for await transcript in await conversation.stream() {
-    render(transcript) // [ChatMessage] snapshot, updated as events arrive
+// One AsyncStream of full snapshots — ideal for a UIKit view controller.
+// Auto-reconnects with backoff; surfaces status, permission prompts, failures, and connection phase.
+for await state in await conversation.states() {
+    render(state.messages)              // [ChatMessage], updated as events arrive
+    spinner.isHidden = state.status != .running
+    banner.isHidden  = state.connection == .live
+    if let permission = state.pendingPermissions.first {
+        try await conversation.respond(to: permission, decision: .once)
+    }
 }
 ```
 
-Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — that is the point of the unified model.
+Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — that is the point of the unified model. For tests and previews, use `MockBackend` from `AgentTestSupport` instead of a live backend.
 
 ## CLI
 
 ```
 codeagent health   [--backend opencode|claude] [--host URL] [--password …]
+codeagent discover                   # probe URL, auto-detect backend
 codeagent sessions
 codeagent new
-codeagent send <session-id> "<prompt>" [--model providerID/modelID]
+codeagent send <session-id> "<prompt>" [--model providerID/modelID] [--attach FILE]
 codeagent stream <session-id>
 codeagent diff <session-id>          # opencode
 codeagent files [path]               # opencode

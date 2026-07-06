@@ -13,6 +13,7 @@ enum ConversationRunner {
         sessionID: String,
         send: String?,
         model: ModelSelection?,
+        attachments: [PromptAttachment] = [],
         followForever: Bool
     ) async throws {
         var reducer = MessageReducer(agentType: backend.agentType)
@@ -24,15 +25,16 @@ enum ConversationRunner {
         for try await event in backend.events(for: sessionID) {
             if let text = pending {
                 pending = nil
-                try await backend.send(SendPrompt(text: text, model: model), to: sessionID)
+                try await backend.send(
+                    SendPrompt(text: text, model: model, attachments: attachments), to: sessionID)
             }
 
             reducer.apply(event)
             render(reducer.snapshot, shownText: &shownText, shownTools: &shownTools)
 
             switch event {
-            case .failure(let message):
-                FileHandle.standardError.write(Data("\n[error] \(message)\n".utf8))
+            case .failure(let failure):
+                FileHandle.standardError.write(Data("\n[error] \(failure.message)\n".utf8))
             case .status(.running):
                 sawRunning = true
             case .status(.idle) where !followForever:

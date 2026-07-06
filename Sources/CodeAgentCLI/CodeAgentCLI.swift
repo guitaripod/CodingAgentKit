@@ -1,5 +1,6 @@
 import ArgumentParser
 import CodingAgentKit
+import Foundation
 
 @main
 struct CodeAgent: AsyncParsableCommand {
@@ -7,8 +8,8 @@ struct CodeAgent: AsyncParsableCommand {
         commandName: "codeagent",
         abstract: "Cross-platform CLI for opencode and Claude Code (agentapi) over HTTP + SSE.",
         subcommands: [
-            Health.self, Sessions.self, New.self, Send.self, Stream.self, Diff.self, Files.self,
-            Find.self, Providers.self,
+            Health.self, Discover.self, Sessions.self, New.self, Send.self, Stream.self, Diff.self,
+            Files.self, Find.self, Providers.self,
         ]
     )
 }
@@ -63,13 +64,37 @@ struct Send: AsyncParsableCommand {
     @Argument(help: "Session id.") var session: String
     @Argument(help: "Prompt text.") var prompt: String
     @Option(name: .long, help: "Model as providerID/modelID (opencode only).") var model: String?
+    @Option(name: .long, help: "Attach a file to the prompt (repeatable, opencode only).")
+    var attach: [String] = []
 
     func run() async throws {
         let backend = try connection.makeBackend()
-        let selection = model.flatMap(ModelSelection.parse)
+        let selection = model.flatMap(ModelSelection.init(string:))
+        let attachments = try attach.map(loadAttachment)
         try await ConversationRunner.run(
             backend: backend, sessionID: session, send: prompt, model: selection,
-            followForever: false)
+            attachments: attachments, followForever: false)
+    }
+}
+
+struct Discover: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Probe the URL and report which backend answers.")
+    @OptionGroup var connection: ConnectionOptions
+
+    func run() async throws {
+        let outcome = await ConnectionProbe().probe(
+            baseURL: try connection.resolvedURL(), credentials: connection.credentials())
+        switch outcome {
+        case .ok(let agentType, let version):
+            print("ok: \(agentType.displayName)" + (version.map { " (\($0))" } ?? ""))
+        case .authFailed:
+            print("auth failed — check credentials")
+        case .unreachable(let detail):
+            print("unreachable: \(detail)")
+        case .notAnAgentServer:
+            print("reachable, but not an opencode or agentapi server")
+        }
     }
 }
 
@@ -159,4 +184,26 @@ private func requireFileBrowsing(_ connection: ConnectionOptions, feature: Strin
         throw ValidationError("\(feature) is only supported by the opencode backend")
     }
     return backend
+}
+
+private func loadAttachment(_ path: String) throws -> PromptAttachment {
+    let url = URL(fileURLWithPath: path)
+    let data = try Data(contentsOf: url)
+    return PromptAttachment(
+        mime: mimeType(forExtension: url.pathExtension),
+        filename: url.lastPathComponent,
+        data: data)
+}
+
+private func mimeType(forExtension ext: String) -> String {
+    switch ext.lowercased() {
+    case "png": return "image/png"
+    case "jpg", "jpeg": return "image/jpeg"
+    case "gif": return "image/gif"
+    case "webp": return "image/webp"
+    case "pdf": return "application/pdf"
+    case "txt", "md": return "text/plain"
+    case "json": return "application/json"
+    default: return "application/octet-stream"
+    }
 }

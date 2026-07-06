@@ -4,19 +4,22 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsPermissions: Bool
     public var supportsMultipleSessions: Bool
     public var supportsModelSelection: Bool
+    public var supportsAttachments: Bool
 
     public init(
         supportsFileBrowsing: Bool,
         supportsDiffs: Bool,
         supportsPermissions: Bool,
         supportsMultipleSessions: Bool,
-        supportsModelSelection: Bool
+        supportsModelSelection: Bool,
+        supportsAttachments: Bool
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
         self.supportsPermissions = supportsPermissions
         self.supportsMultipleSessions = supportsMultipleSessions
         self.supportsModelSelection = supportsModelSelection
+        self.supportsAttachments = supportsAttachments
     }
 }
 
@@ -30,14 +33,26 @@ public struct ServerHealth: Sendable, Hashable {
     }
 }
 
-public enum BackendStatus: String, Sendable, Hashable {
+public enum BackendStatus: String, Sendable, Hashable, Codable {
     case idle
     case running
     case stable
     case unknown
 }
 
-public struct PermissionRequest: Sendable, Hashable {
+public struct BackendFailure: Error, Sendable, Hashable, Codable {
+    public var message: String
+    public var code: String?
+    public var retryable: Bool
+
+    public init(message: String, code: String? = nil, retryable: Bool = false) {
+        self.message = message
+        self.code = code
+        self.retryable = retryable
+    }
+}
+
+public struct PermissionRequest: Sendable, Hashable, Codable, Identifiable {
     public let id: String
     public var sessionID: String
     public var title: String?
@@ -65,10 +80,12 @@ public enum BackendEvent: Sendable {
     case messageRemoved(messageID: String)
     case status(BackendStatus)
     case permission(PermissionRequest)
-    case failure(String)
+    case failure(BackendFailure)
     case unknown(type: String)
 }
 
+/// A coding-agent server behind one unified surface. Conformers (opencode, Claude Code via
+/// agentapi) translate their wire protocol into ``BackendEvent`` values a ``MessageReducer`` folds.
 public protocol CodingAgentBackend: Sendable {
     var agentType: AgentType { get }
     var capabilities: BackendCapabilities { get }
@@ -81,6 +98,9 @@ public protocol CodingAgentBackend: Sendable {
     func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error>
     func abort(sessionID: String) async throws
     func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
+    func availableModels() async throws -> [ModelInfo]
+    func availableAgents() async throws -> [String]
+    func defaultModel() async throws -> ModelSelection?
 }
 
 extension CodingAgentBackend {
@@ -92,6 +112,10 @@ extension CodingAgentBackend {
     {
         throw AgentError.unsupported("permissions")
     }
+
+    public func availableModels() async throws -> [ModelInfo] { [] }
+    public func availableAgents() async throws -> [String] { [] }
+    public func defaultModel() async throws -> ModelSelection? { nil }
 }
 
 public protocol FileBrowsingBackend: CodingAgentBackend {
@@ -100,4 +124,10 @@ public protocol FileBrowsingBackend: CodingAgentBackend {
     func diff(sessionID: String) async throws -> [FileDiff]
     func find(pattern: String) async throws -> [String]
     func providers() async throws -> [Provider]
+}
+
+/// A backend that can deliver events by polling when its SSE stream is unavailable.
+public protocol PollingBackend: CodingAgentBackend {
+    func pollingEvents(for sessionID: String, interval: Duration)
+        -> AsyncThrowingStream<BackendEvent, Error>
 }
