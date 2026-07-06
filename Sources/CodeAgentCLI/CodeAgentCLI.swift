@@ -1,0 +1,162 @@
+import ArgumentParser
+import CodingAgentKit
+
+@main
+struct CodeAgent: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "codeagent",
+        abstract: "Cross-platform CLI for opencode and Claude Code (agentapi) over HTTP + SSE.",
+        subcommands: [
+            Health.self, Sessions.self, New.self, Send.self, Stream.self, Diff.self, Files.self,
+            Find.self, Providers.self,
+        ]
+    )
+}
+
+struct Health: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Check backend health and status.")
+    @OptionGroup var connection: ConnectionOptions
+
+    func run() async throws {
+        let backend = try connection.makeBackend()
+        let health = try await backend.health()
+        print("healthy: \(health.healthy)" + (health.version.map { "  version: \($0)" } ?? ""))
+        if let claude = backend as? ClaudeCodeBackend {
+            let status = try await claude.agentStatus()
+            print(
+                "status: \(status.status)  transport: \(status.transport ?? "?")  agent: \(status.agentType ?? "?")"
+            )
+        }
+    }
+}
+
+struct Sessions: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "List sessions.")
+    @OptionGroup var connection: ConnectionOptions
+
+    func run() async throws {
+        let sessions = try await connection.makeBackend().listSessions()
+        if sessions.isEmpty {
+            print("(no sessions)")
+            return
+        }
+        for session in sessions {
+            print("\(session.id)  \(session.title)")
+        }
+    }
+}
+
+struct New: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Create a session and print its id.")
+    @OptionGroup var connection: ConnectionOptions
+
+    func run() async throws {
+        let session = try await connection.makeBackend().createSession(title: nil)
+        print(session.id)
+    }
+}
+
+struct Send: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Send a prompt and stream the response until the agent goes idle.")
+    @OptionGroup var connection: ConnectionOptions
+    @Argument(help: "Session id.") var session: String
+    @Argument(help: "Prompt text.") var prompt: String
+    @Option(name: .long, help: "Model as providerID/modelID (opencode only).") var model: String?
+
+    func run() async throws {
+        let backend = try connection.makeBackend()
+        let selection = model.flatMap(ModelSelection.parse)
+        try await ConversationRunner.run(
+            backend: backend, sessionID: session, send: prompt, model: selection,
+            followForever: false)
+    }
+}
+
+struct Stream: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Stream a session's events until interrupted.")
+    @OptionGroup var connection: ConnectionOptions
+    @Argument(help: "Session id.") var session: String
+
+    func run() async throws {
+        let backend = try connection.makeBackend()
+        try await ConversationRunner.run(
+            backend: backend, sessionID: session, send: nil, model: nil, followForever: true)
+    }
+}
+
+struct Diff: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show a session's file diffs (opencode only).")
+    @OptionGroup var connection: ConnectionOptions
+    @Argument(help: "Session id.") var session: String
+
+    func run() async throws {
+        let backend = try requireFileBrowsing(connection, feature: "diff")
+        let diffs = try await backend.diff(sessionID: session)
+        if diffs.isEmpty {
+            print("(no changes)")
+            return
+        }
+        for diff in diffs {
+            print("\(diff.path)  +\(diff.additions) -\(diff.deletions)")
+        }
+    }
+}
+
+struct Files: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "List files at a path (opencode only).")
+    @OptionGroup var connection: ConnectionOptions
+    @Argument(help: "Path (default: .).") var path: String = "."
+
+    func run() async throws {
+        let backend = try requireFileBrowsing(connection, feature: "files")
+        for node in try await backend.listFiles(path: path) {
+            print((node.isDirectory ? "d " : "  ") + node.path)
+        }
+    }
+}
+
+struct Find: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Search file contents (opencode only).")
+    @OptionGroup var connection: ConnectionOptions
+    @Argument(help: "Pattern.") var pattern: String
+
+    func run() async throws {
+        let backend = try requireFileBrowsing(connection, feature: "find")
+        for line in try await backend.find(pattern: pattern) {
+            print(line)
+        }
+    }
+}
+
+struct Providers: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "List providers and models (opencode only).")
+    @OptionGroup var connection: ConnectionOptions
+
+    func run() async throws {
+        let backend = try requireFileBrowsing(connection, feature: "providers")
+        for provider in try await backend.providers() {
+            print("\(provider.id)\(provider.defaultModelID.map { " (default: \($0))" } ?? "")")
+            for model in provider.models.prefix(8) {
+                print("   \(model.id)")
+            }
+            if provider.models.count > 8 {
+                print("   … \(provider.models.count - 8) more")
+            }
+        }
+    }
+}
+
+private func requireFileBrowsing(_ connection: ConnectionOptions, feature: String) throws
+    -> any FileBrowsingBackend
+{
+    guard let backend = try connection.makeBackend() as? FileBrowsingBackend else {
+        throw ValidationError("\(feature) is only supported by the opencode backend")
+    }
+    return backend
+}
