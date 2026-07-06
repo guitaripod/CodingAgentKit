@@ -91,6 +91,8 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
 
     public func abort(sessionID: String) async throws {}
 
+    public func deleteSession(_ sessionID: String) async throws {}
+
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     {}
 

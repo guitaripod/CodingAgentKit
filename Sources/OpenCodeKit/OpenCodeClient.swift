@@ -34,6 +34,10 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.post, "/session")))
     }
 
+    func deleteSession(_ sessionID: String) async throws {
+        try await http.send(builder.request(.delete, "/session/\(sessionID)"))
+    }
+
     func messages(sessionID: String) async throws -> [OCMessageEnvelope] {
         try decode(await http.send(builder.request(.get, "/session/\(sessionID)/message")))
     }

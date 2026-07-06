@@ -35,6 +35,10 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         OpenCodeMapping.session(try await client.createSession())
     }
 
+    public func deleteSession(_ sessionID: String) async throws {
+        try await client.deleteSession(sessionID)
+    }
+
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
         try await client.messages(sessionID: sessionID).map(OpenCodeMapping.message)
     }

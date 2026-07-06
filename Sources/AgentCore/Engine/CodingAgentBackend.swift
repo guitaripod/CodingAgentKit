@@ -93,6 +93,7 @@ public protocol CodingAgentBackend: Sendable {
     func health() async throws -> ServerHealth
     func listSessions() async throws -> [AgentSession]
     func createSession(title: String?) async throws -> AgentSession
+    func deleteSession(_ sessionID: String) async throws
     func messages(for sessionID: String) async throws -> [ChatMessage]
     func send(_ prompt: SendPrompt, to sessionID: String) async throws
     func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error>
@@ -111,6 +112,10 @@ extension CodingAgentBackend {
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     {
         throw AgentError.unsupported("permissions")
+    }
+
+    public func deleteSession(_ sessionID: String) async throws {
+        throw AgentError.unsupported("deleteSession")
     }
 
     public func availableModels() async throws -> [ModelInfo] { [] }
