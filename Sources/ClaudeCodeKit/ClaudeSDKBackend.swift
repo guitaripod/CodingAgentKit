@@ -187,9 +187,13 @@ struct BRTool: Decodable {
     let status: String
 
     var toolCall: ToolCall {
-        ToolCall(
+        var parsed: JSONValue?
+        if let data = input.data(using: .utf8) {
+            parsed = try? JSONDecoder().decode(JSONValue.self, from: data)
+        }
+        return ToolCall(
             id: id, name: name, status: ToolStatus(rawValue: status) ?? .running,
-            output: output, title: name)
+            input: parsed, output: output, title: name)
     }
 }
 
