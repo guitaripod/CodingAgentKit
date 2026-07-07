@@ -7,6 +7,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsAttachments: Bool
     public var supportsReasoningEffort: Bool
     public var supportsClearing: Bool
+    public var supportsForking: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -16,7 +17,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsModelSelection: Bool,
         supportsAttachments: Bool,
         supportsReasoningEffort: Bool = false,
-        supportsClearing: Bool = false
+        supportsClearing: Bool = false,
+        supportsForking: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -26,6 +28,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsAttachments = supportsAttachments
         self.supportsReasoningEffort = supportsReasoningEffort
         self.supportsClearing = supportsClearing
+        self.supportsForking = supportsForking
     }
 }
 
@@ -131,6 +134,9 @@ public protocol CodingAgentBackend: Sendable {
     func clearConversation(_ sessionID: String) async throws
     /// The last turn's cost/token usage for a session, if the backend reports it.
     func sessionUsage(_ sessionID: String) async throws -> AgentUsage?
+    /// Branches a session into a new one seeded with the same history, so the next prompt explores a
+    /// different direction without disturbing the original (Claude Code resumes with `--fork-session`).
+    func forkSession(_ sessionID: String) async throws -> AgentSession
 }
 
 extension CodingAgentBackend {
@@ -160,6 +166,9 @@ extension CodingAgentBackend {
         throw AgentError.unsupported("clearConversation")
     }
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
+    public func forkSession(_ sessionID: String) async throws -> AgentSession {
+        throw AgentError.unsupported("fork")
+    }
 }
 
 public protocol FileBrowsingBackend: CodingAgentBackend {

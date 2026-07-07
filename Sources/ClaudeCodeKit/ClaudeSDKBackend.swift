@@ -14,7 +14,8 @@ public struct ClaudeSDKBackend: CodingAgentBackend {
         supportsModelSelection: true,
         supportsAttachments: false,
         supportsReasoningEffort: true,
-        supportsClearing: true
+        supportsClearing: true,
+        supportsForking: true
     )
 
     public static let models: [ModelInfo] = [
@@ -51,6 +52,11 @@ public struct ClaudeSDKBackend: CodingAgentBackend {
 
     public func deleteSession(_ sessionID: String) async throws {
         _ = try await http.send(builder.request(.delete, "/sessions/\(sessionID)"))
+    }
+
+    public func forkSession(_ sessionID: String) async throws -> AgentSession {
+        let data = try await http.send(builder.request(.post, "/sessions/\(sessionID)/fork"))
+        return try BridgeCoding.decoder.decode(BRSession.self, from: data).session
     }
 
     public func clearConversation(_ sessionID: String) async throws {
