@@ -5,6 +5,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsMultipleSessions: Bool
     public var supportsModelSelection: Bool
     public var supportsAttachments: Bool
+    public var supportsReasoningEffort: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -12,7 +13,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsPermissions: Bool,
         supportsMultipleSessions: Bool,
         supportsModelSelection: Bool,
-        supportsAttachments: Bool
+        supportsAttachments: Bool,
+        supportsReasoningEffort: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -20,6 +22,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsMultipleSessions = supportsMultipleSessions
         self.supportsModelSelection = supportsModelSelection
         self.supportsAttachments = supportsAttachments
+        self.supportsReasoningEffort = supportsReasoningEffort
     }
 }
 
@@ -102,6 +105,14 @@ public protocol CodingAgentBackend: Sendable {
     func availableModels() async throws -> [ModelInfo]
     func availableAgents() async throws -> [String]
     func defaultModel() async throws -> ModelSelection?
+
+    /// Reasoning-effort levels a conformer supports (e.g. Claude Code: low/medium/high). Empty if none.
+    var reasoningEffortOptions: [String] { get }
+    /// Applies a reasoning-effort level immediately (Claude Code sends a `/effort` control command).
+    func setReasoningEffort(_ level: String) async throws
+    /// Applies a model selection immediately, for backends where the model is a persistent session
+    /// setting rather than a per-message parameter (Claude Code sends a `/model` control command).
+    func applyModelSelection(_ model: ModelSelection) async throws
 }
 
 extension CodingAgentBackend {
@@ -121,6 +132,12 @@ extension CodingAgentBackend {
     public func availableModels() async throws -> [ModelInfo] { [] }
     public func availableAgents() async throws -> [String] { [] }
     public func defaultModel() async throws -> ModelSelection? { nil }
+
+    public var reasoningEffortOptions: [String] { [] }
+    public func setReasoningEffort(_ level: String) async throws {
+        throw AgentError.unsupported("reasoningEffort")
+    }
+    public func applyModelSelection(_ model: ModelSelection) async throws {}
 }
 
 public protocol FileBrowsingBackend: CodingAgentBackend {

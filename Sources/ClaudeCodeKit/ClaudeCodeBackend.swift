@@ -10,9 +10,19 @@ public struct ClaudeCodeBackend: PollingBackend {
         supportsDiffs: false,
         supportsPermissions: false,
         supportsMultipleSessions: false,
-        supportsModelSelection: false,
-        supportsAttachments: false
+        supportsModelSelection: true,
+        supportsAttachments: false,
+        supportsReasoningEffort: true
     )
+
+    /// Claude Code model aliases accepted by the `/model` command, newest first.
+    public static let models: [ModelInfo] = [
+        ModelInfo(id: "opus", name: "Opus", providerID: "anthropic"),
+        ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic"),
+        ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic"),
+    ]
+
+    public var reasoningEffortOptions: [String] { ["low", "medium", "high"] }
 
     let client: AgentAPIClient
 
@@ -52,6 +62,18 @@ public struct ClaudeCodeBackend: PollingBackend {
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         try await client.sendMessage(content: prompt.text)
+    }
+
+    public func availableModels() async throws -> [ModelInfo] { Self.models }
+
+    public func defaultModel() async throws -> ModelSelection? { nil }
+
+    public func applyModelSelection(_ model: ModelSelection) async throws {
+        try await client.sendMessage(content: "/model \(model.modelID)", type: "user")
+    }
+
+    public func setReasoningEffort(_ level: String) async throws {
+        try await client.sendMessage(content: "/effort \(level)", type: "user")
     }
 
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
