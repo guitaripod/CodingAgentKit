@@ -84,6 +84,38 @@ import Testing
         #expect(message.createdAt.timeIntervalSince1970 > 0)
     }
 
+    @Test func cleanStripsTerminalChrome() {
+        let banner = """
+             ▐▛███▜▌   Claude Code v2.1.202
+            ▝▜█████▛▘  Opus 4.8 (1M context) with low effort · Claude Max
+              ▘▘ ▝▝    ~/agentapi-workdir
+            """
+        #expect(ClaudeCodeMapping.clean(banner, role: .assistant) == "")
+
+        let response = """
+
+
+            ⏺ Hello, ready to help whenever you are.
+            ✻ Sautéed for 1s
+                                            ○ low · /effort
+            """
+        #expect(
+            ClaudeCodeMapping.clean(response, role: .assistant)
+                == "Hello, ready to help whenever you are.")
+    }
+
+    @Test func cleanHidesSlashCommandsAndControlEchoes() {
+        #expect(ClaudeCodeMapping.clean("/model sonnet", role: .user) == "")
+        #expect(ClaudeCodeMapping.clean("do the thing", role: .user) == "do the thing")
+
+        let controlEcho = """
+            ❯ /effort high
+              ⎿  Set effort level to high (saved as your default for new sessions):
+                 Comprehensive implementation with extensive testing and documentation
+            """
+        #expect(ClaudeCodeMapping.clean(controlEcho, role: .assistant) == "")
+    }
+
     @Test func decodesMessagesWrapper() throws {
         let response = try JSONCoding.decoder.decode(
             AAMessagesResponse.self,

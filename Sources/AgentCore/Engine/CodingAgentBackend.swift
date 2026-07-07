@@ -6,6 +6,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsModelSelection: Bool
     public var supportsAttachments: Bool
     public var supportsReasoningEffort: Bool
+    public var supportsClearing: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -14,7 +15,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsMultipleSessions: Bool,
         supportsModelSelection: Bool,
         supportsAttachments: Bool,
-        supportsReasoningEffort: Bool = false
+        supportsReasoningEffort: Bool = false,
+        supportsClearing: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -23,6 +25,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsModelSelection = supportsModelSelection
         self.supportsAttachments = supportsAttachments
         self.supportsReasoningEffort = supportsReasoningEffort
+        self.supportsClearing = supportsClearing
     }
 }
 
@@ -113,6 +116,9 @@ public protocol CodingAgentBackend: Sendable {
     /// Applies a model selection immediately, for backends where the model is a persistent session
     /// setting rather than a per-message parameter (Claude Code sends a `/model` control command).
     func applyModelSelection(_ model: ModelSelection) async throws
+    /// Clears the conversation in place (Claude Code sends a `/clear` control command) for backends
+    /// that keep a single long-lived session rather than discrete ones.
+    func clearConversation(_ sessionID: String) async throws
 }
 
 extension CodingAgentBackend {
@@ -138,6 +144,9 @@ extension CodingAgentBackend {
         throw AgentError.unsupported("reasoningEffort")
     }
     public func applyModelSelection(_ model: ModelSelection) async throws {}
+    public func clearConversation(_ sessionID: String) async throws {
+        throw AgentError.unsupported("clearConversation")
+    }
 }
 
 public protocol FileBrowsingBackend: CodingAgentBackend {

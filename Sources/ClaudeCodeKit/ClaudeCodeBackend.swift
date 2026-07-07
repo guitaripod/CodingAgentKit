@@ -12,7 +12,8 @@ public struct ClaudeCodeBackend: PollingBackend {
         supportsMultipleSessions: false,
         supportsModelSelection: true,
         supportsAttachments: false,
-        supportsReasoningEffort: true
+        supportsReasoningEffort: true,
+        supportsClearing: true
     )
 
     /// Claude Code model aliases accepted by the `/model` command, newest first.
@@ -53,7 +54,12 @@ public struct ClaudeCodeBackend: PollingBackend {
     }
 
     public func createSession(title: String?) async throws -> AgentSession {
-        session(title: title ?? "Claude Code")
+        try? await client.sendMessage(content: "/clear", type: "user")
+        return session(title: title ?? "Claude Code")
+    }
+
+    public func clearConversation(_ sessionID: String) async throws {
+        try await client.sendMessage(content: "/clear", type: "user")
     }
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
