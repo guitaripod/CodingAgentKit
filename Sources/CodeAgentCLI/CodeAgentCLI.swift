@@ -22,12 +22,6 @@ struct Health: AsyncParsableCommand {
         let backend = try connection.makeBackend()
         let health = try await backend.health()
         print("healthy: \(health.healthy)" + (health.version.map { "  version: \($0)" } ?? ""))
-        if let claude = backend as? ClaudeCodeBackend {
-            let status = try await claude.agentStatus()
-            print(
-                "status: \(status.status)  transport: \(status.transport ?? "?")  agent: \(status.agentType ?? "?")"
-            )
-        }
     }
 }
 

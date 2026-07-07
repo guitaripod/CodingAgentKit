@@ -1,5 +1,4 @@
 import AgentCore
-import ClaudeCodeKit
 import Foundation
 import OpenCodeKit
 import Synchronization
@@ -153,15 +152,4 @@ extension MockBackend {
             agentType: .openCode, script: events.map { MockScriptStep($0, delay: delay) })
     }
 
-    /// Builds a backend that replays recorded agentapi `/events` (event-type, data) pairs through the real decoder.
-    public static func replayingClaude(
-        _ typedEvents: [(type: String, data: String)],
-        delay: Duration = .milliseconds(10)
-    ) -> MockBackend {
-        let events = typedEvents.compactMap {
-            ClaudeCodeEventDecoder.decode(SSEvent(id: nil, type: $0.type, data: $0.data))
-        }
-        return MockBackend(
-            agentType: .claudeCode, script: events.map { MockScriptStep($0, delay: delay) })
-    }
 }

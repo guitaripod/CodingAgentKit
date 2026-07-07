@@ -36,8 +36,12 @@ struct ConnectionOptions: ParsableArguments {
             return OpenCodeBackend(config: ServerConfig(baseURL: url, credentials: credentials))
         case .claude:
             let url = try resolveURL(
-                host ?? environment["AGENTAPI_HOST"] ?? "http://127.0.0.1:3284")
-            return ClaudeCodeBackend(config: ServerConfig(baseURL: url))
+                host ?? environment["BRIDGE_HOST"] ?? "http://127.0.0.1:4098")
+            let resolvedPassword = password ?? environment["BRIDGE_PASSWORD"]
+            let credentials = resolvedPassword.map {
+                BasicCredentials(username: "claude", password: $0)
+            }
+            return ClaudeSDKBackend(config: ServerConfig(baseURL: url, credentials: credentials))
         }
     }
 
