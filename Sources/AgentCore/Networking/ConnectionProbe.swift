@@ -42,12 +42,19 @@ public struct ConnectionProbe: Sendable {
         do {
             let data = try await http.send(builder.request(.get, "/status"))
             if let status = try? JSONCoding.decoder.decode(StatusProbe.self, from: data),
-                status.status != nil
+                status.agent == "claude" || status.status != nil
             {
-                return .ok(agentType: .claudeCode, version: status.agentType)
+                return .ok(agentType: .claudeCode, version: status.agent ?? status.agentType)
             }
         } catch let error as AgentError {
-            if case .connection(let detail) = error { return .unreachable(detail) }
+            switch error {
+            case .http(let httpStatus, _) where httpStatus == 401 || httpStatus == 403:
+                return .authFailed
+            case .connection(let detail):
+                return .unreachable(detail)
+            default:
+                break
+            }
         } catch {
         }
 
@@ -62,10 +69,12 @@ public struct ConnectionProbe: Sendable {
     private struct StatusProbe: Decodable {
         let status: String?
         let agentType: String?
+        let agent: String?
 
         enum CodingKeys: String, CodingKey {
             case status
             case agentType = "agent_type"
+            case agent
         }
     }
 }

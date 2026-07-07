@@ -66,11 +66,14 @@ public actor AgentConversation {
     public func send(
         _ text: String,
         model: ModelSelection? = nil,
+        reasoningEffort: String? = nil,
         agent: String? = nil,
         attachments: [PromptAttachment] = []
     ) async throws {
         try await backend.send(
-            SendPrompt(text: text, model: model, agent: agent, attachments: attachments),
+            SendPrompt(
+                text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
+                attachments: attachments),
             to: sessionID)
     }
 

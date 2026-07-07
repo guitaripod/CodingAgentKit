@@ -38,17 +38,20 @@ public struct PromptAttachment: Sendable, Hashable, Codable {
 public struct SendPrompt: Sendable {
     public var text: String
     public var model: ModelSelection?
+    public var reasoningEffort: String?
     public var agent: String?
     public var attachments: [PromptAttachment]
 
     public init(
         text: String,
         model: ModelSelection? = nil,
+        reasoningEffort: String? = nil,
         agent: String? = nil,
         attachments: [PromptAttachment] = []
     ) {
         self.text = text
         self.model = model
+        self.reasoningEffort = reasoningEffort
         self.agent = agent
         self.attachments = attachments
     }
