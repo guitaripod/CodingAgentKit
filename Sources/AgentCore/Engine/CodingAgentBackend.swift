@@ -29,6 +29,16 @@ public struct BackendCapabilities: Sendable, Hashable {
     }
 }
 
+public struct AgentUsage: Sendable, Hashable, Codable {
+    public var costUSD: Double?
+    public var tokens: Int?
+
+    public init(costUSD: Double? = nil, tokens: Int? = nil) {
+        self.costUSD = costUSD
+        self.tokens = tokens
+    }
+}
+
 public struct ServerHealth: Sendable, Hashable {
     public var healthy: Bool
     public var version: String?
@@ -119,6 +129,8 @@ public protocol CodingAgentBackend: Sendable {
     /// Clears the conversation in place (Claude Code sends a `/clear` control command) for backends
     /// that keep a single long-lived session rather than discrete ones.
     func clearConversation(_ sessionID: String) async throws
+    /// The last turn's cost/token usage for a session, if the backend reports it.
+    func sessionUsage(_ sessionID: String) async throws -> AgentUsage?
 }
 
 extension CodingAgentBackend {
@@ -147,6 +159,7 @@ extension CodingAgentBackend {
     public func clearConversation(_ sessionID: String) async throws {
         throw AgentError.unsupported("clearConversation")
     }
+    public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
 }
 
 public protocol FileBrowsingBackend: CodingAgentBackend {
