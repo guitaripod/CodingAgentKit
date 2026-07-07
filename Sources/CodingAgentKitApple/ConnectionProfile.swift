@@ -28,13 +28,14 @@ public struct ConnectionProfile: Sendable, Hashable, Codable, Identifiable {
         password: String?,
         policy: ConnectionPolicy = .default
     ) -> any CodingAgentBackend {
+        let credentials = password.map { BasicCredentials(username: username, password: $0) }
         switch backend {
         case .openCode:
-            let credentials = password.map { BasicCredentials(username: username, password: $0) }
             return OpenCodeBackend(
                 config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
         case .claudeCode:
-            return ClaudeCodeBackend(config: ServerConfig(baseURL: baseURL, policy: policy))
+            return ClaudeCodeBackend(
+                config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
         }
     }
 }
