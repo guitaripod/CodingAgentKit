@@ -158,7 +158,14 @@ struct BRPart: Decodable {
     let tool: BRTool?
 
     var part: MessagePart {
-        if let tool { return MessagePart(id: tool.id, kind: .tool(tool.toolCall)) }
+        switch kind {
+        case "tool":
+            if let tool { return MessagePart(id: tool.id, kind: .tool(tool.toolCall)) }
+        case "reasoning":
+            return MessagePart(id: "reasoning", kind: .reasoning(text ?? ""))
+        default:
+            break
+        }
         return MessagePart(id: "text", kind: .text(text ?? ""))
     }
 }
