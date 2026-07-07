@@ -65,6 +65,21 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         #expect(recovered?.messages.first?.text == "hi")
     }
 
+    @Test func loadsExistingHistoryBeforeStreaming() async {
+        // The only event is delayed far beyond the test, so any history must come from messages().
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [MockScriptStep(assistant("m", "hello"), delay: .seconds(60))])
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        var loaded: ConversationState?
+        for await state in await conversation.states() where state.messages.first?.text == "hello" {
+            loaded = state
+            break
+        }
+        #expect(loaded?.messages.first?.text == "hello")
+    }
+
     @Test func respondClearsPendingPermission() async throws {
         let permission = PermissionRequest(id: "perm1", sessionID: "s", toolName: "bash")
         let backend = MockBackend(

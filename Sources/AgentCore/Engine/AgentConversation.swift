@@ -94,6 +94,7 @@ public actor AgentConversation {
 
     private func runLoop(generation gen: Int) async {
         await seedFromCache(generation: gen)
+        await refreshQuietly(generation: gen)
 
         var attempt = 0
         var sseFailures = 0
