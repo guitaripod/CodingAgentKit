@@ -35,7 +35,7 @@ public struct ConnectionProfile: Sendable, Hashable, Codable, Identifiable {
                 config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
         case .claudeCode:
             let credentials = password.map { BasicCredentials(username: "claude", password: $0) }
-            return ClaudeSDKBackend(
+            return ClaudeCodeBackend(
                 config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
         }
     }

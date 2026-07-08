@@ -41,7 +41,7 @@ struct ConnectionOptions: ParsableArguments {
             let credentials = resolvedPassword.map {
                 BasicCredentials(username: "claude", password: $0)
             }
-            return ClaudeSDKBackend(config: ServerConfig(baseURL: url, credentials: credentials))
+            return ClaudeCodeBackend(config: ServerConfig(baseURL: url, credentials: credentials))
         }
     }
 

@@ -1,10 +1,7 @@
 import AgentCore
 import Foundation
 
-/// Talks to `claude-bridge` (the headless `claude -p` HTTP/SSE service). Speaks a structured
-/// API: real resumable sessions, token streaming, tool calls, model/effort per turn, and
-/// clear — no terminal scraping.
-public struct ClaudeSDKBackend: CodingAgentBackend {
+public struct ClaudeCodeBackend: CodingAgentBackend {
     public let agentType: AgentType = .claudeCode
     public let capabilities = BackendCapabilities(
         supportsFileBrowsing: false,
@@ -15,7 +12,9 @@ public struct ClaudeSDKBackend: CodingAgentBackend {
         supportsAttachments: false,
         supportsReasoningEffort: true,
         supportsClearing: true,
-        supportsForking: true
+        supportsForking: true,
+        supportsAbort: false,
+        supportsSessionUsage: true
     )
 
     public static let models: [ModelInfo] = [
