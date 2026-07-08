@@ -99,7 +99,9 @@ public struct ClaudeSDKBackend: CodingAgentBackend {
     }
 
     public func availableModels() async throws -> [ModelInfo] { Self.models }
-    public func defaultModel() async throws -> ModelSelection? { nil }
+    public func defaultModel() async throws -> ModelSelection? {
+        Self.models.first.map { ModelSelection(providerID: $0.providerID, modelID: $0.id) }
+    }
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? {
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))

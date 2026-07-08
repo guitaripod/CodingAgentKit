@@ -51,7 +51,10 @@ public struct HTTPClient: Sendable {
                 continuation.yield(SSEvent(id: event.id, type: event.event, data: event.data))
             }
             source.onError = { error in
-                guard let error else { return }
+                guard let error else {
+                    continuation.finish()
+                    return
+                }
                 if error is EventSourceError {
                     continuation.finish(throwing: error)
                 } else {

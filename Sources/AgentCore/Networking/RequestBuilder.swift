@@ -19,25 +19,17 @@ public struct RequestBuilder: Sendable {
     }
 
     public func url(path: String, query: [URLQueryItem] = []) throws -> URL {
-        var base = config.baseURL.absoluteString
-        if base.hasSuffix("/") { base.removeLast() }
-        let suffix = path.hasPrefix("/") ? path : "/" + path
-        guard var components = URLComponents(string: base + suffix) else {
-            throw AgentError.invalidURL(base + suffix)
+        let fullURL = config.baseURL.appendingPathComponent(path)
+        guard var components = URLComponents(
+            url: fullURL, resolvingAgainstBaseURL: false)
+        else {
+            throw AgentError.invalidURL("\(config.baseURL)\(path)")
         }
         if !query.isEmpty {
-            let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "+"))
-            let encoded = query.map { item in
-                URLQueryItem(
-                    name: item.name.addingPercentEncoding(withAllowedCharacters: allowed)
-                        ?? item.name,
-                    value: item.value?.addingPercentEncoding(withAllowedCharacters: allowed))
-            }
-            components.percentEncodedQueryItems =
-                (components.percentEncodedQueryItems ?? []) + encoded
+            components.queryItems = (components.queryItems ?? []) + query
         }
         guard let resolved = components.url else {
-            throw AgentError.invalidURL(base + suffix)
+            throw AgentError.invalidURL("\(config.baseURL)\(path)")
         }
         return resolved
     }

@@ -178,9 +178,3 @@ public protocol FileBrowsingBackend: CodingAgentBackend {
     func find(pattern: String) async throws -> [String]
     func providers() async throws -> [Provider]
 }
-
-/// A backend that can deliver events by polling when its SSE stream is unavailable.
-public protocol PollingBackend: CodingAgentBackend {
-    func pollingEvents(for sessionID: String, interval: Duration)
-        -> AsyncThrowingStream<BackendEvent, Error>
-}

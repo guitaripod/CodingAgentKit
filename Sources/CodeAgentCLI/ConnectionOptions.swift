@@ -13,7 +13,7 @@ struct ConnectionOptions: ParsableArguments {
 
     @Option(
         name: .long,
-        help: "Base URL. Default: opencode http://127.0.0.1:4096, claude http://127.0.0.1:3284.")
+        help: "Base URL. Default: opencode http://127.0.0.1:4096, claude http://127.0.0.1:4098.")
     var host: String?
 
     @Option(name: .long, help: "opencode basic-auth username.")
@@ -58,7 +58,7 @@ struct ConnectionOptions: ParsableArguments {
         case .opencode:
             return try resolveURL(host ?? environment["OPENCODE_HOST"] ?? "http://127.0.0.1:4096")
         case .claude:
-            return try resolveURL(host ?? environment["AGENTAPI_HOST"] ?? "http://127.0.0.1:3284")
+            return try resolveURL(host ?? environment["BRIDGE_HOST"] ?? "http://127.0.0.1:4098")
         }
     }
 

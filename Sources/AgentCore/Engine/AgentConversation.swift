@@ -14,6 +14,7 @@ public actor AgentConversation {
     private var connection: ConnectionPhase = .connecting
 
     private var streamTask: Task<Void, Never>?
+    private var persistTask: Task<Void, Never>?
     private var continuation: AsyncStream<ConversationState>.Continuation?
     private var generation = 0
 
@@ -100,21 +101,18 @@ public actor AgentConversation {
         await refreshQuietly(generation: gen)
 
         var attempt = 0
-        var sseFailures = 0
 
         while gen == generation && !Task.isCancelled {
             setConnection(.connecting, generation: gen)
             do {
-                for try await event in eventStream(sseFailures: sseFailures) {
+                for try await event in backend.events(for: sessionID) {
                     guard gen == generation else { return }
                     if connection != .live { setConnection(.live, generation: gen) }
                     attempt = 0
-                    sseFailures = 0
                     apply(event, generation: gen)
                 }
             } catch {
                 guard gen == generation else { return }
-                sseFailures += 1
                 setFailure(
                     BackendFailure(message: String(describing: error), retryable: true),
                     generation: gen)
@@ -135,16 +133,6 @@ public actor AgentConversation {
                 attempt: attempt - 1, jitterFraction: .random(in: 0...1))
             try? await Task.sleep(for: delay)
         }
-    }
-
-    private func eventStream(sseFailures: Int) -> AsyncThrowingStream<BackendEvent, Error> {
-        if let poller = backend as? PollingBackend,
-            let threshold = policy.pollFallbackAfterFailures,
-            sseFailures >= threshold
-        {
-            return poller.pollingEvents(for: sessionID, interval: .seconds(1))
-        }
-        return backend.events(for: sessionID)
     }
 
     private func apply(_ event: BackendEvent, generation gen: Int) {
@@ -176,19 +164,26 @@ public actor AgentConversation {
     }
 
     private func refreshQuietly(generation gen: Int) async {
-        guard let messages = try? await backend.messages(for: sessionID), gen == generation else {
-            return
+        do {
+            let messages = try await backend.messages(for: sessionID)
+            guard gen == generation else { return }
+            reducer = MessageReducer(agentType: backend.agentType, messages: messages)
+            persist()
+            emit()
+        } catch {
+            guard gen == generation else { return }
+            lastFailure = BackendFailure(
+                message: String(describing: error), retryable: true)
+            emit()
         }
-        reducer = MessageReducer(agentType: backend.agentType, messages: messages)
-        persist()
-        emit()
     }
 
     private func persist() {
         guard let cache else { return }
+        persistTask?.cancel()
         let snapshot = reducer.snapshot
         let sessionID = sessionID
-        Task { await cache.store(snapshot, for: sessionID) }
+        persistTask = Task { await cache.store(snapshot, for: sessionID) }
     }
 
     private func setConnection(_ phase: ConnectionPhase, generation gen: Int) {
@@ -220,6 +215,8 @@ public actor AgentConversation {
     private func stop() {
         streamTask?.cancel()
         streamTask = nil
+        persistTask?.cancel()
+        persistTask = nil
         continuation?.finish()
         continuation = nil
     }
