@@ -19,6 +19,11 @@ public struct HTTPClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = policy.requestTimeout.timeInterval
         configuration.timeoutIntervalForResource = policy.resourceTimeout.timeInterval
+        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.httpShouldUsePipelining = false
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.waitsForConnectivity = true
         self.session = URLSession(configuration: configuration)
         self.logger = logger
     }
@@ -29,7 +34,9 @@ public struct HTTPClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            var req = request
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            (data, response) = try await session.data(for: req)
         } catch {
             throw AgentError.connection(String(describing: error))
         }

@@ -16,17 +16,29 @@ public struct ConnectionProbe: Sendable {
         credentials: BasicCredentials? = nil,
         policy: ConnectionPolicy = .default
     ) async -> Outcome {
+        let outcome = await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
+        if case .unreachable = outcome {
+            try? await Task.sleep(for: .seconds(2))
+            return await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
+        }
+        return outcome
+    }
+
+    private func attemptProbe(
+        baseURL: URL,
+        credentials: BasicCredentials?,
+        policy: ConnectionPolicy
+    ) async -> Outcome {
         let builder = RequestBuilder(
             config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
         let http = HTTPClient(policy: policy, logger: AgentLog.logger("probe"))
 
         do {
             let data = try await http.send(builder.request(.get, "/global/health"))
-            if let health = try? JSONCoding.decoder.decode(HealthProbe.self, from: data),
-                (health.healthy ?? false) || health.version != nil
-            {
-                return .ok(agentType: .openCode, version: health.version)
-            }
+            // Any successful response on /global/health means it's an openCode server
+            // (lenient to handle varying response bodies)
+            let version = (try? JSONCoding.decoder.decode(HealthProbe.self, from: data))?.version
+            return .ok(agentType: .openCode, version: version)
         } catch let error as AgentError {
             switch error {
             case .http(let status, _) where status == 401 || status == 403:
@@ -41,11 +53,9 @@ public struct ConnectionProbe: Sendable {
 
         do {
             let data = try await http.send(builder.request(.get, "/status"))
-            if let status = try? JSONCoding.decoder.decode(StatusProbe.self, from: data),
-                status.agent == "claude" || status.status != nil
-            {
-                return .ok(agentType: .claudeCode, version: status.agent ?? status.agentType)
-            }
+            // Any successful response on /status means it's a claudeCode server
+            let version = (try? JSONCoding.decoder.decode(StatusProbe.self, from: data))?.agent ?? (try? JSONCoding.decoder.decode(StatusProbe.self, from: data))?.agentType
+            return .ok(agentType: .claudeCode, version: version)
         } catch let error as AgentError {
             switch error {
             case .http(let httpStatus, _) where httpStatus == 401 || httpStatus == 403:
