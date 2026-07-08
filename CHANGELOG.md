@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Standardized on `ClaudeCodeBackend` (previously `ClaudeSDKBackend` internally). README now accurately describes the claude-bridge structured service for Claude Code support (with `BRIDGE_HOST`/`BRIDGE_PASSWORD`).
+- Added `supportsAbort` and `supportsSessionUsage` to `BackendCapabilities`. OpenCode sets abort true; Claude sets usage true.
+- `BackendFailure` gains optional `detail`; reconnect paths now use `LocalizedError` descriptions where available.
+
+### Fixed
+- Documentation drift around Claude backend (agentapi references and examples corrected to match bridge implementation).
+
 ## 0.2.0
 
 Turns the Kit from a networking library into an app foundation: a unified, observable

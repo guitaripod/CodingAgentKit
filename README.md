@@ -3,13 +3,13 @@
 A cross-platform Swift package for driving coding-agent servers over HTTP + SSE. It speaks two backends behind one unified model:
 
 - **opencode** (`opencode serve`) — multi-provider, file browsing, diffs, permissions.
-- **Claude Code** via [`agentapi`](https://github.com/coder/agentapi) — a subscription-billed Claude Code session exposed over HTTP.
+- **Claude Code** via a bridge service (e.g. claude-bridge) exposing structured sessions over HTTP + SSE — a subscription-billed Claude Code session.
 
 It compiles, tests, and **runs on Linux and Apple platforms**. No `URLSession.bytes`, no Keychain, no OSLog in the core — so it works headless on a server as well as inside an iOS app.
 
 ## Why
 
-Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events stream. Their wire formats differ (opencode streams fine-grained part deltas; agentapi re-sends whole messages), but a client wants one transcript model to render. CodingAgentKit hides that difference behind a `CodingAgentBackend` protocol and a `MessageReducer` that folds either event style into one ordered `[ChatMessage]` — which is the reusable heart you can drop into a UIKit app, a CLI, or a TUI.
+Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events stream. Their wire formats differ (opencode streams fine-grained part deltas; the Claude backend receives whole messages with deltas), but a client wants one transcript model to render. CodingAgentKit hides that difference behind a `CodingAgentBackend` protocol and a `MessageReducer` that folds either event style into one ordered `[ChatMessage]` — which is the reusable heart you can drop into a UIKit app, a CLI, or a TUI.
 
 ## Modules
 
@@ -17,7 +17,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 |---|---|
 | `AgentCore` | Transport (URLSession REST + SSE), unified models, `CodingAgentBackend`, `MessageReducer`, `AgentConversation`, protocols (`SecretStore`, `SessionCache`), swift-log facade. No backend specifics, no Apple-only imports. |
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
-| `ClaudeCodeKit` | Hand-written agentapi client + event decoder + `ClaudeCodeBackend`, with an SSE stream and a polling fallback. |
+| `ClaudeCodeKit` | Hand-written client for Claude Code bridge + event decoder + `ClaudeCodeBackend`, with an SSE stream and a polling fallback. |
 | `CodingAgentKit` | Umbrella that re-exports the three. |
 | `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
 | `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |
@@ -89,7 +89,7 @@ codeagent find <pattern>             # opencode
 codeagent providers                  # opencode
 ```
 
-Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `AGENTAPI_HOST`.
+Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `BRIDGE_HOST`, `BRIDGE_PASSWORD`.
 
 ```bash
 export OPENCODE_SERVER_PASSWORD=secret
@@ -106,17 +106,15 @@ OPENCODE_SERVER_PASSWORD=secret opencode serve --port 4096 --hostname 0.0.0.0
 
 Auth is HTTP Basic (username defaults to `opencode`). The Kit injects the `Authorization` header on both REST and the SSE stream.
 
-### Claude Code via agentapi
+### Claude Code
 
-```bash
-agentapi server --port 3284 --type=claude -- claude
-```
+A bridge service exposing Claude Code via the structured HTTP/SSE API used by `ClaudeCodeBackend` (typical port 4098). Configure with `BRIDGE_HOST` and `BRIDGE_PASSWORD` (Basic auth user "claude").
 
-agentapi has **no authentication** — only host/CORS allowlists. Never expose port 3284 publicly.
+The service is reached over a private network (Tailscale recommended). Never expose publicly.
 
 ## Security model
 
-Run both servers bound to a private network. **Tailscale (plus `AGENTAPI_ALLOWED_HOSTS` for agentapi) is the firewall** — point the Kit at the tailnet IP. opencode adds HTTP Basic on top; agentapi relies entirely on the network boundary.
+Run both servers bound to a private network. **Tailscale is the firewall** — point the Kit at the tailnet IP. opencode adds HTTP Basic on top; the Claude bridge relies on the network boundary (and optional Basic auth).
 
 Credential storage is abstracted behind `SecretStore` (an `EnvironmentSecretStore` ships in the core). An app supplies a Keychain implementation; the core never imports `Security`.
 
@@ -132,7 +130,7 @@ scripts/test.sh              # swift build + swift test (sets Linux LD_LIBRARY_P
 swift test --filter OpenCodeReducerIntegrationTests
 ```
 
-Decoder and reducer tests run offline against fixtures captured from a live opencode server and the agentapi schema.
+Decoder and reducer tests run offline against fixtures captured from a live opencode server and the Claude bridge schema.
 
 ## Documentation
 
