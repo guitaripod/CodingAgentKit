@@ -6,7 +6,7 @@ import Foundation
 struct CodeAgent: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "codeagent",
-        abstract: "Cross-platform CLI for opencode and Claude Code (agentapi) over HTTP + SSE.",
+        abstract: "Cross-platform CLI for opencode and Claude Code over HTTP + SSE.",
         subcommands: [
             Health.self, Discover.self, Sessions.self, New.self, Send.self, Stream.self, Diff.self,
             Files.self, Find.self, Providers.self,
@@ -46,7 +46,7 @@ struct New: AsyncParsableCommand {
     @OptionGroup var connection: ConnectionOptions
 
     func run() async throws {
-        let session = try await connection.makeBackend().createSession(title: nil)
+        let session = try await connection.makeBackend().createSession(title: nil, directory: nil)
         print(session.id)
     }
 }
@@ -87,7 +87,7 @@ struct Discover: AsyncParsableCommand {
         case .unreachable(let detail):
             print("unreachable: \(detail)")
         case .notAnAgentServer:
-            print("reachable, but not an opencode or agentapi server")
+            print("reachable, but not an opencode or Claude Code server")
         }
     }
 }

@@ -103,15 +103,15 @@ public enum BackendEvent: Sendable {
     case unknown(type: String)
 }
 
-/// A coding-agent server behind one unified surface. Conformers (opencode, Claude Code via
-/// agentapi) translate their wire protocol into ``BackendEvent`` values a ``MessageReducer`` folds.
+/// A coding-agent server behind one unified surface. Conformers translate their wire protocol
+/// into ``BackendEvent`` values a ``MessageReducer`` folds.
 public protocol CodingAgentBackend: Sendable {
     var agentType: AgentType { get }
     var capabilities: BackendCapabilities { get }
 
     func health() async throws -> ServerHealth
     func listSessions() async throws -> [AgentSession]
-    func createSession(title: String?) async throws -> AgentSession
+    func createSession(title: String?, directory: String?) async throws -> AgentSession
     func deleteSession(_ sessionID: String) async throws
     func messages(for sessionID: String) async throws -> [ChatMessage]
     func send(_ prompt: SendPrompt, to sessionID: String) async throws

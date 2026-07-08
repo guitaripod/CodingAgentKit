@@ -72,7 +72,7 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     public func health() async throws -> ServerHealth { serverHealth }
     public func listSessions() async throws -> [AgentSession] { sessions }
 
-    public func createSession(title: String?) async throws -> AgentSession {
+    public func createSession(title: String?, directory: String?) async throws -> AgentSession {
         AgentSession(
             id: "mock", agentType: agentType, title: title ?? "Mock session",
             createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))

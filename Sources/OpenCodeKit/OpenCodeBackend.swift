@@ -31,8 +31,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await client.listSessions().map(OpenCodeMapping.session)
     }
 
-    public func createSession(title: String?) async throws -> AgentSession {
-        OpenCodeMapping.session(try await client.createSession())
+    public func createSession(title: String?, directory: String?) async throws -> AgentSession {
+        OpenCodeMapping.session(try await client.createSession(directory: directory))
     }
 
     public func deleteSession(_ sessionID: String) async throws {

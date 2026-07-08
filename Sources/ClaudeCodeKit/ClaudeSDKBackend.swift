@@ -1,9 +1,9 @@
 import AgentCore
 import Foundation
 
-/// Talks to `claude-bridge` (the headless `claude -p` HTTP/SSE service). Unlike the legacy
-/// agentapi transport, this speaks a structured API: real resumable sessions, token streaming,
-/// tool calls, model/effort per turn, and clear — no terminal scraping.
+/// Talks to `claude-bridge` (the headless `claude -p` HTTP/SSE service). Speaks a structured
+/// API: real resumable sessions, token streaming, tool calls, model/effort per turn, and
+/// clear — no terminal scraping.
 public struct ClaudeSDKBackend: CodingAgentBackend {
     public let agentType: AgentType = .claudeCode
     public let capabilities = BackendCapabilities(
@@ -44,7 +44,7 @@ public struct ClaudeSDKBackend: CodingAgentBackend {
         return try BridgeCoding.decoder.decode([BRSummary].self, from: data).map(\.session)
     }
 
-    public func createSession(title: String?) async throws -> AgentSession {
+    public func createSession(title: String?, directory: String?) async throws -> AgentSession {
         let body = try BridgeCoding.encoder.encode(BRCreate(title: title, model: nil, effort: nil))
         let data = try await http.send(builder.request(.post, "/sessions", body: body))
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).session

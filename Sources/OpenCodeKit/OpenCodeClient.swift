@@ -30,8 +30,14 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/session")))
     }
 
-    func createSession() async throws -> OCSession {
-        try decode(await http.send(builder.request(.post, "/session")))
+    func createSession(directory: String?) async throws -> OCSession {
+        let body: Data?
+        if let directory {
+            body = try JSONEncoder().encode(["directory": directory])
+        } else {
+            body = nil
+        }
+        return try decode(await http.send(builder.request(.post, "/session", body: body)))
     }
 
     func deleteSession(_ sessionID: String) async throws {
