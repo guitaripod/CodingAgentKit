@@ -8,6 +8,8 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsReasoningEffort: Bool
     public var supportsClearing: Bool
     public var supportsForking: Bool
+    public var supportsAbort: Bool
+    public var supportsSessionUsage: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -18,7 +20,9 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsAttachments: Bool,
         supportsReasoningEffort: Bool = false,
         supportsClearing: Bool = false,
-        supportsForking: Bool = false
+        supportsForking: Bool = false,
+        supportsAbort: Bool = false,
+        supportsSessionUsage: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -29,6 +33,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsReasoningEffort = supportsReasoningEffort
         self.supportsClearing = supportsClearing
         self.supportsForking = supportsForking
+        self.supportsAbort = supportsAbort
+        self.supportsSessionUsage = supportsSessionUsage
     }
 }
 
@@ -63,11 +69,13 @@ public struct BackendFailure: Error, Sendable, Hashable, Codable {
     public var message: String
     public var code: String?
     public var retryable: Bool
+    public var detail: String?
 
-    public init(message: String, code: String? = nil, retryable: Bool = false) {
+    public init(message: String, code: String? = nil, retryable: Bool = false, detail: String? = nil) {
         self.message = message
         self.code = code
         self.retryable = retryable
+        self.detail = detail
     }
 }
 

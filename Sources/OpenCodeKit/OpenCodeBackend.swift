@@ -9,7 +9,9 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsPermissions: true,
         supportsMultipleSessions: true,
         supportsModelSelection: true,
-        supportsAttachments: true
+        supportsAttachments: true,
+        supportsAbort: true,
+        supportsSessionUsage: false
     )
 
     let client: OpenCodeClient

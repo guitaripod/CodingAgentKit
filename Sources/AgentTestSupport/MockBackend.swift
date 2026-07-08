@@ -64,7 +64,7 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
             ?? BackendCapabilities(
                 supportsFileBrowsing: true, supportsDiffs: true, supportsPermissions: true,
                 supportsMultipleSessions: true, supportsModelSelection: true,
-                supportsAttachments: true)
+                supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true)
     }
 
     public var recordedPrompts: [SendPrompt] { mutable.withLock { $0.sentPrompts } }
