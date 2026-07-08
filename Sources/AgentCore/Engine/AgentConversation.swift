@@ -113,8 +113,9 @@ public actor AgentConversation {
                 }
             } catch {
                 guard gen == generation else { return }
+                let msg = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
                 setFailure(
-                    BackendFailure(message: String(describing: error), retryable: true),
+                    BackendFailure(message: msg, retryable: true, detail: String(describing: error)),
                     generation: gen)
             }
 
@@ -172,8 +173,9 @@ public actor AgentConversation {
             emit()
         } catch {
             guard gen == generation else { return }
+            let msg = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
             lastFailure = BackendFailure(
-                message: String(describing: error), retryable: true)
+                message: msg, retryable: true, detail: String(describing: error))
             emit()
         }
     }
