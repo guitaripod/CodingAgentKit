@@ -13,7 +13,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsReasoningEffort: true,
         supportsClearing: true,
         supportsForking: true,
-        supportsAbort: false,
+        supportsAbort: true,
         supportsSessionUsage: true,
         supportsRenaming: true,
         supportsSubagents: true
@@ -55,6 +55,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func deleteSession(_ sessionID: String) async throws {
         _ = try await http.send(builder.request(.delete, "/sessions/\(sessionID)"))
+    }
+
+    public func abort(sessionID: String) async throws {
+        _ = try await http.send(builder.request(.post, "/sessions/\(sessionID)/abort"))
     }
 
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
@@ -254,11 +258,12 @@ struct BRSubagent: Decodable {
     let toolUseID: String?
     let updatedAt: Date
     let active: Bool
+    let completed: Bool?
 
     var summary: SubagentSummary {
         SubagentSummary(
             id: id, title: title, agentType: agentType, toolUseID: toolUseID,
-            updatedAt: updatedAt, isActive: active)
+            updatedAt: updatedAt, isActive: active, isCompleted: completed ?? false)
     }
 }
 

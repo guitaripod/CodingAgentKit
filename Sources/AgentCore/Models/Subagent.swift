@@ -9,10 +9,11 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
     public var toolUseID: String?
     public var updatedAt: Date
     public var isActive: Bool
+    public var isCompleted: Bool
 
     public init(
         id: String, title: String, agentType: String? = nil, toolUseID: String? = nil,
-        updatedAt: Date, isActive: Bool = false
+        updatedAt: Date, isActive: Bool = false, isCompleted: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -20,6 +21,7 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         self.toolUseID = toolUseID
         self.updatedAt = updatedAt
         self.isActive = isActive
+        self.isCompleted = isCompleted
     }
 }
 
