@@ -11,10 +11,12 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsModelSelection: true,
         supportsAttachments: true,
         supportsAbort: true,
-        supportsSessionUsage: false
+        supportsSessionUsage: false,
+        supportsQuestions: true
     )
 
     let client: OpenCodeClient
+    private let directories = SessionDirectoryCache()
 
     public init(config: ServerConfig) {
         self.client = OpenCodeClient(config: config)
@@ -22,6 +24,30 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public init(client: OpenCodeClient) {
         self.client = client
+    }
+
+    /// opencode scopes `/event` and `/question` by workspace directory, so
+    /// per-session calls need the session's directory. Cached; refreshed from
+    /// the session list on miss.
+    private actor SessionDirectoryCache {
+        private var directories: [String: String] = [:]
+
+        func directory(for sessionID: String, client: OpenCodeClient) async -> String? {
+            if let cached = directories[sessionID] { return cached }
+            if let sessions = try? await client.listSessions() {
+                for session in sessions {
+                    if let directory = session.directory {
+                        directories[session.id] = directory
+                    }
+                }
+            }
+            return directories[sessionID]
+        }
+
+        func record(sessionID: String, directory: String?) {
+            guard let directory else { return }
+            directories[sessionID] = directory
+        }
     }
 
     public func health() async throws -> ServerHealth {
@@ -34,7 +60,9 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
-        OpenCodeMapping.session(try await client.createSession(directory: directory))
+        let session = OpenCodeMapping.session(try await client.createSession(directory: directory))
+        await directories.record(sessionID: session.id, directory: session.directory)
+        return session
     }
 
     public func deleteSession(_ sessionID: String) async throws {
@@ -78,11 +106,11 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
-        let raw = client.eventStream()
-        return AsyncThrowingStream { continuation in
+        AsyncThrowingStream { continuation in
             let task = Task {
+                let directory = await directories.directory(for: sessionID, client: client)
                 do {
-                    for try await sse in raw {
+                    for try await sse in client.eventStream(directory: directory) {
                         if let event = OpenCodeEventDecoder.decode(sse, sessionID: sessionID) {
                             continuation.yield(event)
                         }
@@ -107,6 +135,24 @@ public struct OpenCodeBackend: FileBrowsingBackend {
             permissionID: permission.id,
             response: decision.rawValue
         )
+    }
+
+    public func answerQuestion(_ request: QuestionRequest, answers: [[String]]) async throws {
+        let directory = await directories.directory(for: request.sessionID, client: client)
+        try await client.answerQuestion(
+            requestID: request.id, directory: directory, answers: answers)
+    }
+
+    public func rejectQuestion(_ request: QuestionRequest) async throws {
+        let directory = await directories.directory(for: request.sessionID, client: client)
+        try await client.rejectQuestion(requestID: request.id, directory: directory)
+    }
+
+    public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] {
+        let directory = await directories.directory(for: sessionID, client: client)
+        return try await client.pendingQuestions(directory: directory)
+            .compactMap(OpenCodeMapping.question)
+            .filter { $0.sessionID == sessionID }
     }
 
     public func listFiles(path: String?) async throws -> [FileNode] {

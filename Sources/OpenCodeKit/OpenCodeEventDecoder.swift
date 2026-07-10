@@ -13,7 +13,12 @@ public enum OpenCodeEventDecoder {
         else { return nil }
 
         let properties = envelope.properties
-        if let eventSession = properties?["sessionID"]?.stringValue, eventSession != sessionID {
+        let eventSessions = [
+            properties?["sessionID"]?.stringValue,
+            properties?["info"]?["sessionID"]?.stringValue,
+            properties?["part"]?["sessionID"]?.stringValue,
+        ].compactMap { $0 }
+        if !eventSessions.isEmpty, !eventSessions.contains(sessionID) {
             return nil
         }
 
@@ -50,10 +55,23 @@ public enum OpenCodeEventDecoder {
         case "session.idle":
             return .status(.idle)
 
+        case "step.started":
+            return .status(.running)
+
         case "session.error":
             let message =
                 properties?["error"].flatMap(OpenCodeMapping.errorMessage) ?? "session error"
             return .failure(BackendFailure(message: message))
+
+        case "question.asked", "question.v2.asked":
+            guard let value = envelope.properties, let request = questionRequest(from: value)
+            else { return nil }
+            return .question(request)
+
+        case "question.replied", "question.rejected", "question.v2.replied",
+            "question.v2.rejected":
+            guard let requestID = properties?["requestID"]?.stringValue else { return nil }
+            return .questionResolved(requestID: requestID)
 
         case "permission.asked":
             guard let id = properties?["id"]?.stringValue else { return nil }
@@ -81,5 +99,12 @@ public enum OpenCodeEventDecoder {
     private static func part(from value: JSONValue) -> OCPart? {
         guard let data = try? JSONCoding.encoder.encode(value) else { return nil }
         return try? JSONCoding.decoder.decode(OCPart.self, from: data)
+    }
+
+    private static func questionRequest(from value: JSONValue) -> QuestionRequest? {
+        guard let data = try? JSONCoding.encoder.encode(value),
+            let raw = try? JSONCoding.decoder.decode(OCQuestionRequestDTO.self, from: data)
+        else { return nil }
+        return OpenCodeMapping.question(raw)
     }
 }

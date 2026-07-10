@@ -78,6 +78,23 @@ enum OpenCodeMapping {
         return MessagePart(id: part.id, kind: kind)
     }
 
+    static func question(_ dto: OCQuestionRequestDTO) -> QuestionRequest? {
+        guard !dto.questions.isEmpty else { return nil }
+        return QuestionRequest(
+            id: dto.id,
+            sessionID: dto.sessionID,
+            questions: dto.questions.map { item in
+                QuestionRequest.Item(
+                    question: item.question,
+                    header: item.header ?? "",
+                    options: (item.options ?? []).map {
+                        QuestionRequest.Option(label: $0.label, description: $0.description ?? "")
+                    },
+                    multiple: item.multiple ?? false,
+                    custom: item.custom ?? false)
+            })
+    }
+
     static func message(_ envelope: OCMessageEnvelope) -> ChatMessage {
         var message = shell(envelope.info)
         message.parts = envelope.parts.map(part)

@@ -12,6 +12,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
     public var messages: [ChatMessage]
     public var status: BackendStatus
     public var pendingPermissions: [PermissionRequest]
+    public var pendingQuestions: [QuestionRequest]
     public var lastFailure: BackendFailure?
     public var connection: ConnectionPhase
 
@@ -19,12 +20,14 @@ public struct ConversationState: Sendable, Hashable, Codable {
         messages: [ChatMessage] = [],
         status: BackendStatus = .unknown,
         pendingPermissions: [PermissionRequest] = [],
+        pendingQuestions: [QuestionRequest] = [],
         lastFailure: BackendFailure? = nil,
         connection: ConnectionPhase = .connecting
     ) {
         self.messages = messages
         self.status = status
         self.pendingPermissions = pendingPermissions
+        self.pendingQuestions = pendingQuestions
         self.lastFailure = lastFailure
         self.connection = connection
     }

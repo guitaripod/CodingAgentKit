@@ -10,6 +10,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsForking: Bool
     public var supportsAbort: Bool
     public var supportsSessionUsage: Bool
+    public var supportsQuestions: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -22,7 +23,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsClearing: Bool = false,
         supportsForking: Bool = false,
         supportsAbort: Bool = false,
-        supportsSessionUsage: Bool = false
+        supportsSessionUsage: Bool = false,
+        supportsQuestions: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -35,6 +37,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsForking = supportsForking
         self.supportsAbort = supportsAbort
         self.supportsSessionUsage = supportsSessionUsage
+        self.supportsQuestions = supportsQuestions
     }
 }
 
@@ -99,6 +102,50 @@ public enum PermissionDecision: String, Sendable {
     case reject
 }
 
+/// A structured question the agent asks mid-turn (opencode's question tool):
+/// one request can carry several questions, each with predefined options,
+/// optional multi-select, and optional free-form ("custom") answers.
+public struct QuestionRequest: Sendable, Hashable, Codable, Identifiable {
+    public struct Option: Sendable, Hashable, Codable {
+        public let label: String
+        public let description: String
+
+        public init(label: String, description: String) {
+            self.label = label
+            self.description = description
+        }
+    }
+
+    public struct Item: Sendable, Hashable, Codable {
+        public let question: String
+        public let header: String
+        public let options: [Option]
+        public let multiple: Bool
+        public let custom: Bool
+
+        public init(
+            question: String, header: String, options: [Option],
+            multiple: Bool = false, custom: Bool = false
+        ) {
+            self.question = question
+            self.header = header
+            self.options = options
+            self.multiple = multiple
+            self.custom = custom
+        }
+    }
+
+    public let id: String
+    public var sessionID: String
+    public var questions: [Item]
+
+    public init(id: String, sessionID: String, questions: [Item]) {
+        self.id = id
+        self.sessionID = sessionID
+        self.questions = questions
+    }
+}
+
 public enum BackendEvent: Sendable {
     case messageUpserted(ChatMessage, replaceParts: Bool)
     case partUpserted(messageID: String, MessagePart)
@@ -107,6 +154,8 @@ public enum BackendEvent: Sendable {
     case messageRemoved(messageID: String)
     case status(BackendStatus)
     case permission(PermissionRequest)
+    case question(QuestionRequest)
+    case questionResolved(requestID: String)
     case failure(BackendFailure)
     case unknown(type: String)
 }
@@ -126,6 +175,14 @@ public protocol CodingAgentBackend: Sendable {
     func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error>
     func abort(sessionID: String) async throws
     func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
+    /// Answers a pending question request: one answer array per question, in
+    /// order, each holding the selected option labels (or a custom string).
+    func answerQuestion(_ request: QuestionRequest, answers: [[String]]) async throws
+    func rejectQuestion(_ request: QuestionRequest) async throws
+    /// Questions currently blocking a turn — used to recover state after a
+    /// reconnect, since the asked event is not replayed. Empty when
+    /// unsupported.
+    func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest]
     func availableModels() async throws -> [ModelInfo]
     func availableAgents() async throws -> [String]
     func defaultModel() async throws -> ModelSelection?
@@ -156,6 +213,16 @@ extension CodingAgentBackend {
     {
         throw AgentError.unsupported("permissions")
     }
+
+    public func answerQuestion(_ request: QuestionRequest, answers: [[String]]) async throws {
+        throw AgentError.unsupported("questions")
+    }
+
+    public func rejectQuestion(_ request: QuestionRequest) async throws {
+        throw AgentError.unsupported("questions")
+    }
+
+    public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] { [] }
 
     public func deleteSession(_ sessionID: String) async throws {
         throw AgentError.unsupported("deleteSession")

@@ -30,14 +30,41 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/session")))
     }
 
+    /// The working directory is a QUERY parameter on opencode's session
+    /// routes — a `directory` body field is silently ignored and the session
+    /// lands in the server's own cwd.
     func createSession(directory: String?) async throws -> OCSession {
-        let body: Data?
-        if let directory {
-            body = try JSONEncoder().encode(["directory": directory])
-        } else {
-            body = nil
-        }
-        return try decode(await http.send(builder.request(.post, "/session", body: body)))
+        let query = directory.map { [URLQueryItem(name: "directory", value: $0)] } ?? []
+        return try decode(
+            await http.send(
+                builder.request(.post, "/session", query: query, body: Data("{}".utf8))))
+    }
+
+    /// Question routes are directory-scoped like `/event`: the request id is
+    /// only resolvable in the workspace the session runs in.
+    func answerQuestion(requestID: String, directory: String?, answers: [[String]]) async throws {
+        let body = try JSONEncoder().encode(["answers": answers])
+        try await http.send(
+            builder.request(
+                .post, "/question/\(requestID)/reply",
+                query: directoryQuery(directory), body: body))
+    }
+
+    func rejectQuestion(requestID: String, directory: String?) async throws {
+        try await http.send(
+            builder.request(
+                .post, "/question/\(requestID)/reject",
+                query: directoryQuery(directory), body: Data("{}".utf8)))
+    }
+
+    func pendingQuestions(directory: String?) async throws -> [OCQuestionRequestDTO] {
+        try decode(
+            await http.send(
+                builder.request(.get, "/question", query: directoryQuery(directory))))
+    }
+
+    private func directoryQuery(_ directory: String?) -> [URLQueryItem] {
+        directory.map { [URLQueryItem(name: "directory", value: $0)] } ?? []
     }
 
     func deleteSession(_ sessionID: String) async throws {
@@ -93,9 +120,13 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/config/providers")))
     }
 
-    func eventStream() -> AsyncThrowingStream<SSEvent, Error> {
+    /// `/event` is directory-scoped: a session created in another workspace
+    /// emits nothing on the unscoped stream, so subscribers must pass the
+    /// session's directory.
+    func eventStream(directory: String?) -> AsyncThrowingStream<SSEvent, Error> {
         do {
-            return http.serverSentEvents(try builder.eventStreamRequest("/event"))
+            return http.serverSentEvents(
+                try builder.eventStreamRequest("/event", query: directoryQuery(directory)))
         } catch {
             return AsyncThrowingStream { $0.finish(throwing: error) }
         }

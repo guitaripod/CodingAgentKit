@@ -136,3 +136,22 @@ struct OCPromptRequest: Encodable, Sendable {
     let model: OCModelInput?
     let agent: String?
 }
+
+struct OCQuestionRequestDTO: Decodable {
+    struct Option: Decodable {
+        let label: String
+        let description: String?
+    }
+
+    struct Info: Decodable {
+        let question: String
+        let header: String?
+        let options: [Option]?
+        let multiple: Bool?
+        let custom: Bool?
+    }
+
+    let id: String
+    let sessionID: String
+    let questions: [Info]
+}

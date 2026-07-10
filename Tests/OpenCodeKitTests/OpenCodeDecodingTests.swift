@@ -157,3 +157,43 @@ private func decode(_ json: String) -> BackendEvent? {
             })
     }
 }
+
+@Suite struct OpenCodeQuestionTests {
+    @Test func decodesQuestionAsked() {
+        let json = #"""
+        {"type":"question.asked","properties":{"id":"que_1","sessionID":"ses_S","questions":[{"question":"Which database?","header":"Database","options":[{"label":"Postgres","description":"Relational"},{"label":"SQLite","description":"Embedded"}],"multiple":false,"custom":true}]}}
+        """#
+        guard case .question(let request)? = decode(json) else {
+            Issue.record("expected question event")
+            return
+        }
+        #expect(request.id == "que_1")
+        #expect(request.questions.count == 1)
+        #expect(request.questions[0].header == "Database")
+        #expect(request.questions[0].options.map(\.label) == ["Postgres", "SQLite"])
+        #expect(request.questions[0].custom)
+        #expect(!request.questions[0].multiple)
+    }
+
+    @Test func decodesV2AskedAndResolution() {
+        let asked = #"{"type":"question.v2.asked","properties":{"id":"que_2","sessionID":"ses_S","questions":[{"question":"Q?","header":"H","options":[]}]}}"#
+        guard case .question(let request)? = decode(asked) else {
+            Issue.record("expected v2 question")
+            return
+        }
+        #expect(request.id == "que_2")
+        guard
+            case .questionResolved(let id)? = decode(
+                #"{"type":"question.replied","properties":{"sessionID":"ses_S","requestID":"que_2","answers":[["A"]]}}"#)
+        else {
+            Issue.record("expected resolution")
+            return
+        }
+        #expect(id == "que_2")
+    }
+
+    @Test func filtersQuestionFromOtherSession() {
+        let json = #"{"type":"question.asked","properties":{"id":"que_3","sessionID":"ses_OTHER","questions":[{"question":"Q?","header":"H","options":[]}]}}"#
+        #expect(decode(json) == nil)
+    }
+}
