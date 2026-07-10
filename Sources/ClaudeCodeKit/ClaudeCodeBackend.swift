@@ -44,7 +44,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
-        let body = try BridgeCoding.encoder.encode(BRCreate(title: title, model: nil, effort: nil))
+        let body = try BridgeCoding.encoder.encode(
+            BRCreate(title: title, directory: directory, model: nil, effort: nil))
         let data = try await http.send(builder.request(.post, "/sessions", body: body))
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).session
     }
@@ -126,6 +127,7 @@ enum BridgeCoding {
 struct BRSummary: Decodable {
     let id: String
     let title: String
+    let directory: String?
     let model: String
     let effort: String
     let createdAt: Date
@@ -133,13 +135,15 @@ struct BRSummary: Decodable {
 
     var session: AgentSession {
         AgentSession(
-            id: id, agentType: .claudeCode, title: title, createdAt: createdAt, updatedAt: updatedAt)
+            id: id, agentType: .claudeCode, title: title, directory: directory,
+            createdAt: createdAt, updatedAt: updatedAt)
     }
 }
 
 struct BRSession: Decodable {
     let id: String
     let title: String
+    let directory: String?
     let model: String
     let effort: String
     let createdAt: Date
@@ -151,7 +155,8 @@ struct BRSession: Decodable {
 
     var session: AgentSession {
         AgentSession(
-            id: id, agentType: .claudeCode, title: title, createdAt: createdAt, updatedAt: updatedAt)
+            id: id, agentType: .claudeCode, title: title, directory: directory,
+            createdAt: createdAt, updatedAt: updatedAt)
     }
 }
 
@@ -161,10 +166,20 @@ struct BRMessage: Decodable {
     let parts: [BRPart]
     let createdAt: Date
 
+    /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
+    /// get an index suffix so `messageID:partID` row identifiers stay unique;
+    /// the first occurrence keeps its base id so streaming deltas still route.
     var chat: ChatMessage {
-        ChatMessage(
+        var counts: [String: Int] = [:]
+        let uniqueParts = parts.map { raw -> MessagePart in
+            let part = raw.part
+            let seen = counts[part.id, default: 0]
+            counts[part.id] = seen + 1
+            return seen == 0 ? part : MessagePart(id: "\(part.id)-\(seen)", kind: part.kind)
+        }
+        return ChatMessage(
             id: id, role: role == "user" ? .user : .assistant, agentType: .claudeCode,
-            parts: parts.map(\.part), createdAt: createdAt)
+            parts: uniqueParts, createdAt: createdAt)
     }
 }
 
@@ -206,6 +221,7 @@ struct BRTool: Decodable {
 
 struct BRCreate: Encodable {
     let title: String?
+    let directory: String?
     let model: String?
     let effort: String?
 }
