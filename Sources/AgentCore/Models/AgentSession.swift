@@ -8,6 +8,9 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     public var directory: String?
     public var createdAt: Date
     public var updatedAt: Date
+    /// The session's transcript is being written to right now — an agent is
+    /// actively working in it (on the server machine or via this client).
+    public var isActive: Bool?
 
     public init(
         id: String,
@@ -16,7 +19,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         parentID: String? = nil,
         directory: String? = nil,
         createdAt: Date,
-        updatedAt: Date
+        updatedAt: Date,
+        isActive: Bool? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -25,5 +29,6 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.directory = directory
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.isActive = isActive
     }
 }

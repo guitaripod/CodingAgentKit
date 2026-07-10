@@ -132,11 +132,12 @@ struct BRSummary: Decodable {
     let effort: String
     let createdAt: Date
     let updatedAt: Date
+    let active: Bool?
 
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
-            createdAt: createdAt, updatedAt: updatedAt)
+            createdAt: createdAt, updatedAt: updatedAt, isActive: active)
     }
 }
 
