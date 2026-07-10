@@ -12,6 +12,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsSessionUsage: Bool
     public var supportsQuestions: Bool
     public var supportsRenaming: Bool
+    public var supportsSubagents: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -26,7 +27,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsAbort: Bool = false,
         supportsSessionUsage: Bool = false,
         supportsQuestions: Bool = false,
-        supportsRenaming: Bool = false
+        supportsRenaming: Bool = false,
+        supportsSubagents: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -41,6 +43,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsSessionUsage = supportsSessionUsage
         self.supportsQuestions = supportsQuestions
         self.supportsRenaming = supportsRenaming
+        self.supportsSubagents = supportsSubagents
     }
 }
 
@@ -207,6 +210,10 @@ public protocol CodingAgentBackend: Sendable {
     func forkSession(_ sessionID: String) async throws -> AgentSession
     /// Renames a session's display title.
     func renameSession(_ sessionID: String, title: String) async throws
+    /// Subagents spawned within a session (Claude Code sidecar transcripts). Empty when unsupported.
+    func subagents(for sessionID: String) async throws -> [SubagentSummary]
+    /// A subagent's full transcript, rendered in the same message model as the session itself.
+    func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage]
 }
 
 extension CodingAgentBackend {
@@ -252,6 +259,12 @@ extension CodingAgentBackend {
 
     public func renameSession(_ sessionID: String, title: String) async throws {
         throw AgentError.unsupported("rename")
+    }
+
+    public func subagents(for sessionID: String) async throws -> [SubagentSummary] { [] }
+
+    public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
+        throw AgentError.unsupported("subagents")
     }
 }
 

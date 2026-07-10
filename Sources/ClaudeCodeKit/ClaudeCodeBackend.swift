@@ -15,7 +15,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsForking: true,
         supportsAbort: false,
         supportsSessionUsage: true,
-        supportsRenaming: true
+        supportsRenaming: true,
+        supportsSubagents: true
     )
 
     public static let models: [ModelInfo] = [
@@ -54,6 +55,18 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func deleteSession(_ sessionID: String) async throws {
         _ = try await http.send(builder.request(.delete, "/sessions/\(sessionID)"))
+    }
+
+    public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
+        let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)/agents"))
+        return try BridgeCoding.decoder.decode([BRSubagent].self, from: data).map(\.summary)
+    }
+
+    public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
+        let data = try await http.send(
+            builder.request(.get, "/sessions/\(sessionID)/agents/\(agentID)"))
+        return try BridgeCoding.decoder.decode(BRSubagentTranscript.self, from: data)
+            .messages.map(\.chat)
     }
 
     public func renameSession(_ sessionID: String, title: String) async throws {
@@ -232,6 +245,26 @@ struct BRCreate: Encodable {
     let directory: String?
     let model: String?
     let effort: String?
+}
+
+struct BRSubagent: Decodable {
+    let id: String
+    let title: String
+    let agentType: String?
+    let toolUseID: String?
+    let updatedAt: Date
+    let active: Bool
+
+    var summary: SubagentSummary {
+        SubagentSummary(
+            id: id, title: title, agentType: agentType, toolUseID: toolUseID,
+            updatedAt: updatedAt, isActive: active)
+    }
+}
+
+struct BRSubagentTranscript: Decodable {
+    let id: String
+    let messages: [BRMessage]
 }
 
 struct BRRename: Encodable {
