@@ -26,9 +26,19 @@ public actor FileSessionCache: SessionCache {
         save(messages, to: "messages-\(sanitize(sessionID)).json")
     }
 
+    /// Filesystem-safe name that stays collision-free: IDs containing
+    /// disallowed characters get a digest suffix so `"a/b"` and `"a.b"`
+    /// can never map to the same file.
     private func sanitize(_ raw: String) -> String {
         let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-        return String(raw.map { allowed.contains($0) ? $0 : "_" })
+        guard raw.contains(where: { !allowed.contains($0) }) else { return raw }
+        let cleaned = String(raw.prefix(64).map { allowed.contains($0) ? $0 : "_" })
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in raw.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100_0000_01b3
+        }
+        return "\(cleaned)-\(String(hash, radix: 16))"
     }
 
     private func load<T: Decodable>(_ type: T.Type, from name: String) -> T? {

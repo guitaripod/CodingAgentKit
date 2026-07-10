@@ -26,16 +26,30 @@
 
         private var fileURL: URL { directory.appendingPathComponent("profiles.json") }
 
+        /// Throws on transient read failures (e.g. data-protection lock) instead of
+        /// returning `[]`, so `save`/`delete` can never rebuild the file from an
+        /// empty read and silently drop every stored profile.
         public func profiles() throws -> [ConnectionProfile] {
-            guard let data = try? Data(contentsOf: fileURL) else { return [] }
+            let data: Data
+            do {
+                data = try Data(contentsOf: fileURL)
+            } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain
+                && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)
+            {
+                return []
+            }
             return try JSONDecoder().decode([ConnectionProfile].self, from: data)
         }
 
+        /// Keychain first: if the password write fails, no profile lands on
+        /// disk, so a failed save can't leave a half-saved profile that
+        /// becomes active (and 401s) on the next launch.
         public func save(_ profile: ConnectionProfile, password: String?) throws {
             var all = try profiles().filter { $0.id != profile.id }
             all.append(profile)
-            try write(all)
             if let password { try keychain.setValue(password, for: profile.id) }
+            try write(all)
         }
 
         public func delete(id: String) throws {

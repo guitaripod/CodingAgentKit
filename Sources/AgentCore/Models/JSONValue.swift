@@ -59,7 +59,10 @@ public enum JSONValue: Sendable, Hashable, Codable {
         case .null: return "null"
         case .bool(let value): return String(value)
         case .number(let value):
-            return value.rounded() == value ? String(Int(value)) : String(value)
+            if value.rounded() == value, let integer = Int64(exactly: value) {
+                return String(integer)
+            }
+            return String(value)
         case .string(let value): return value
         case .array(let value):
             return "[" + value.map(\.compactDescription).joined(separator: ", ") + "]"
