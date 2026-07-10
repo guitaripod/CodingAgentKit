@@ -13,6 +13,12 @@ extension AgentError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .http(let status, let body):
+            if let data = body.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+                let message = object["error"], !message.isEmpty
+            {
+                return message
+            }
             let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
             return "HTTP \(status)\(trimmed.isEmpty ? "" : ": \(trimmed)")"
         case .decoding(let detail): return "Decoding failed: \(detail)"
