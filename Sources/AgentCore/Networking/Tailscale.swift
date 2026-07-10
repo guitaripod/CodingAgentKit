@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 public struct TailscaleOAuthCredentials: Sendable, Codable, Hashable {
     public var clientID: String
     public var clientSecret: String
@@ -98,8 +102,8 @@ public struct TailscaleClient: Sendable {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let cid = credentials.clientID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let csec = credentials.clientSecret.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let cid = Self.formEncoded(credentials.clientID)
+        let csec = Self.formEncoded(credentials.clientSecret)
         req.httpBody = "client_id=\(cid)&client_secret=\(csec)".data(using: .utf8)
         let data = try await http.send(req)
         struct TokenResponse: Decodable {
@@ -107,6 +111,15 @@ public struct TailscaleClient: Sendable {
         }
         let tok = try JSONCoding.decoder.decode(TokenResponse.self, from: data)
         return tok.access_token
+    }
+
+    /// Percent-encodes for an `application/x-www-form-urlencoded` body, where
+    /// `.urlQueryAllowed` is wrong: it passes `+`, `&`, and `=` through, which
+    /// the server decodes as space / separator characters.
+    private static func formEncoded(_ value: String) -> String {
+        let unreserved = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: unreserved) ?? value
     }
 }
 
@@ -124,86 +137,115 @@ public struct TailnetScanner: Sendable {
     }
 
     private let probe = ConnectionProbe()
+    private let logger = AgentLog.logger("scanner")
+    private let maxConcurrentProbes = 16
 
     public init() {}
 
     public func scan(devices: [TailscaleDevice], ports: [Int] = [4096, 4098]) async -> [Suggestion] {
         let policy = ConnectionPolicy(requestTimeout: .seconds(10), resourceTimeout: .seconds(15))
-        var results: [Suggestion] = []
-        var okCount = 0
-        var authCount = 0
-        var unreachableCount = 0
-        var notAgentCount = 0
-        await withTaskGroup(of: (Suggestion?, String).self) { group in
-            for device in devices {
-                let hosts = candidateHosts(for: device)
-                for port in ports {
-                    for host in hosts {
-                        guard let url = URL(string: "http://\(host):\(port)") else { continue }
-                        group.addTask {
-                            let outcome = await self.probe.probe(baseURL: url, credentials: nil, policy: policy)
-                            // Debug logging to diagnose why no servers are found (visible in idevicesyslog)
-                            NSLog("[SCAN PROBE] host=%@ port=%d url=%@ outcome=%@", host, port, url.absoluteString, String(describing: outcome))
-                            switch outcome {
-                            case .ok(let agentType, let version):
-                                let label = device.hostname.isEmpty ? (device.name ?? host) : device.hostname
-                                let profName = device.hostname.isEmpty ? label : device.hostname
-                                return (Suggestion(
-                                    id: "\(host):\(port)",
-                                    name: "\(label) · \(agentType.displayName)",
-                                    baseURL: url,
-                                    backend: agentType,
-                                    version: version,
-                                    requiresAuth: false,
-                                    recommendedProfileName: profName,
-                                    os: device.os,
-                                    lastSeen: device.lastSeen
-                                ), "ok")
-                            case .authFailed:
-                                let label = device.hostname.isEmpty ? (device.name ?? host) : device.hostname
-                                let profName = device.hostname.isEmpty ? label : device.hostname
-                                let guessed: AgentType = port == 4096 ? .openCode : .claudeCode
-                                return (Suggestion(
-                                    id: "\(host):\(port)",
-                                    name: "\(label) (password required)",
-                                    baseURL: url,
-                                    backend: guessed,
-                                    version: nil,
-                                    requiresAuth: true,
-                                    recommendedProfileName: profName,
-                                    os: device.os,
-                                    lastSeen: device.lastSeen
-                                ), "auth")
-                            case .unreachable:
-                                return (nil, "unreachable")
-                            case .notAnAgentServer:
-                                return (nil, "notAgent")
-                            }
-                        }
-                    }
-                }
-            }
-            for await (s, type) in group {
-                if let s { results.append(s) }
-                switch type {
-                case "ok": okCount += 1
-                case "auth": authCount += 1
-                case "unreachable": unreachableCount += 1
-                case "notAgent": notAgentCount += 1
-                default: break
+        var targets: [(device: TailscaleDevice, host: String, port: Int, url: URL)] = []
+        for device in devices {
+            for port in ports {
+                for host in candidateHosts(for: device) {
+                    guard let url = URL(string: "http://\(bracketed(host)):\(port)") else { continue }
+                    targets.append((device, host, port, url))
                 }
             }
         }
-        NSLog("[TailnetScanner] summary: ok=%d authFailed=%d unreachable=%d notAgent=%d", okCount, authCount, unreachableCount, notAgentCount)
-        // Deduplicate by logical server (hostname + backend) to avoid showing the same server
-        // multiple times from different hostnames/IPs/ports.
-        var seenServers: Set<String> = []
-        return results.compactMap { $0 }.filter { s in
-            let key = "\(s.recommendedProfileName)|\(s.backend.rawValue)"
-            if seenServers.contains(key) { return false }
-            seenServers.insert(key)
-            return true
+        var results: [(order: Int, suggestion: Suggestion)] = []
+        var summary: [String: Int] = [:]
+        await withTaskGroup(of: (Int, Suggestion?, String).self) { group in
+            var iterator = targets.enumerated().makeIterator()
+            func addNext() -> Bool {
+                guard let (order, target) = iterator.next() else { return false }
+                group.addTask {
+                    let outcome = await self.probe.probe(
+                        baseURL: target.url, credentials: nil, policy: policy)
+                    self.logger.debug(
+                        "probe \(target.url.absoluteString): \(String(describing: outcome))")
+                    return (order, self.suggestion(for: target, outcome: outcome), Self.kind(of: outcome))
+                }
+                return true
+            }
+            var launched = 0
+            while launched < maxConcurrentProbes, addNext() { launched += 1 }
+            for await (order, suggestion, kind) in group {
+                if let suggestion { results.append((order, suggestion)) }
+                summary[kind, default: 0] += 1
+                _ = addNext()
+            }
         }
+        logger.info("scan summary: \(summary)")
+        return dedupe(results)
+    }
+
+    /// Prefers a hostname-addressed, non-auth suggestion for each logical
+    /// server, and orders deterministically by the original device/port order.
+    private func dedupe(_ results: [(order: Int, suggestion: Suggestion)]) -> [Suggestion] {
+        let ranked = results.sorted { a, b in
+            let sa = a.suggestion
+            let sb = b.suggestion
+            if sa.requiresAuth != sb.requiresAuth { return !sa.requiresAuth }
+            let aIsName = !(sa.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+            let bIsName = !(sb.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+            if aIsName != bIsName { return aIsName }
+            return a.order < b.order
+        }
+        var seen: Set<String> = []
+        return ranked.compactMap { entry in
+            let key = "\(entry.suggestion.recommendedProfileName)|\(entry.suggestion.backend.rawValue)"
+            guard seen.insert(key).inserted else { return nil }
+            return entry.suggestion
+        }
+    }
+
+    private func suggestion(
+        for target: (device: TailscaleDevice, host: String, port: Int, url: URL),
+        outcome: ConnectionProbe.Outcome
+    ) -> Suggestion? {
+        let device = target.device
+        let label = device.hostname.isEmpty ? (device.name ?? target.host) : device.hostname
+        switch outcome {
+        case .ok(let agentType, let version):
+            return Suggestion(
+                id: "\(target.host):\(target.port)",
+                name: "\(label) · \(agentType.displayName)",
+                baseURL: target.url,
+                backend: agentType,
+                version: version,
+                requiresAuth: false,
+                recommendedProfileName: label,
+                os: device.os,
+                lastSeen: device.lastSeen)
+        case .authFailed:
+            let guessed: AgentType = target.port == 4096 ? .openCode : .claudeCode
+            return Suggestion(
+                id: "\(target.host):\(target.port)",
+                name: "\(label) (password required)",
+                baseURL: target.url,
+                backend: guessed,
+                version: nil,
+                requiresAuth: true,
+                recommendedProfileName: label,
+                os: device.os,
+                lastSeen: device.lastSeen)
+        case .unreachable, .notAnAgentServer:
+            return nil
+        }
+    }
+
+    private static func kind(of outcome: ConnectionProbe.Outcome) -> String {
+        switch outcome {
+        case .ok: return "ok"
+        case .authFailed: return "authFailed"
+        case .unreachable: return "unreachable"
+        case .notAnAgentServer: return "notAgent"
+        }
+    }
+
+    private func bracketed(_ host: String) -> String {
+        host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
     }
 
     private func candidateHosts(for device: TailscaleDevice) -> [String] {

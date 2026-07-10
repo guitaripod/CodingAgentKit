@@ -35,10 +35,11 @@ public struct ConnectionProbe: Sendable {
 
         do {
             let data = try await http.send(builder.request(.get, "/global/health"))
-            // Any successful response on /global/health means it's an openCode server
-            // (lenient to handle varying response bodies)
-            let version = (try? JSONCoding.decoder.decode(HealthProbe.self, from: data))?.version
-            return .ok(agentType: .openCode, version: version)
+            if let health = try? JSONCoding.decoder.decode(HealthProbe.self, from: data),
+                health.healthy != nil || health.version != nil
+            {
+                return .ok(agentType: .openCode, version: health.version)
+            }
         } catch let error as AgentError {
             switch error {
             case .http(let status, _) where status == 401 || status == 403:
@@ -53,9 +54,11 @@ public struct ConnectionProbe: Sendable {
 
         do {
             let data = try await http.send(builder.request(.get, "/status"))
-            // Any successful response on /status means it's a claudeCode server
-            let version = (try? JSONCoding.decoder.decode(StatusProbe.self, from: data))?.agent ?? (try? JSONCoding.decoder.decode(StatusProbe.self, from: data))?.agentType
-            return .ok(agentType: .claudeCode, version: version)
+            if let status = try? JSONCoding.decoder.decode(StatusProbe.self, from: data),
+                status.status != nil || status.agent != nil || status.agentType != nil
+            {
+                return .ok(agentType: .claudeCode, version: status.agent ?? status.agentType)
+            }
         } catch let error as AgentError {
             switch error {
             case .http(let httpStatus, _) where httpStatus == 401 || httpStatus == 403:
