@@ -19,16 +19,22 @@ enum ConversationRunner {
         var reducer = MessageReducer(agentType: backend.agentType)
         var shownText: [String: Int] = [:]
         var shownTools: Set<String> = []
-        var pending = send
         var sawRunning = false
 
-        for try await event in backend.events(for: sessionID) {
-            if let text = pending {
-                pending = nil
-                try await backend.send(
-                    SendPrompt(text: text, model: model, attachments: attachments), to: sessionID)
+        let events = backend.events(for: sessionID)
+        if let text = send {
+            let prompt = SendPrompt(text: text, model: model, attachments: attachments)
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                do {
+                    try await backend.send(prompt, to: sessionID)
+                } catch {
+                    FileHandle.standardError.write(Data("\n[error] send failed: \(error)\n".utf8))
+                }
             }
+        }
 
+        for try await event in events {
             reducer.apply(event)
             render(reducer.snapshot, shownText: &shownText, shownTools: &shownTools)
 
