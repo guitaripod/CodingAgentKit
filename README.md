@@ -33,7 +33,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.1.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.6.5")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
@@ -53,7 +53,7 @@ let backend = OpenCodeBackend(config: ServerConfig(
     credentials: BasicCredentials(password: "…")
 ))
 
-let session = try await backend.createSession(title: nil)
+let session = try await backend.createSession(title: nil, directory: nil)
 let conversation = AgentConversation(backend: backend, sessionID: session.id)
 
 Task {
@@ -73,6 +73,50 @@ for await state in await conversation.states() {
 ```
 
 Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — that is the point of the unified model. For tests and previews, use `MockBackend` from `AgentTestSupport` instead of a live backend.
+
+### Resilience
+
+`AgentConversation` is built to survive real-world sessions on flaky links:
+
+- **Auto-reconnect with backoff** — the event stream reconnects with capped exponential backoff + jitter, and every gap is healed with a catch-up `messages(for:)` refresh.
+- **Status inference from streaming** — opencode never sends an explicit "running" status, so streaming activity on an unfinished assistant message flips the state to `.running` on its own; clients always see a busy indicator.
+- **Transcript-derived status recovery** — status events that fired while disconnected are gone forever, so after every refresh the transcript is the source of truth: a completed or visibly-streaming last message corrects a stale status.
+- **Divergence recovery** — a text delta for a part the reducer has never seen means the local transcript diverged from the server's (a reconnect gap); instead of fabricating a bubble that starts mid-response, the delta is dropped and the transcript re-fetched.
+- **Session cache** — plug in a `SessionCache` (a pure-Foundation `FileSessionCache` ships in the core) and cold starts render instantly from disk while the live transcript loads; snapshots persist at turn boundaries.
+
+## Backend capabilities
+
+Not every backend can do everything. Each backend declares a `BackendCapabilities` value; gate UI on it rather than on the concrete type. Calling an unsupported method throws `AgentError.unsupported`.
+
+| Capability | opencode | Claude Code (claude-bridge) |
+|---|:-:|:-:|
+| File browsing (`FileBrowsingBackend`) | ✅ | — |
+| Diffs | ✅ | — |
+| Permission prompts | ✅ | — |
+| Multiple sessions | ✅ | ✅ |
+| Model selection | ✅ | ✅ (persistent, via `/model`) |
+| Attachments (files/images in prompts) | ✅ | — |
+| Reasoning effort (low/medium/high) | — | ✅ (via `/effort`) |
+| Clear conversation in place | — | ✅ (via `/clear`) |
+| Fork session (branch with same history) | — | ✅ (bridge `--fork-session`) |
+| Abort current turn | ✅ | — |
+| Session usage (per-turn cost/tokens) | — | ✅ |
+
+## Discovering servers on a tailnet
+
+You don't have to type IP addresses. `AgentCore` ships discovery primitives:
+
+- **`ConnectionProbe`** classifies any base URL: `.ok(agentType:version:)` (auto-detects opencode vs the Claude bridge from `/global/health` vs `/status`), `.authFailed`, `.unreachable`, or `.notAnAgentServer`. Unreachable probes are retried once. This is what `codeagent discover` uses.
+- **`TailscaleClient`** fetches your tailnet's devices from the Tailscale API, with either OAuth client credentials or a raw API token (`tskey-api-…`).
+- **`TailnetScanner`** probes every device's addresses and hostname on the agent ports (default `4096`/`4098`, up to 16 concurrent probes) and returns ready-to-connect `Suggestion`s — backend type, version, and whether a password is required — deduplicated to one per server, preferring hostname-addressed, no-auth entries.
+
+```swift
+let devices = try await TailscaleClient().fetchDevices(with: "tskey-api-…")
+let suggestions = await TailnetScanner().scan(devices: devices)
+for s in suggestions {
+    print("\(s.name) → \(s.baseURL) (\(s.backend))\(s.requiresAuth ? " 🔒" : "")")
+}
+```
 
 ## CLI
 
@@ -120,7 +164,7 @@ Credential storage is abstracted behind `SecretStore` (an `EnvironmentSecretStor
 
 ## Cross-platform notes
 
-- SSE uses [`mattt/EventSource`](https://github.com/mattt/EventSource) with the `AsyncHTTPClient` trait, because `URLSession.bytes` does not exist on Linux. REST uses `URLSession.data(for:)`, which does.
+- SSE streams over native `URLSession.bytes` with an incremental `SSEParser` on Apple platforms; on Linux (where `URLSession.bytes` does not exist) it falls back to [`mattt/EventSource`](https://github.com/mattt/EventSource) with the `AsyncHTTPClient` trait. REST uses `URLSession.data(for:)`, which exists everywhere.
 - No `UIKit`/`AVFoundation`/`Combine`/`Security`/`os` imports anywhere in `Sources/`. Logging goes through `swift-log`; an app bootstraps an OSLog backend, Linux uses stdout.
 
 ## Develop & test
@@ -138,6 +182,11 @@ Decoder and reducer tests run offline against fixtures captured from a live open
 swift package --disable-sandbox generate-documentation --target AgentCore
 ```
 
+## Used by
+
+- [Tailscode](https://github.com/guitaripod/Tailscode) — native UIKit iOS client for remote coding agents over Tailscale, built on this Kit.
+- [claude-bridge](https://github.com/guitaripod/claude-bridge) — the structured HTTP/SSE bridge for Claude Code that `ClaudeCodeKit` speaks to.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0 — see [LICENSE](LICENSE).

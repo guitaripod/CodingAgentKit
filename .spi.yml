@@ -1,0 +1,9 @@
+version: 1
+builder:
+  configs:
+    - documentation_targets:
+        - AgentCore
+        - OpenCodeKit
+        - ClaudeCodeKit
+        - CodingAgentKitApple
+        - AgentTestSupport
