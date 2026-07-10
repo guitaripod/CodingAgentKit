@@ -80,6 +80,24 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         #expect(loaded?.messages.first?.text == "hello")
     }
 
+    @Test func infersRunningFromStreamingWithoutExplicitStatus() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(assistant("a", "part")),
+                MockScriptStep(.partTextDelta(messageID: "a", partID: "a-p", delta: "ial")),
+                MockScriptStep(.status(.idle), delay: .milliseconds(20)),
+            ])
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        var sawRunning = false
+        for await state in await conversation.states() {
+            if state.status == .running { sawRunning = true }
+            if state.status == .idle && sawRunning { break }
+        }
+        #expect(sawRunning)
+    }
+
     @Test func respondClearsPendingPermission() async throws {
         let permission = PermissionRequest(id: "perm1", sessionID: "s", toolName: "bash")
         let backend = MockBackend(

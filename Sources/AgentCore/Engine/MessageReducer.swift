@@ -16,6 +16,10 @@ public struct MessageReducer: Sendable {
         order.compactMap { storage[$0] }
     }
 
+    public func hasPart(messageID: String, partID: String) -> Bool {
+        storage[messageID]?.parts.contains { $0.id == partID } ?? false
+    }
+
     public mutating func apply(_ event: BackendEvent) {
         switch event {
         case .messageUpserted(let message, let replaceParts):
@@ -43,7 +47,7 @@ public struct MessageReducer: Sendable {
         case .messageRemoved(let messageID):
             storage[messageID] = nil
             order.removeAll { $0 == messageID }
-        case .status, .permission, .failure, .unknown:
+        case .status, .permission, .question, .questionResolved, .failure, .unknown:
             break
         }
     }
