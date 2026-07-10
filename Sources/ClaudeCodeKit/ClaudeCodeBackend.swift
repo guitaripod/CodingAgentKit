@@ -14,16 +14,18 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsClearing: true,
         supportsForking: true,
         supportsAbort: false,
-        supportsSessionUsage: true
+        supportsSessionUsage: true,
+        supportsRenaming: true
     )
 
     public static let models: [ModelInfo] = [
+        ModelInfo(id: "fable", name: "Fable", providerID: "anthropic"),
         ModelInfo(id: "opus", name: "Opus", providerID: "anthropic"),
         ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic"),
         ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic"),
     ]
 
-    public var reasoningEffortOptions: [String] { ["low", "medium", "high"] }
+    public var reasoningEffortOptions: [String] { ["low", "medium", "high", "xhigh", "max"] }
 
     private let builder: RequestBuilder
     private let http: HTTPClient
@@ -52,6 +54,11 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func deleteSession(_ sessionID: String) async throws {
         _ = try await http.send(builder.request(.delete, "/sessions/\(sessionID)"))
+    }
+
+    public func renameSession(_ sessionID: String, title: String) async throws {
+        let body = try BridgeCoding.encoder.encode(BRRename(title: title))
+        _ = try await http.send(builder.request(.patch, "/sessions/\(sessionID)", body: body))
     }
 
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
@@ -225,6 +232,10 @@ struct BRCreate: Encodable {
     let directory: String?
     let model: String?
     let effort: String?
+}
+
+struct BRRename: Encodable {
+    let title: String
 }
 
 struct BRSend: Encodable {

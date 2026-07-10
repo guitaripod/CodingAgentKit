@@ -11,6 +11,7 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsAbort: Bool
     public var supportsSessionUsage: Bool
     public var supportsQuestions: Bool
+    public var supportsRenaming: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -24,7 +25,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsForking: Bool = false,
         supportsAbort: Bool = false,
         supportsSessionUsage: Bool = false,
-        supportsQuestions: Bool = false
+        supportsQuestions: Bool = false,
+        supportsRenaming: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -38,6 +40,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsAbort = supportsAbort
         self.supportsSessionUsage = supportsSessionUsage
         self.supportsQuestions = supportsQuestions
+        self.supportsRenaming = supportsRenaming
     }
 }
 
@@ -202,6 +205,8 @@ public protocol CodingAgentBackend: Sendable {
     /// Branches a session into a new one seeded with the same history, so the next prompt explores a
     /// different direction without disturbing the original (Claude Code resumes with `--fork-session`).
     func forkSession(_ sessionID: String) async throws -> AgentSession
+    /// Renames a session's display title.
+    func renameSession(_ sessionID: String, title: String) async throws
 }
 
 extension CodingAgentBackend {
@@ -243,6 +248,10 @@ extension CodingAgentBackend {
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
         throw AgentError.unsupported("fork")
+    }
+
+    public func renameSession(_ sessionID: String, title: String) async throws {
+        throw AgentError.unsupported("rename")
     }
 }
 
