@@ -25,6 +25,22 @@ struct OCMessage: Decodable, Sendable {
     let role: String
     let time: OCTime?
     let error: JSONValue?
+    let cost: Double?
+    let providerID: String?
+    let modelID: String?
+    let tokens: OCTokens?
+}
+
+struct OCTokens: Decodable, Sendable {
+    let input: Double?
+    let output: Double?
+    let reasoning: Double?
+    let cache: OCCache?
+}
+
+struct OCCache: Decodable, Sendable {
+    let read: Double?
+    let write: Double?
 }
 
 struct OCToolState: Decodable, Sendable {

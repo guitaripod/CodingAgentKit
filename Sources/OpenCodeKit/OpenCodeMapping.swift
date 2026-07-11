@@ -48,8 +48,18 @@ enum OpenCodeMapping {
             createdAt: date(message.time?.created),
             completedAt: completed.map(date),
             isStreaming: messageRole == .assistant && completed == nil,
-            error: message.error.flatMap(errorMessage)
+            error: message.error.flatMap(errorMessage),
+            costUSD: message.cost,
+            providerID: message.providerID,
+            modelID: message.modelID,
+            totalTokens: totalTokens(message.tokens)
         )
+    }
+
+    private static func totalTokens(_ tokens: OCTokens?) -> Int? {
+        guard let tokens else { return nil }
+        let total = (tokens.input ?? 0) + (tokens.output ?? 0)
+        return total > 0 ? Int(total) : nil
     }
 
     static func part(_ part: OCPart) -> MessagePart {

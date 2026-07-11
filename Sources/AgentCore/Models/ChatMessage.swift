@@ -143,6 +143,10 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public var completedAt: Date?
     public var isStreaming: Bool
     public var error: String?
+    public var costUSD: Double?
+    public var providerID: String?
+    public var modelID: String?
+    public var totalTokens: Int?
 
     public init(
         id: String,
@@ -152,7 +156,11 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         createdAt: Date,
         completedAt: Date? = nil,
         isStreaming: Bool = false,
-        error: String? = nil
+        error: String? = nil,
+        costUSD: Double? = nil,
+        providerID: String? = nil,
+        modelID: String? = nil,
+        totalTokens: Int? = nil
     ) {
         self.id = id
         self.role = role
@@ -162,6 +170,10 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         self.completedAt = completedAt
         self.isStreaming = isStreaming
         self.error = error
+        self.costUSD = costUSD
+        self.providerID = providerID
+        self.modelID = modelID
+        self.totalTokens = totalTokens
     }
 
     public var text: String {

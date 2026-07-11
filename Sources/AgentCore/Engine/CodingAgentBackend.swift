@@ -1,3 +1,5 @@
+import Foundation
+
 public struct BackendCapabilities: Sendable, Hashable {
     public var supportsFileBrowsing: Bool
     public var supportsDiffs: Bool
@@ -54,6 +56,55 @@ public struct AgentUsage: Sendable, Hashable, Codable {
     public init(costUSD: Double? = nil, tokens: Int? = nil) {
         self.costUSD = costUSD
         self.tokens = tokens
+    }
+}
+
+/// Live subscription quota for a provider (Claude Max/Pro rolling rate limits), sourced from the
+/// provider's own usage API rather than estimated from message costs.
+public struct UsageQuota: Sendable, Hashable, Codable {
+    public struct Gauge: Sendable, Hashable, Codable {
+        public var key: String
+        public var label: String
+        public var fraction: Double
+        public var resetsAt: Date?
+        public var trustedReset: Bool
+
+        public init(key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool) {
+            self.key = key
+            self.label = label
+            self.fraction = fraction
+            self.resetsAt = resetsAt
+            self.trustedReset = trustedReset
+        }
+    }
+
+    public struct Detail: Sendable, Hashable, Codable {
+        public var key: String
+        public var value: String
+
+        public init(key: String, value: String) {
+            self.key = key
+            self.value = value
+        }
+    }
+
+    public var providerName: String
+    public var subtitle: String
+    public var source: String
+    public var live: Bool
+    public var gauges: [Gauge]
+    public var details: [Detail]
+
+    public init(
+        providerName: String, subtitle: String, source: String, live: Bool,
+        gauges: [Gauge], details: [Detail]
+    ) {
+        self.providerName = providerName
+        self.subtitle = subtitle
+        self.source = source
+        self.live = live
+        self.gauges = gauges
+        self.details = details
     }
 }
 
@@ -205,6 +256,9 @@ public protocol CodingAgentBackend: Sendable {
     func clearConversation(_ sessionID: String) async throws
     /// The last turn's cost/token usage for a session, if the backend reports it.
     func sessionUsage(_ sessionID: String) async throws -> AgentUsage?
+    /// Live subscription quota (rolling rate-limit gauges) for the whole account, if the backend
+    /// exposes a usage API. `nil` when unsupported.
+    func usageQuota() async throws -> UsageQuota?
     /// Branches a session into a new one seeded with the same history, so the next prompt explores a
     /// different direction without disturbing the original (Claude Code resumes with `--fork-session`).
     func forkSession(_ sessionID: String) async throws -> AgentSession
@@ -253,6 +307,7 @@ extension CodingAgentBackend {
         throw AgentError.unsupported("clearConversation")
     }
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
+    public func usageQuota() async throws -> UsageQuota? { nil }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
         throw AgentError.unsupported("fork")
     }

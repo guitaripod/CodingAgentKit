@@ -133,6 +133,43 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         guard session.lastCostUSD != nil || session.lastTokens != nil else { return nil }
         return AgentUsage(costUSD: session.lastCostUSD, tokens: session.lastTokens)
     }
+
+    public func usageQuota() async throws -> UsageQuota? {
+        let data = try await http.send(builder.request(.get, "/usage"))
+        let snapshot = try BridgeCoding.decoder.decode(BRUsage.self, from: data)
+        guard snapshot.live, !snapshot.gauges.isEmpty else { return nil }
+        return UsageQuota(
+            providerName: snapshot.providerName,
+            subtitle: snapshot.subtitle,
+            source: snapshot.source,
+            live: snapshot.live,
+            gauges: snapshot.gauges.map {
+                UsageQuota.Gauge(
+                    key: $0.key, label: $0.label, fraction: $0.fraction,
+                    resetsAt: $0.resetsAt, trustedReset: $0.trustedReset)
+            },
+            details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
+    }
+}
+
+private struct BRUsage: Decodable {
+    struct Gauge: Decodable {
+        let key: String
+        let label: String
+        let fraction: Double
+        let resetsAt: Date?
+        let trustedReset: Bool
+    }
+    struct Detail: Decodable {
+        let key: String
+        let value: String
+    }
+    let providerName: String
+    let subtitle: String
+    let source: String
+    let live: Bool
+    let gauges: [Gauge]
+    let details: [Detail]
 }
 
 enum BridgeCoding {
