@@ -424,3 +424,13 @@ struct BRFileContent: Decodable {
     let path: String
     let content: String
 }
+
+extension ClaudeCodeBackend {
+    public func registerLiveActivity(
+        _ registration: LiveActivityRegistration, for sessionID: String
+    ) async throws {
+        let body = try BridgeCoding.encoder.encode(registration)
+        _ = try await http.send(
+            builder.request(.post, "/sessions/\(sessionID)/live-activity", body: body))
+    }
+}

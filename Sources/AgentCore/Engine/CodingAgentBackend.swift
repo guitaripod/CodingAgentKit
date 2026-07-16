@@ -259,6 +259,10 @@ public protocol CodingAgentBackend: Sendable {
     /// Live subscription quota (rolling rate-limit gauges) for the whole account, if the backend
     /// exposes a usage API. `nil` when unsupported.
     func usageQuota() async throws -> UsageQuota?
+    /// Registers an ActivityKit push token so the server can drive Live
+    /// Activity updates over APNs while the app is suspended. No-op for
+    /// backends without push infrastructure.
+    func registerLiveActivity(_ registration: LiveActivityRegistration, for sessionID: String) async throws
     /// Live quotas for other providers the backend's host machine is signed into (the bridge
     /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
     func additionalUsageQuotas() async throws -> [UsageQuota]
