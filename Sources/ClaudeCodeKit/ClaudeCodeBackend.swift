@@ -159,6 +159,27 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             },
             details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
     }
+
+    /// Older bridges don't serve `/usage/grok`; treat any failure or non-live snapshot as absence.
+    public func additionalUsageQuotas() async throws -> [UsageQuota] {
+        guard let data = try? await http.send(builder.request(.get, "/usage/grok")),
+            let snapshot = try? BridgeCoding.decoder.decode(BRUsage.self, from: data),
+            snapshot.live, !snapshot.gauges.isEmpty
+        else { return [] }
+        return [
+            UsageQuota(
+                providerName: snapshot.providerName,
+                subtitle: snapshot.subtitle,
+                source: snapshot.source,
+                live: snapshot.live,
+                gauges: snapshot.gauges.map {
+                    UsageQuota.Gauge(
+                        key: $0.key, label: $0.label, fraction: $0.fraction,
+                        resetsAt: $0.resetsAt, trustedReset: $0.trustedReset)
+                },
+                details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
+        ]
+    }
 }
 
 private struct BRUsage: Decodable {

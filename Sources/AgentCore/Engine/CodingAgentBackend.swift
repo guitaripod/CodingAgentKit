@@ -259,6 +259,9 @@ public protocol CodingAgentBackend: Sendable {
     /// Live subscription quota (rolling rate-limit gauges) for the whole account, if the backend
     /// exposes a usage API. `nil` when unsupported.
     func usageQuota() async throws -> UsageQuota?
+    /// Live quotas for other providers the backend's host machine is signed into (the bridge
+    /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
+    func additionalUsageQuotas() async throws -> [UsageQuota]
     /// Branches a session into a new one seeded with the same history, so the next prompt explores a
     /// different direction without disturbing the original (Claude Code resumes with `--fork-session`).
     func forkSession(_ sessionID: String) async throws -> AgentSession
@@ -308,6 +311,7 @@ extension CodingAgentBackend {
     }
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func usageQuota() async throws -> UsageQuota? { nil }
+    public func additionalUsageQuotas() async throws -> [UsageQuota] { [] }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
         throw AgentError.unsupported("fork")
     }
