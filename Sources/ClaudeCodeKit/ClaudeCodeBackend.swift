@@ -4,7 +4,7 @@ import Foundation
 public struct ClaudeCodeBackend: CodingAgentBackend {
     public let agentType: AgentType = .claudeCode
     public let capabilities = BackendCapabilities(
-        supportsFileBrowsing: false,
+        supportsFileBrowsing: true,
         supportsDiffs: false,
         supportsPermissions: false,
         supportsMultipleSessions: true,
@@ -388,4 +388,39 @@ enum BridgeEventDecoder {
             return nil
         }
     }
+}
+
+/// The bridge serves the server user's home directory over `/files`, which
+/// powers the app's directory picker and file browser for Claude sessions.
+/// Diffs, find, and providers have no bridge equivalent yet.
+extension ClaudeCodeBackend: FileBrowsingBackend {
+    public func listFiles(path: String?) async throws -> [FileNode] {
+        let data = try await http.send(
+            builder.request(
+                .get, "/files", query: [URLQueryItem(name: "path", value: path ?? ".")]))
+        return try BridgeCoding.decoder.decode([BRFileEntry].self, from: data)
+            .map { FileNode(path: $0.path, name: $0.name, isDirectory: $0.isDirectory) }
+    }
+
+    public func fileContent(path: String) async throws -> String {
+        let data = try await http.send(
+            builder.request(
+                .get, "/files/content", query: [URLQueryItem(name: "path", value: path)]))
+        return try BridgeCoding.decoder.decode(BRFileContent.self, from: data).content
+    }
+
+    public func diff(sessionID: String) async throws -> [FileDiff] { [] }
+    public func find(pattern: String) async throws -> [String] { [] }
+    public func providers() async throws -> [Provider] { [] }
+}
+
+struct BRFileEntry: Decodable {
+    let path: String
+    let name: String
+    let isDirectory: Bool
+}
+
+struct BRFileContent: Decodable {
+    let path: String
+    let content: String
 }
