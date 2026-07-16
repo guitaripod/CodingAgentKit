@@ -40,7 +40,35 @@ extension AgentSession {
     public static func isPlaceholderTitle(_ title: String) -> Bool {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty || trimmed.hasPrefix("New session")
+            || trimmed == "New chat" || trimmed.hasPrefix("/")
     }
 
     public var hasPlaceholderTitle: Bool { Self.isPlaceholderTitle(title) }
+
+    /// A readable provisional title from a raw prompt, for surfaces that need
+    /// a name before the server auto-titles (a Live Activity started at send
+    /// time): first real line, markup stripped, cut at a word boundary.
+    public static func provisionalTitle(fromPrompt text: String) -> String {
+        let cleaned = text.replacingOccurrences(
+            of: "<[^>]{1,80}>", with: " ", options: .regularExpression)
+        let line = cleaned
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("/") }
+        guard var title = line else { return "Agent session" }
+        title = title.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        if title.count > 48 {
+            let prefix = String(title.prefix(48))
+            if let space = prefix.lastIndex(of: " "),
+                prefix.distance(from: prefix.startIndex, to: space) > 24
+            {
+                title = String(prefix[..<space]) + "…"
+            } else {
+                title = prefix + "…"
+            }
+        }
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: " .,:;–—-"))
+        guard !title.isEmpty else { return "Agent session" }
+        return title.prefix(1).uppercased() + title.dropFirst()
+    }
 }
