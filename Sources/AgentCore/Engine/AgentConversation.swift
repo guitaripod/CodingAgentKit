@@ -67,6 +67,9 @@ public actor AgentConversation {
         return stream
     }
 
+    /// A new prompt starts a fresh turn, so the previous turn's failure is no
+    /// longer current state — without this, one failed turn leaves a sticky
+    /// `lastFailure` that clients re-surface after every later success.
     public func send(
         _ text: String,
         model: ModelSelection? = nil,
@@ -74,11 +77,13 @@ public actor AgentConversation {
         agent: String? = nil,
         attachments: [PromptAttachment] = []
     ) async throws {
+        lastFailure = nil
         try await backend.send(
             SendPrompt(
                 text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
                 attachments: attachments),
             to: sessionID)
+        emit()
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
