@@ -127,7 +127,16 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         Self.models.first.map { ModelSelection(providerID: $0.providerID, modelID: $0.id) }
     }
 
+    /// Newer bridges expose a two-field usage route; older ones require
+    /// decoding the whole session transcript for the same numbers.
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? {
+        if let data = try? await http.send(
+            builder.request(.get, "/sessions/\(sessionID)/usage")),
+            let summary = try? BridgeCoding.decoder.decode(BRUsageSummary.self, from: data)
+        {
+            guard summary.costUSD != nil || summary.tokens != nil else { return nil }
+            return AgentUsage(costUSD: summary.costUSD, tokens: summary.tokens)
+        }
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
         let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
         guard session.lastCostUSD != nil || session.lastTokens != nil else { return nil }
@@ -286,6 +295,11 @@ struct BRCreate: Encodable {
     let directory: String?
     let model: String?
     let effort: String?
+}
+
+struct BRUsageSummary: Decodable {
+    let costUSD: Double?
+    let tokens: Int?
 }
 
 struct BRSubagent: Decodable {
