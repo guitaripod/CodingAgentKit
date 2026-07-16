@@ -11,13 +11,17 @@ public struct ConnectionProbe: Sendable {
     public init() {}
 
     /// Probes a base URL and classifies it: which agent backend (if any) answers, or why it failed.
+    /// The unreachable retry smooths over transient flakiness for a single
+    /// interactive connect; bulk scans must pass `retryUnreachable: false` —
+    /// a blackholed host would otherwise cost two full timeouts plus the gap.
     public func probe(
         baseURL: URL,
         credentials: BasicCredentials? = nil,
-        policy: ConnectionPolicy = .default
+        policy: ConnectionPolicy = .default,
+        retryUnreachable: Bool = true
     ) async -> Outcome {
         let outcome = await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
-        if case .unreachable = outcome {
+        if retryUnreachable, case .unreachable = outcome, !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
             return await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
         }

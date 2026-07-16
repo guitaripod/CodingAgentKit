@@ -25,6 +25,10 @@ public struct TailscaleDevice: Sendable, Hashable, Codable {
     public var authorized: Bool?
     public var lastSeen: String?
 
+    public var lastSeenDate: Date? {
+        lastSeen.flatMap { try? Date($0, strategy: .iso8601) }
+    }
+
     public init(
         id: String? = nil,
         nodeId: String? = nil,
@@ -134,18 +138,70 @@ public struct TailnetScanner: Sendable {
         public let recommendedProfileName: String
         public let os: String?
         public let lastSeen: String?
+
+        public var dedupeKey: String { "\(recommendedProfileName)|\(backend.rawValue)" }
     }
 
-    private let probe = ConnectionProbe()
+    public typealias ProbeFunction = @Sendable (URL, ConnectionPolicy) async -> ConnectionProbe.Outcome
+
+    private let probeFn: ProbeFunction
     private let logger = AgentLog.logger("scanner")
     private let maxConcurrentProbes = 16
 
-    public init() {}
+    public init() {
+        let probe = ConnectionProbe()
+        self.probeFn = { url, policy in
+            await probe.probe(
+                baseURL: url, credentials: nil, policy: policy, retryUnreachable: false)
+        }
+    }
 
-    public func scan(devices: [TailscaleDevice], ports: [Int] = [4096, 4098]) async -> [Suggestion] {
-        let policy = ConnectionPolicy(requestTimeout: .seconds(10), resourceTimeout: .seconds(15))
+    init(probeFn: @escaping ProbeFunction) {
+        self.probeFn = probeFn
+    }
+
+    /// Devices that could plausibly host an agent server: seen online
+    /// recently and running a general-purpose OS. Offline peers blackhole
+    /// every probe into a full timeout, which is what makes naive scans
+    /// take minutes; phones and TVs can never run a server at all.
+    public static func scannableDevices(
+        _ devices: [TailscaleDevice], now: Date = Date()
+    ) -> [TailscaleDevice] {
+        let excludedOS: Set<String> = ["ios", "ipados", "tvos", "watchos", "android"]
+        let cutoff = now.addingTimeInterval(-600)
+        return devices
+            .filter { device in
+                if let os = device.os?.lowercased(), excludedOS.contains(os) { return false }
+                guard let seen = device.lastSeenDate else { return true }
+                return seen > cutoff
+            }
+            .sorted { ($0.lastSeenDate ?? .distantFuture) > ($1.lastSeenDate ?? .distantFuture) }
+    }
+
+    /// True when `a` should represent a logical server over `b`: reachable
+    /// without auth beats password-gated, and a MagicDNS name beats a raw IP.
+    public static func preferred(_ a: Suggestion, over b: Suggestion) -> Bool {
+        if a.requiresAuth != b.requiresAuth { return !a.requiresAuth }
+        let aNamed = !(a.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+        let bNamed = !(b.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+        if aNamed != bNamed { return aNamed }
+        return false
+    }
+
+    /// Probes every candidate host/port of the scannable devices. Findings
+    /// stream through `onFound` as they land (deduplication is the caller's
+    /// concern mid-scan — see `Suggestion.dedupeKey` and `preferred`);
+    /// the returned array is the final deduplicated result.
+    public func scan(
+        devices: [TailscaleDevice],
+        ports: [Int] = [4096, 4098],
+        onProgress: (@Sendable (Int, Int) -> Void)? = nil,
+        onFound: (@Sendable (Suggestion) -> Void)? = nil
+    ) async -> [Suggestion] {
+        let started = Date()
+        let policy = ConnectionPolicy(requestTimeout: .seconds(3), resourceTimeout: .seconds(5))
         var targets: [(device: TailscaleDevice, host: String, port: Int, url: URL)] = []
-        for device in devices {
+        for device in Self.scannableDevices(devices) {
             for port in ports {
                 for host in candidateHosts(for: device) {
                     guard let url = URL(string: "http://\(bracketed(host)):\(port)") else { continue }
@@ -155,13 +211,13 @@ public struct TailnetScanner: Sendable {
         }
         var results: [(order: Int, suggestion: Suggestion)] = []
         var summary: [String: Int] = [:]
+        var checked = 0
         await withTaskGroup(of: (Int, Suggestion?, String).self) { group in
             var iterator = targets.enumerated().makeIterator()
             func addNext() -> Bool {
-                guard let (order, target) = iterator.next() else { return false }
+                guard !Task.isCancelled, let (order, target) = iterator.next() else { return false }
                 group.addTask {
-                    let outcome = await self.probe.probe(
-                        baseURL: target.url, credentials: nil, policy: policy)
+                    let outcome = await self.probeFn(target.url, policy)
                     self.logger.debug(
                         "probe \(target.url.absoluteString): \(String(describing: outcome))")
                     return (order, self.suggestion(for: target, outcome: outcome), Self.kind(of: outcome))
@@ -171,12 +227,18 @@ public struct TailnetScanner: Sendable {
             var launched = 0
             while launched < maxConcurrentProbes, addNext() { launched += 1 }
             for await (order, suggestion, kind) in group {
-                if let suggestion { results.append((order, suggestion)) }
+                if let suggestion {
+                    results.append((order, suggestion))
+                    onFound?(suggestion)
+                }
+                checked += 1
                 summary[kind, default: 0] += 1
+                onProgress?(checked, targets.count)
                 _ = addNext()
             }
         }
-        logger.info("scan summary: \(summary)")
+        logger.info(
+            "scan finished in \(String(format: "%.1f", Date().timeIntervalSince(started)))s: \(summary)")
         return dedupe(results)
     }
 
@@ -184,18 +246,13 @@ public struct TailnetScanner: Sendable {
     /// server, and orders deterministically by the original device/port order.
     private func dedupe(_ results: [(order: Int, suggestion: Suggestion)]) -> [Suggestion] {
         let ranked = results.sorted { a, b in
-            let sa = a.suggestion
-            let sb = b.suggestion
-            if sa.requiresAuth != sb.requiresAuth { return !sa.requiresAuth }
-            let aIsName = !(sa.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
-            let bIsName = !(sb.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
-            if aIsName != bIsName { return aIsName }
+            if Self.preferred(a.suggestion, over: b.suggestion) { return true }
+            if Self.preferred(b.suggestion, over: a.suggestion) { return false }
             return a.order < b.order
         }
         var seen: Set<String> = []
         return ranked.compactMap { entry in
-            let key = "\(entry.suggestion.recommendedProfileName)|\(entry.suggestion.backend.rawValue)"
-            guard seen.insert(key).inserted else { return nil }
+            guard seen.insert(entry.suggestion.dedupeKey).inserted else { return nil }
             return entry.suggestion
         }
     }
@@ -248,10 +305,15 @@ public struct TailnetScanner: Sendable {
         host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
     }
 
+    /// One probe per address family is waste: the Tailscale IPv6 address
+    /// reaches the same node as the IPv4 one, so probe IPv4 plus the MagicDNS
+    /// name (which ranks higher for the saved profile), falling back to
+    /// whatever addresses exist on a v6-only tailnet.
     private func candidateHosts(for device: TailscaleDevice) -> [String] {
-        var h: [String] = []
-        h.append(contentsOf: device.addresses)
-        if let n = device.name, !n.isEmpty { h.append(n) }
-        return h
+        var hosts: [String] = []
+        let v4 = device.addresses.filter { !$0.contains(":") }
+        hosts.append(contentsOf: v4.isEmpty ? device.addresses : v4)
+        if let name = device.name, !name.isEmpty { hosts.append(name) }
+        return hosts
     }
 }
