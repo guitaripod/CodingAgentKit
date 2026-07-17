@@ -21,7 +21,7 @@ public struct HTTPClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = policy.requestTimeout.timeInterval
         configuration.timeoutIntervalForResource = policy.resourceTimeout.timeInterval
-        configuration.httpMaximumConnectionsPerHost = 1
+        configuration.httpMaximumConnectionsPerHost = 4
         configuration.httpShouldUsePipelining = false
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData

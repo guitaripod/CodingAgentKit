@@ -7,8 +7,7 @@ import Testing
 private let fastPolicy = ConnectionPolicy(
     reconnectBaseDelay: .milliseconds(5),
     reconnectMaxDelay: .milliseconds(20),
-    reconnectJitter: 0,
-    pollFallbackAfterFailures: nil
+    reconnectJitter: 0
 )
 
 private func assistant(_ id: String, _ text: String) -> BackendEvent {
@@ -78,6 +77,25 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
             break
         }
         #expect(loaded?.messages.first?.text == "hello")
+    }
+
+    @Test func marksTranscriptLoadedOnceHistoryArrives() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [MockScriptStep(assistant("m", "hello"), delay: .seconds(60))])
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        let fresh = await conversation.state
+        #expect(fresh.hasLoadedTranscript == false)
+        #expect(fresh.isLoadingTranscript)
+
+        var loaded: ConversationState?
+        for await state in await conversation.states() where state.hasLoadedTranscript {
+            loaded = state
+            break
+        }
+        #expect(loaded?.messages.first?.text == "hello")
+        #expect(loaded?.isLoadingTranscript == false)
     }
 
     @Test func infersRunningFromStreamingWithoutExplicitStatus() async {

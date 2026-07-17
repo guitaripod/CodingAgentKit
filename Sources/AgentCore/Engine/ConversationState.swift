@@ -15,6 +15,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
     public var pendingQuestions: [QuestionRequest]
     public var lastFailure: BackendFailure?
     public var connection: ConnectionPhase
+    public var hasLoadedTranscript: Bool
 
     public init(
         messages: [ChatMessage] = [],
@@ -22,7 +23,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         pendingPermissions: [PermissionRequest] = [],
         pendingQuestions: [QuestionRequest] = [],
         lastFailure: BackendFailure? = nil,
-        connection: ConnectionPhase = .connecting
+        connection: ConnectionPhase = .connecting,
+        hasLoadedTranscript: Bool = false
     ) {
         self.messages = messages
         self.status = status
@@ -30,7 +32,13 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.pendingQuestions = pendingQuestions
         self.lastFailure = lastFailure
         self.connection = connection
+        self.hasLoadedTranscript = hasLoadedTranscript
     }
 
     public var isBusy: Bool { status == .running }
+
+    /// True while the transcript may still be on its way: nothing has been
+    /// loaded yet (no cache seed, no server fetch) — distinguish this from a
+    /// genuinely empty conversation before showing an empty state.
+    public var isLoadingTranscript: Bool { !hasLoadedTranscript && messages.isEmpty }
 }

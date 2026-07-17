@@ -8,7 +8,6 @@ public struct ConnectionPolicy: Sendable, Hashable {
     public var reconnectMaxDelay: Duration
     public var reconnectJitter: Double
     public var maxReconnectAttempts: Int?
-    public var pollFallbackAfterFailures: Int?
 
     public init(
         requestTimeout: Duration = .seconds(30),
@@ -16,8 +15,7 @@ public struct ConnectionPolicy: Sendable, Hashable {
         reconnectBaseDelay: Duration = .seconds(1),
         reconnectMaxDelay: Duration = .seconds(30),
         reconnectJitter: Double = 0.2,
-        maxReconnectAttempts: Int? = nil,
-        pollFallbackAfterFailures: Int? = 3
+        maxReconnectAttempts: Int? = nil
     ) {
         self.requestTimeout = requestTimeout
         self.resourceTimeout = resourceTimeout
@@ -25,7 +23,6 @@ public struct ConnectionPolicy: Sendable, Hashable {
         self.reconnectMaxDelay = reconnectMaxDelay
         self.reconnectJitter = reconnectJitter
         self.maxReconnectAttempts = maxReconnectAttempts
-        self.pollFallbackAfterFailures = pollFallbackAfterFailures
     }
 
     public static let `default` = ConnectionPolicy()

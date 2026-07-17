@@ -13,6 +13,7 @@ public actor AgentConversation {
     private var pendingQuestions: [QuestionRequest] = []
     private var lastFailure: BackendFailure?
     private var connection: ConnectionPhase = .connecting
+    private var loadedTranscript = false
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -31,6 +32,7 @@ public actor AgentConversation {
         self.policy = policy
         self.cache = cache
         self.reducer = MessageReducer(agentType: backend.agentType, messages: seed)
+        self.loadedTranscript = !seed.isEmpty
     }
 
     public var messages: [ChatMessage] { reducer.snapshot }
@@ -42,7 +44,8 @@ public actor AgentConversation {
             pendingPermissions: pendingPermissions,
             pendingQuestions: pendingQuestions,
             lastFailure: lastFailure,
-            connection: connection
+            connection: connection,
+            hasLoadedTranscript: loadedTranscript
         )
     }
 
@@ -115,15 +118,23 @@ public actor AgentConversation {
         let messages = try await backend.messages(for: sessionID)
         let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
         reducer = MessageReducer(agentType: backend.agentType, messages: messages)
+        loadedTranscript = true
         deriveStatusFromTranscript()
         if capabilitiesSupportQuestions { pendingQuestions = questions }
         persist()
         emit()
     }
 
+    /// The history fetch and the event-stream connection race concurrently: both are network
+    /// roundtrips, and the stream only carries events newer than the fetch. Ordering is
+    /// restored by awaiting the fetch before the first event is applied, so a full snapshot
+    /// always lands before live deltas fold into it.
     private func runLoop(generation gen: Int) async {
         await seedFromCache(generation: gen)
-        await refreshQuietly(generation: gen)
+        var initialRefresh: Task<Void, Never>? = Task { [weak self] in
+            await self?.refreshQuietly(generation: gen)
+        }
+        defer { initialRefresh?.cancel() }
 
         var attempt = 0
 
@@ -132,6 +143,11 @@ public actor AgentConversation {
             do {
                 for try await event in backend.events(for: sessionID) {
                     guard gen == generation else { return }
+                    if let pending = initialRefresh {
+                        await pending.value
+                        initialRefresh = nil
+                        guard gen == generation else { return }
+                    }
                     if connection != .live {
                         lastFailure = nil
                         setConnection(.live, generation: gen)
@@ -147,6 +163,10 @@ public actor AgentConversation {
                     generation: gen)
             }
 
+            if let pending = initialRefresh {
+                await pending.value
+                initialRefresh = nil
+            }
             guard gen == generation && !Task.isCancelled else { return }
 
             attempt += 1
@@ -252,6 +272,7 @@ public actor AgentConversation {
         let cached = await cache.messages(for: sessionID)
         guard gen == generation, !cached.isEmpty, reducer.snapshot.isEmpty else { return }
         reducer = MessageReducer(agentType: backend.agentType, messages: cached)
+        loadedTranscript = true
         emit()
     }
 
@@ -261,6 +282,7 @@ public actor AgentConversation {
             let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
             guard gen == generation else { return }
             reducer = MessageReducer(agentType: backend.agentType, messages: messages)
+            loadedTranscript = true
             deriveStatusFromTranscript()
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             lastFailure = nil
