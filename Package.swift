@@ -97,5 +97,10 @@ let package = Package(
             dependencies: ["OpenCodeKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .testTarget(
+            name: "ClaudeCodeKitTests",
+            dependencies: ["ClaudeCodeKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
