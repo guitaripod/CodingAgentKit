@@ -37,9 +37,7 @@ let package = Package(
         .executable(name: "codeagent", targets: ["CodeAgentCLI"]),
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/mattt/EventSource.git", from: "1.4.0",
-            traits: ["AsyncHTTPClient"]),
+        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.35.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-docc-plugin.git", from: "1.3.0"),
@@ -48,7 +46,9 @@ let package = Package(
         .target(
             name: "AgentCore",
             dependencies: [
-                .product(name: "EventSource", package: "EventSource"),
+                .product(
+                    name: "AsyncHTTPClient", package: "async-http-client",
+                    condition: .when(platforms: [.linux])),
                 .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: strict
