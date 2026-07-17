@@ -17,7 +17,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 |---|---|
 | `AgentCore` | Transport (URLSession REST + SSE), unified models, `CodingAgentBackend`, `MessageReducer`, `AgentConversation`, protocols (`SecretStore`, `SessionCache`), swift-log facade. No backend specifics, no Apple-only imports. |
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
-| `ClaudeCodeKit` | Hand-written client for Claude Code bridge + event decoder + `ClaudeCodeBackend`, with an SSE stream and a polling fallback. |
+| `ClaudeCodeKit` | Hand-written client for Claude Code bridge + event decoder + `ClaudeCodeBackend`, over an SSE stream. |
 | `CodingAgentKit` | Umbrella that re-exports the three. |
 | `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
 | `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |
@@ -33,7 +33,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.6.5")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.7.0")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
@@ -86,21 +86,30 @@ Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — tha
 
 ## Backend capabilities
 
-Not every backend can do everything. Each backend declares a `BackendCapabilities` value; gate UI on it rather than on the concrete type. Calling an unsupported method throws `AgentError.unsupported`.
+Not every backend can do everything. Each backend declares a `BackendCapabilities` value; gate UI on it rather than on the concrete type. Calling an unsupported *action* method throws `AgentError.unsupported`; the optional *read* methods (`usageQuota()`, `sessionUsage(_:)`, `subagents(for:)`, `availableAgents()`) instead return `nil`/empty when unsupported.
 
-| Capability | opencode | Claude Code (claude-bridge) |
-|---|:-:|:-:|
-| File browsing (`FileBrowsingBackend`) | ✅ | — |
-| Diffs | ✅ | — |
-| Permission prompts | ✅ | — |
-| Multiple sessions | ✅ | ✅ |
-| Model selection | ✅ | ✅ (persistent, via `/model`) |
-| Attachments (files/images in prompts) | ✅ | — |
-| Reasoning effort (low/medium/high) | — | ✅ (via `/effort`) |
-| Clear conversation in place | — | ✅ (via `/clear`) |
-| Fork session (branch with same history) | — | ✅ (bridge `--fork-session`) |
-| Abort current turn | ✅ | — |
-| Session usage (per-turn cost/tokens) | — | ✅ |
+Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `SendPrompt.reasoningEffort`, not applied as a standing session setting.
+
+| Capability | Flag | opencode | Claude Code (claude-bridge) |
+|---|---|:-:|:-:|
+| File browsing (`FileBrowsingBackend`) | `supportsFileBrowsing` | ✅ | ✅ ¹ |
+| Diffs | `supportsDiffs` | ✅ | — |
+| Permission prompts | `supportsPermissions` | ✅ | — |
+| Structured questions | `supportsQuestions` | ✅ | — |
+| Multiple sessions | `supportsMultipleSessions` | ✅ | ✅ |
+| Model selection (per prompt) | `supportsModelSelection` | ✅ | ✅ |
+| Attachments (files/images in prompts) | `supportsAttachments` | ✅ | — |
+| Reasoning effort (per prompt) | `supportsReasoningEffort` | — | ✅ (low/medium/high/xhigh/max) |
+| Clear conversation in place | `supportsClearing` | — | ✅ |
+| Fork session (branch with same history) | `supportsForking` | — | ✅ (bridge `--fork-session`) |
+| Rename session | `supportsRenaming` | — | ✅ |
+| Abort current turn | `supportsAbort` | ✅ | ✅ |
+| Session usage (per-turn cost/tokens) | `supportsSessionUsage` | — | ✅ |
+| Subagents (sidecar transcripts) | `supportsSubagents` | — | ✅ |
+| Live usage quota (rate-limit gauges) | — ² | — | ✅ |
+
+¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
+² No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
 
 ## Discovering servers on a tailnet
 

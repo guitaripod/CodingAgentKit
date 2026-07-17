@@ -1,15 +1,97 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+Reliability and cross-platform hardening pass. The SDK is now verified building and passing its full
+suite on both Linux (swift-corelibs-foundation) and Apple platforms.
+
+### Fixed
+- **Linux SSE no longer silently drops events.** The Linux event stream previously ran on
+  `mattt/EventSource` with a default 60s idle timeout and hidden auto-reconnect that swallowed the
+  `Last-Event-ID` and never told the consumer — so on the claude-bridge's idle-between-turns pattern,
+  permission prompts, status transitions, and questions emitted during the gap were lost. Both
+  platforms now feed one long-lived transport (Linux: `AsyncHTTPClient` directly; Apple:
+  `URLSession.bytes`) through the package's own `SSEParser`, with a 300s inter-byte / 7-day total
+  budget, and surface every stream end/error to `AgentConversation` so its reconnect + transcript
+  repair runs. `EventSource` is no longer a dependency.
+- `AgentConversation` reconnect loop classifies failures: permanent HTTP errors (401/403/404 and
+  other non-retryable 4xx) now surface a terminal `.offline` state instead of retrying forever;
+  transient/5xx/transport failures keep backoff. A terminal failure can no longer be clobbered by a
+  late in-flight refresh.
+- Initial-refresh and recovery-refresh races that could double-apply or silently drop streamed text
+  deltas are reconciled deterministically.
+- `MessageReducer` no longer loses `costUSD`/`totalTokens`/`providerID`/`modelID` when a
+  metadata-free streaming update merges into an existing message; `snapshot` is now O(1) between
+  mutations.
+- Claude bridge event decoding routes text deltas to the currently-streaming text part (previously
+  hardcoded to the first part, misplacing text after a tool call); `BRSummary`/`BRSession` tolerate
+  missing `model`/`effort`/timestamps so one version-skewed field can't fail the whole session list.
+- `SubagentTranscriptBackend` fetches the final transcript tail on completion and stops re-emitting
+  the whole transcript every poll.
+- opencode `totalTokens` now includes reasoning + cache tokens; `createSession` forwards its title.
+- `SSEParser` handles a leading UTF-8 BOM and CR-only line terminators (WHATWG); `RequestBuilder`
+  strictly percent-encodes query values (a `+` no longer decodes to a space server-side); Tailscale
+  `preferred()` classifies IPv6 literals as addresses, not MagicDNS names.
+- Session-cache files are written `0o600` (dir `0o700`) on every platform and, on iOS-family,
+  encrypted at rest with `.completeUntilFirstUserAuthentication`.
+- `CodingAgentKitApple`: connection-profile `baseURL` strips embedded `user:password@` credentials;
+  the Keychain store pins the data-protection keychain with a this-device-only accessibility class;
+  profile save/delete are serialized and transactional (no orphaned secret, no passwordless profile
+  on partial failure).
+- CLI: `codeagent diff`/`files`/`find`/`providers` gate on the backend's real capability flags
+  instead of protocol conformance (no more false "(no changes)" on Claude); the send task is
+  structured so a prompt can't be silently lost; `CODEAGENT_PASSWORD` avoids exposing the password
+  on the command line.
+
+### Added
+- `JSONValue.integer(Int64)` — integers above 2^53 survive decode/encode round-trips instead of
+  being coerced to `Double`.
+- `AgentError.isRetryable` — lets consumers distinguish permanent from transient failures.
+- `BridgeEventDecoder` is now `public`.
+- `SendPrompt` is `Codable`/`Hashable`/`Sendable`.
+- `ClaudeCodeKitTests` target; the suite grew from 43 to 146 tests, adding coverage for the Claude
+  decoder/DTOs, SSE edge cases, request building, connection probing, session-cache robustness,
+  and conversation failure paths.
+
+## 0.6.7
+
+### Added
+- `AgentSession.model` and `AgentSession.reasoningEffort` — sessions now carry the model and effort
+  they were created with, mapped from the Claude bridge's session summaries and full sessions. An
+  empty effort from the bridge (discovered transcripts don't record one) maps to `nil` rather than
+  implying the server default applied.
+
+## 0.6.6
 
 ### Added
 - Tailnet discovery: `TailscaleClient` (fetch tailnet devices via the Tailscale API, OAuth client
   credentials or raw API token) and `TailnetScanner` — probes every device's addresses and hostname
   on the agent ports (default 4096/4098, up to 16 concurrent probes) and returns ready-to-connect
   `Suggestion`s (backend, version, auth requirement), deduplicated per server with hostname-addressed,
-  no-auth entries preferred.
+  no-auth entries preferred. Scans now finish in seconds instead of minutes.
+- Structured agent questions: `QuestionRequest` plus `answerQuestion`/`rejectQuestion`/
+  `pendingQuestions` on the backend protocol and the `supportsQuestions` capability (opencode's
+  question tool); `AgentConversation` surfaces them as `ConversationState.pendingQuestions`.
+  opencode's `/event` and `/question` calls are now scoped by the session's workspace directory.
+- Subagents as a first-class backend surface: `SubagentSummary`, `subagents(for:)` and
+  `subagentMessages(sessionID:agentID:)`, the `supportsSubagents` capability, subagent
+  active/completed state, and `ToolCall.spawnsSubagent`. The Claude bridge serves sidecar
+  transcripts; other backends default to empty.
+- Session renaming: `renameSession(_:title:)` + `supportsRenaming` (Claude bridge
+  `PATCH /sessions/:id`), and full Claude model/effort coverage (opus/sonnet/haiku/fable aliases,
+  low/medium/high/xhigh/max effort — all chosen per prompt via `SendPrompt`).
+- File browsing for Claude: `ClaudeCodeBackend` conforms to `FileBrowsingBackend` over the bridge's
+  `/files` routes (listing + content; `diff`/`find`/`providers` return empty for now) with
+  `supportsFileBrowsing`.
+- Live usage: per-message cost/tokens, live `UsageQuota` rate-limit gauges via `usageQuota()`, and
+  `additionalUsageQuotas()` for other providers the host is signed into (e.g. Grok via the bridge's
+  `/usage/grok`). `sessionUsage(_:)` reads a light `/usage` route with a full-transcript fallback.
+- Live Activity hook: `LiveActivityRegistration` + `registerLiveActivity(_:for:)` so a backend can
+  register an ActivityKit push token and drive Live Activity updates over APNs while suspended.
 - `supportsAbort` and `supportsSessionUsage` on `BackendCapabilities` (opencode sets abort; Claude
-  sets usage).
+  sets both, plus abort via `POST /sessions/:id/abort`).
+- Transcript-load phase: `ConversationState.hasLoadedTranscript`/`isLoadingTranscript` distinguish a
+  still-loading transcript from a genuinely empty conversation; concurrent session attach.
 - Status inference from streaming: `AgentConversation` flips to `.running` on streaming activity
   against an unfinished assistant message (opencode never sends an explicit running status), and the
   opencode decoder maps `step.started` → running.
@@ -21,20 +103,25 @@
 - Native SSE on Apple platforms: incremental `SSEParser` over `URLSession.bytes` with a dedicated
   stream session whose bounded inter-byte timeout detects half-open sockets (app suspension, dead
   VPN tunnels); Linux keeps `EventSource` + AsyncHTTPClient.
+- `AgentSession.isActive` surfaces a live in-progress session; `AgentMarkup.strip` and
+  placeholder-title detection (`isPlaceholderTitle`) help clients render and replace backend titles.
+- `MockBackend` grows a full demo surface: interactive multi-turn replies, per-session scripts,
+  injectable usage quotas, file trees, diffs, and subagent transcripts for previews and demos.
 
 ### Changed
 - **License changed from MIT to GPL-3.0.**
 - Standardized on `ClaudeCodeBackend` (previously `ClaudeSDKBackend` internally). README now accurately describes the claude-bridge structured service for Claude Code support (with `BRIDGE_HOST`/`BRIDGE_PASSWORD`).
-- `createSession(title:)` is now `createSession(title:directory:)` so opencode sessions can be opened in a specific working directory.
-- `BackendFailure` gains optional `detail`; reconnect paths now use `LocalizedError` descriptions where available.
+- `createSession(title:)` is now `createSession(title:directory:)` so opencode sessions can be opened in a specific working directory; the Claude backend also tracks a per-session directory.
+- `BackendFailure` gains optional `detail`; reconnect paths now use `LocalizedError` descriptions where available, and server error messages are surfaced from JSON error bodies.
 - `states()` buffers only the newest snapshot (`bufferingNewest(1)`); cache persists are chained so
   writes land in order.
 
 ### Fixed
+- A new prompt clears the previous turn's `lastFailure` so a stale error banner no longer lingers.
 - `ConnectionProbe` retries unreachable probes once and validates the health/status payload shape
   instead of classifying any 200 response as an agent server.
 - Tailscale OAuth token exchange form-encodes client credentials correctly (`+`, `&`, `=` in a
-  secret no longer corrupt the request body).
+  secret no longer corrupt the request body); IPv6 hosts are handled.
 - `FileSessionCache` filename sanitizing is collision-free (digest suffix for IDs with disallowed
   characters).
 - `ConnectionProfileStore` no longer wipes stored profiles on a transient read failure
