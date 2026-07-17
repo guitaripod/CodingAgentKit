@@ -228,7 +228,8 @@ struct BRSummary: Decodable {
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
-            createdAt: createdAt, updatedAt: updatedAt, isActive: active)
+            createdAt: createdAt, updatedAt: updatedAt, isActive: active,
+            model: model, reasoningEffort: effort.isEmpty ? nil : effort)
     }
 }
 
@@ -248,7 +249,8 @@ struct BRSession: Decodable {
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
-            createdAt: createdAt, updatedAt: updatedAt)
+            createdAt: createdAt, updatedAt: updatedAt,
+            model: model, reasoningEffort: effort)
     }
 }
 

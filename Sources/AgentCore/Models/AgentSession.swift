@@ -11,6 +11,11 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// The session's transcript is being written to right now — an agent is
     /// actively working in it (on the server machine or via this client).
     public var isActive: Bool?
+    /// Model the session last ran with, as the backend reports it (an alias
+    /// like "sonnet" or a full id like "claude-fable-5"); nil when the
+    /// backend's session list doesn't carry one.
+    public var model: String?
+    public var reasoningEffort: String?
 
     public init(
         id: String,
@@ -20,7 +25,9 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         directory: String? = nil,
         createdAt: Date,
         updatedAt: Date,
-        isActive: Bool? = nil
+        isActive: Bool? = nil,
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -30,5 +37,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isActive = isActive
+        self.model = model
+        self.reasoningEffort = reasoningEffort
     }
 }
