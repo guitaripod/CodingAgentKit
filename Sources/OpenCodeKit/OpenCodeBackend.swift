@@ -60,7 +60,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
-        let session = OpenCodeMapping.session(try await client.createSession(directory: directory))
+        let session = OpenCodeMapping.session(
+            try await client.createSession(title: title, directory: directory))
         await directories.record(sessionID: session.id, directory: session.directory)
         return session
     }

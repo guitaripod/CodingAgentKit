@@ -20,6 +20,14 @@ public actor AgentConversation {
     private var continuation: AsyncStream<ConversationState>.Continuation?
     private var generation = 0
 
+    private var initialRefreshInFlight = false
+    private var bufferedInitialEvents: [BackendEvent] = []
+    private var recoveryRefreshInFlight = false
+    private var droppedDeltaDuringRecovery = false
+    private var reachedTerminal = false
+
+    private static let maxRecoveryRefreshPasses = 3
+
     public init(
         backend: any CodingAgentBackend,
         sessionID: String,
@@ -125,16 +133,27 @@ public actor AgentConversation {
         emit()
     }
 
-    /// The history fetch and the event-stream connection race concurrently: both are network
-    /// roundtrips, and the stream only carries events newer than the fetch. Ordering is
-    /// restored by awaiting the fetch before the first event is applied, so a full snapshot
-    /// always lands before live deltas fold into it.
+    /// The history fetch and the event-stream connection race concurrently to overlap their
+    /// latencies. Events that stream in before the snapshot lands are buffered rather than applied,
+    /// then reconciled against it once it arrives: structural updates fold on top, while text deltas
+    /// are dropped — their content is already in the snapshot (or restored by the next part/message
+    /// upsert), so applying them would double the streamed text. Live events after the snapshot
+    /// apply directly.
     private func runLoop(generation gen: Int) async {
+        recoveryRefreshInFlight = false
+        droppedDeltaDuringRecovery = false
+        reachedTerminal = false
         await seedFromCache(generation: gen)
-        var initialRefresh: Task<Void, Never>? = Task { [weak self] in
-            await self?.refreshQuietly(generation: gen)
+        initialRefreshInFlight = true
+        bufferedInitialEvents = []
+        let initialRefresh = Task { [weak self] in
+            await self?.completeInitialRefresh(generation: gen)
         }
-        defer { initialRefresh?.cancel() }
+        defer {
+            initialRefresh.cancel()
+            initialRefreshInFlight = false
+            bufferedInitialEvents = []
+        }
 
         var attempt = 0
 
@@ -143,30 +162,28 @@ public actor AgentConversation {
             do {
                 for try await event in backend.events(for: sessionID) {
                     guard gen == generation else { return }
-                    if let pending = initialRefresh {
-                        await pending.value
-                        initialRefresh = nil
-                        guard gen == generation else { return }
-                    }
-                    if connection != .live {
-                        lastFailure = nil
-                        setConnection(.live, generation: gen)
+                    if initialRefreshInFlight {
+                        bufferedInitialEvents.append(event)
+                        continue
                     }
                     attempt = 0
+                    markLive(generation: gen)
                     apply(event, generation: gen)
                 }
             } catch {
                 guard gen == generation else { return }
-                let msg = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-                setFailure(
-                    BackendFailure(message: msg, retryable: true, detail: String(describing: error)),
-                    generation: gen)
+                let failure = Self.failure(from: error)
+                guard failure.retryable else {
+                    lastFailure = failure
+                    reachedTerminal = true
+                    setConnection(.offline, generation: gen)
+                    finish(generation: gen)
+                    return
+                }
+                setFailure(failure, generation: gen)
             }
 
-            if let pending = initialRefresh {
-                await pending.value
-                initialRefresh = nil
-            }
+            if initialRefreshInFlight { await initialRefresh.value }
             guard gen == generation && !Task.isCancelled else { return }
 
             attempt += 1
@@ -182,6 +199,45 @@ public actor AgentConversation {
                 attempt: attempt - 1, jitterFraction: .random(in: 0...1))
             try? await Task.sleep(for: delay)
         }
+    }
+
+    /// Runs the initial history fetch, then folds in whatever streamed during it. Structural events
+    /// carry full state and are replayed on top of the snapshot; text deltas are discarded to avoid
+    /// double-applying content the snapshot already holds. Clearing the in-flight flag last lets
+    /// subsequent live events apply directly.
+    private func completeInitialRefresh(generation gen: Int) async {
+        await refreshQuietly(generation: gen)
+        guard gen == generation, !reachedTerminal else {
+            bufferedInitialEvents = []
+            initialRefreshInFlight = false
+            return
+        }
+        let buffered = bufferedInitialEvents
+        bufferedInitialEvents = []
+        if !buffered.isEmpty {
+            markLive(generation: gen)
+            for event in buffered {
+                if case .partTextDelta = event { continue }
+                apply(event, generation: gen)
+            }
+        }
+        initialRefreshInFlight = false
+    }
+
+    private func markLive(generation gen: Int) {
+        guard connection != .live else { return }
+        lastFailure = nil
+        setConnection(.live, generation: gen)
+    }
+
+    /// Builds a failure from a stream/refresh error, classifying its retryability so the reconnect
+    /// loop can stop hammering a permanently-failing endpoint. Non-``AgentError`` errors default to
+    /// retryable, preserving backoff for unrecognised transport faults.
+    private static func failure(from error: Error) -> BackendFailure {
+        let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        let retryable = (error as? AgentError)?.isRetryable ?? true
+        return BackendFailure(
+            message: message, retryable: retryable, detail: String(describing: error))
     }
 
     private func apply(_ event: BackendEvent, generation gen: Int) {
@@ -237,21 +293,34 @@ public actor AgentConversation {
         }
     }
 
-    private var recoveryRefreshInFlight = false
-
     /// A delta for a part we don't have means our transcript diverged from
     /// the server's (e.g. a reconnect gap). Appending it would fabricate a
-    /// bubble that starts mid-response, so drop it and re-fetch instead.
+    /// bubble that starts mid-response, so drop it and re-fetch instead. A
+    /// drop that lands while a recovery fetch is already in flight is recorded
+    /// so the fetch reruns and converges rather than silently losing the delta.
     private func scheduleRecoveryRefresh(generation gen: Int) {
-        guard !recoveryRefreshInFlight else { return }
+        guard !recoveryRefreshInFlight else {
+            droppedDeltaDuringRecovery = true
+            return
+        }
         recoveryRefreshInFlight = true
         Task { [weak self] in
             await self?.recoveryRefresh(generation: gen)
         }
     }
 
+    /// Re-fetches the transcript, then repeats while deltas kept dropping during the fetch — each
+    /// pass narrows the gap to a single roundtrip so a burst of deltas for a still-missing part
+    /// can't leave a permanent hole. Bounded so a continuously-streaming turn can't refetch forever;
+    /// any residual gap heals at the next full part/message upsert.
     private func recoveryRefresh(generation gen: Int) async {
-        await refreshQuietly(generation: gen)
+        var passes = 0
+        repeat {
+            droppedDeltaDuringRecovery = false
+            await refreshQuietly(generation: gen)
+            guard gen == generation else { break }
+            passes += 1
+        } while droppedDeltaDuringRecovery && passes < Self.maxRecoveryRefreshPasses
         recoveryRefreshInFlight = false
     }
 
@@ -280,7 +349,7 @@ public actor AgentConversation {
         do {
             let messages = try await backend.messages(for: sessionID)
             let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
-            guard gen == generation else { return }
+            guard gen == generation, !reachedTerminal else { return }
             reducer = MessageReducer(agentType: backend.agentType, messages: messages)
             loadedTranscript = true
             deriveStatusFromTranscript()
@@ -291,10 +360,8 @@ public actor AgentConversation {
         } catch is CancellationError {
             return
         } catch {
-            guard gen == generation else { return }
-            let msg = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-            lastFailure = BackendFailure(
-                message: msg, retryable: true, detail: String(describing: error))
+            guard gen == generation, !reachedTerminal else { return }
+            lastFailure = Self.failure(from: error)
             emit()
         }
     }

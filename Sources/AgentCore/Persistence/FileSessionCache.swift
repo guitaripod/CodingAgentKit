@@ -8,6 +8,8 @@ public actor FileSessionCache: SessionCache {
     public init(directory: URL) throws {
         self.directory = directory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: directory.path)
     }
 
     public func sessions(for agentType: AgentType) async -> [AgentSession] {
@@ -50,6 +52,25 @@ public actor FileSessionCache: SessionCache {
 
     private func save<T: Encodable>(_ value: T, to name: String) {
         guard let data = try? JSONEncoder().encode(value) else { return }
-        try? data.write(to: directory.appendingPathComponent(name), options: .atomic)
+        let url = directory.appendingPathComponent(name)
+        guard (try? data.write(to: url, options: Self.fileWriteOptions)) != nil else { return }
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    /// Write options for a cache file. Transcripts routinely carry secrets
+    /// (pasted API keys, env dumps, source), so on iOS-family platforms the
+    /// file is encrypted at rest with `.completeUntilFirstUserAuthentication`
+    /// — the strongest class that still lets `AgentConversation.persist()`
+    /// write from the background after the device has been unlocked once
+    /// (`.complete` would silently fail every locked-device background write).
+    /// Every platform additionally gets `0o600` applied via `posixPermissions`
+    /// after the atomic write.
+    private static var fileWriteOptions: Data.WritingOptions {
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+            return [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        #else
+            return [.atomic]
+        #endif
     }
 }

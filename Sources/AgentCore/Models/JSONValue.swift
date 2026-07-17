@@ -1,6 +1,7 @@
 public enum JSONValue: Sendable, Hashable, Codable {
     case null
     case bool(Bool)
+    case integer(Int64)
     case number(Double)
     case string(String)
     case array([JSONValue])
@@ -12,6 +13,8 @@ public enum JSONValue: Sendable, Hashable, Codable {
             self = .null
         } else if let value = try? container.decode(Bool.self) {
             self = .bool(value)
+        } else if let value = try? container.decode(Int64.self) {
+            self = .integer(value)
         } else if let value = try? container.decode(Double.self) {
             self = .number(value)
         } else if let value = try? container.decode(String.self) {
@@ -33,6 +36,7 @@ public enum JSONValue: Sendable, Hashable, Codable {
         switch self {
         case .null: try container.encodeNil()
         case .bool(let value): try container.encode(value)
+        case .integer(let value): try container.encode(value)
         case .number(let value): try container.encode(value)
         case .string(let value): try container.encode(value)
         case .array(let value): try container.encode(value)
@@ -50,6 +54,26 @@ public enum JSONValue: Sendable, Hashable, Codable {
         return nil
     }
 
+    /// The value as an `Int64` when it is exactly an integer — either an
+    /// `.integer` or a `.number` with no fractional part that fits `Int64`.
+    public var intValue: Int64? {
+        switch self {
+        case .integer(let value): return value
+        case .number(let value): return Int64(exactly: value)
+        default: return nil
+        }
+    }
+
+    /// The value as a `Double`, widening an `.integer` (which may lose
+    /// precision above 2^53, the inherent limit of `Double`).
+    public var doubleValue: Double? {
+        switch self {
+        case .integer(let value): return Double(value)
+        case .number(let value): return value
+        default: return nil
+        }
+    }
+
     public subscript(_ key: String) -> JSONValue? {
         objectValue?[key]
     }
@@ -58,6 +82,7 @@ public enum JSONValue: Sendable, Hashable, Codable {
         switch self {
         case .null: return "null"
         case .bool(let value): return String(value)
+        case .integer(let value): return String(value)
         case .number(let value):
             if value.rounded() == value, let integer = Int64(exactly: value) {
                 return String(integer)

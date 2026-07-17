@@ -68,7 +68,7 @@ public struct SubagentTranscriptBackend: CodingAgentBackend {
         let agentID = agentID
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var lastCount = -1
+                var lastMessages: [ChatMessage]? = nil
                 var lastActive = true
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(lastActive ? 4 : 15))
@@ -76,17 +76,13 @@ public struct SubagentTranscriptBackend: CodingAgentBackend {
                     let summary = (try? await base.subagents(for: parentSessionID))?
                         .first { $0.id == agentID }
                     let active = summary?.isActive ?? false
-                    if active || lastCount == -1 {
+                    if active || lastActive || lastMessages == nil {
                         if let messages = try? await base.subagentMessages(
                             sessionID: parentSessionID, agentID: agentID)
                         {
-                            if messages.count != lastCount || active {
-                                for message in messages {
-                                    continuation.yield(
-                                        .messageUpserted(message, replaceParts: true))
-                                }
-                                lastCount = messages.count
-                            }
+                            Self.yieldChangedMessages(
+                                previous: lastMessages, current: messages, into: continuation)
+                            lastMessages = messages
                         }
                     }
                     if active != lastActive {
@@ -97,6 +93,21 @@ public struct SubagentTranscriptBackend: CodingAgentBackend {
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Upserts only messages that are new or whose content differs from the
+    /// previous poll, so an unchanged transcript produces no events and
+    /// subscribers never re-process the full history on every tick.
+    private static func yieldChangedMessages(
+        previous: [ChatMessage]?,
+        current: [ChatMessage],
+        into continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation
+    ) {
+        let previousByID = Dictionary(
+            (previous ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        for message in current where previousByID[message.id] != message {
+            continuation.yield(.messageUpserted(message, replaceParts: true))
         }
     }
 }

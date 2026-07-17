@@ -35,7 +35,7 @@ public struct PromptAttachment: Sendable, Hashable, Codable {
     }
 }
 
-public struct SendPrompt: Sendable {
+public struct SendPrompt: Sendable, Hashable, Codable {
     public var text: String
     public var model: ModelSelection?
     public var reasoningEffort: String?

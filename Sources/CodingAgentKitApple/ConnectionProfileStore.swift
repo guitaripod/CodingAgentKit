@@ -2,10 +2,23 @@
     import AgentCore
     import Foundation
 
+    /// Serializes the read-modify-write cycle behind `save`/`delete` so two threads
+    /// sharing a store can't both read the old `profiles.json`, edit, and write back
+    /// — which would silently drop one thread's change (last writer wins).
+    private final class WriteLock: @unchecked Sendable {
+        private let lock = NSLock()
+        func withLock<T>(_ body: () throws -> T) rethrows -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            return try body()
+        }
+    }
+
     /// Stores connection profiles (metadata on disk, passwords in the Keychain) for an app.
     public struct ConnectionProfileStore: Sendable {
         public let directory: URL
         private let keychain: KeychainSecretStore
+        private let writeLock = WriteLock()
 
         public init(
             directory: URL? = nil,
@@ -44,17 +57,35 @@
 
         /// Keychain first: if the password write fails, no profile lands on
         /// disk, so a failed save can't leave a half-saved profile that
-        /// becomes active (and 401s) on the next launch.
+        /// becomes active (and 401s) on the next launch. The whole
+        /// read-modify-write runs under `writeLock` so concurrent saves serialize.
         public func save(_ profile: ConnectionProfile, password: String?) throws {
-            var all = try profiles().filter { $0.id != profile.id }
-            all.append(profile)
-            if let password { try keychain.setValue(password, for: profile.id) }
-            try write(all)
+            try writeLock.withLock {
+                var all = try profiles().filter { $0.id != profile.id }
+                all.append(profile)
+                if let password { try keychain.setValue(password, for: profile.id) }
+                try write(all)
+            }
         }
 
+        /// Transactional so a partial failure leaves neither an orphaned Keychain
+        /// secret nor an active-but-passwordless profile: the remaining list is
+        /// computed first (a failing read aborts before any mutation), the secret
+        /// is backed up and removed, then the file is rewritten — and if that
+        /// write throws, the secret is restored so the profile stays intact with
+        /// its password rather than 401ing on next launch.
         public func delete(id: String) throws {
-            try write(try profiles().filter { $0.id != id })
-            try keychain.removeValue(for: id)
+            try writeLock.withLock {
+                let remaining = try profiles().filter { $0.id != id }
+                let backup = try? keychain.value(for: id)
+                try keychain.removeValue(for: id)
+                do {
+                    try write(remaining)
+                } catch {
+                    if let backup { try? keychain.setValue(backup, for: id) }
+                    throw error
+                }
+            }
         }
 
         public func password(for id: String) throws -> String? {

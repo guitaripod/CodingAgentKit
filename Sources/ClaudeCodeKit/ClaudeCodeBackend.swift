@@ -43,7 +43,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func listSessions() async throws -> [AgentSession] {
         let data = try await http.send(builder.request(.get, "/sessions"))
-        return try BridgeCoding.decoder.decode([BRSummary].self, from: data).map(\.session)
+        return try BridgeCoding.decoder.decode([BRLenient<BRSummary>].self, from: data)
+            .compactMap(\.value).map(\.session)
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
@@ -109,9 +110,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         return AsyncThrowingStream { continuation in
             let task = Task {
+                var decoder = BridgeEventDecoder()
                 do {
                     for try await sse in stream {
-                        if let event = BridgeEventDecoder.decode(sse) { continuation.yield(event) }
+                        if let event = decoder.decode(sse) { continuation.yield(event) }
                     }
                     continuation.finish()
                 } catch {
@@ -215,21 +217,34 @@ enum BridgeCoding {
     }()
 }
 
+/// Session metadata fields (`model`, `effort`, timestamps) are optional with fallbacks so a
+/// single version-skewed field from an older or newer bridge can't fail the whole session list.
 struct BRSummary: Decodable {
     let id: String
     let title: String
     let directory: String?
-    let model: String
-    let effort: String
-    let createdAt: Date
-    let updatedAt: Date
+    let model: String?
+    let effort: String?
+    let createdAt: Date?
+    let updatedAt: Date?
     let active: Bool?
 
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
-            createdAt: createdAt, updatedAt: updatedAt, isActive: active,
-            model: model, reasoningEffort: effort.isEmpty ? nil : effort)
+            createdAt: createdAt ?? updatedAt ?? .distantPast,
+            updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
+            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
+    }
+}
+
+/// Decodes to `nil` instead of throwing when a single array element is malformed, so one
+/// undecodable session summary is skipped rather than failing the entire `/sessions` decode.
+struct BRLenient<Wrapped: Decodable>: Decodable {
+    let value: Wrapped?
+
+    init(from decoder: Decoder) throws {
+        value = try? Wrapped(from: decoder)
     }
 }
 
@@ -237,10 +252,10 @@ struct BRSession: Decodable {
     let id: String
     let title: String
     let directory: String?
-    let model: String
-    let effort: String
-    let createdAt: Date
-    let updatedAt: Date
+    let model: String?
+    let effort: String?
+    let createdAt: Date?
+    let updatedAt: Date?
     let claudeSessionID: String?
     let messages: [BRMessage]
     let lastCostUSD: Double?
@@ -249,8 +264,9 @@ struct BRSession: Decodable {
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
-            createdAt: createdAt, updatedAt: updatedAt,
-            model: model, reasoningEffort: effort)
+            createdAt: createdAt ?? updatedAt ?? .distantPast,
+            updatedAt: updatedAt ?? createdAt ?? .distantPast,
+            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
     }
 }
 
@@ -261,8 +277,9 @@ struct BRMessage: Decodable {
     let createdAt: Date
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
-    /// get an index suffix so `messageID:partID` row identifiers stay unique;
-    /// the first occurrence keeps its base id so streaming deltas still route.
+    /// get an index suffix so `messageID:partID` row identifiers stay unique. The
+    /// suffix scheme ("text", "text-1", …) mirrors `BridgeEventDecoder`'s delta
+    /// routing so streamed tokens and full-message upserts converge on the same part.
     var chat: ChatMessage {
         var counts: [String: Int] = [:]
         let uniqueParts = parts.map { raw -> MessagePart in
@@ -356,27 +373,49 @@ struct BRSend: Encodable {
     let effort: String?
 }
 
-enum BridgeEventDecoder {
-    static func decode(_ event: SSEvent) -> BackendEvent? {
+/// Decodes claude-bridge SSE payloads into `BackendEvent`s. Stateful because the bridge
+/// streams each assistant text block as a run of `delta` events that carry no part id, so the
+/// decoder tracks, per message, which text part is currently streaming and routes deltas to it —
+/// the `text`/`text-N` id it assigns matches `BRMessage.chat`'s dedup so a delta and a later
+/// full-message upsert land on the same part instead of piling new text onto the first block.
+/// Public so recorded bridge fixtures can be replayed through the real decoder in tests.
+public struct BridgeEventDecoder {
+    private var textStreams: [String: TextStream] = [:]
+
+    public init() {}
+
+    private struct TextStream {
+        var count = 0
+        var currentPartID: String?
+        var awaitingNewPart = true
+    }
+
+    public mutating func decode(_ event: SSEvent) -> BackendEvent? {
         guard let data = event.data.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         switch object["type"] as? String {
         case "message":
-            guard let messageData = try? JSONSerialization.data(withJSONObject: object["message"] ?? [:]),
+            guard
+                let messageData = try? JSONSerialization.data(
+                    withJSONObject: object["message"] ?? [:]),
                 let message = try? BridgeCoding.decoder.decode(BRMessage.self, from: messageData)
             else { return nil }
-            return .messageUpserted(message.chat, replaceParts: true)
+            let chat = message.chat
+            syncTextStream(with: chat)
+            return .messageUpserted(chat, replaceParts: true)
         case "delta":
             guard let messageID = object["messageID"] as? String,
                 let delta = object["delta"] as? String
             else { return nil }
-            return .partTextDelta(messageID: messageID, partID: "text", delta: delta)
+            return .partTextDelta(
+                messageID: messageID, partID: openTextPartID(in: messageID), delta: delta)
         case "tool":
             guard let messageID = object["messageID"] as? String,
                 let toolData = try? JSONSerialization.data(withJSONObject: object["tool"] ?? [:]),
                 let tool = try? BridgeCoding.decoder.decode(BRTool.self, from: toolData)
             else { return nil }
+            closeTextPart(in: messageID)
             return .partUpserted(
                 messageID: messageID, MessagePart(id: tool.id, kind: .tool(tool.toolCall)))
         case "status":
@@ -389,6 +428,46 @@ enum BridgeEventDecoder {
         default:
             return nil
         }
+    }
+
+    /// The id of the text part the next delta belongs to. Opens a fresh part — using the same
+    /// `text`/`text-N` numbering as `BRMessage.chat` — when the message has no open text part yet
+    /// or a tool closed the previous one; otherwise keeps appending to the currently open part.
+    private mutating func openTextPartID(in messageID: String) -> String {
+        var stream = textStreams[messageID] ?? TextStream()
+        if stream.awaitingNewPart || stream.currentPartID == nil {
+            let id = stream.count == 0 ? "text" : "text-\(stream.count)"
+            stream.count += 1
+            stream.currentPartID = id
+            stream.awaitingNewPart = false
+        }
+        let id = stream.currentPartID ?? "text"
+        textStreams[messageID] = stream
+        return id
+    }
+
+    /// Marks the message's open text part as finished so the next delta starts a new part,
+    /// mirroring how a tool call interrupts an assistant text block.
+    private mutating func closeTextPart(in messageID: String) {
+        var stream = textStreams[messageID] ?? TextStream()
+        stream.awaitingNewPart = true
+        textStreams[messageID] = stream
+    }
+
+    /// Re-derives the open text part from a full message snapshot so deltas that follow keep
+    /// routing to the newest text part even when the tool/part structure arrived via an upsert
+    /// rather than discrete `tool`/`delta` events. A snapshot ending in a non-text part leaves
+    /// the stream awaiting a fresh part for the next delta.
+    private mutating func syncTextStream(with message: ChatMessage) {
+        let textPartIDs = message.parts.compactMap { part -> String? in
+            if case .text = part.kind { return part.id }
+            return nil
+        }
+        var stream = textStreams[message.id] ?? TextStream()
+        stream.count = textPartIDs.count
+        stream.currentPartID = textPartIDs.last
+        stream.awaitingNewPart = textPartIDs.isEmpty || message.parts.last?.id != textPartIDs.last
+        textStreams[message.id] = stream
     }
 }
 

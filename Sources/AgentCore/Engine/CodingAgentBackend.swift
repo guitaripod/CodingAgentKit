@@ -62,11 +62,21 @@ public struct AgentUsage: Sendable, Hashable, Codable {
 /// Live subscription quota for a provider (Claude Max/Pro rolling rate limits), sourced from the
 /// provider's own usage API rather than estimated from message costs.
 public struct UsageQuota: Sendable, Hashable, Codable {
+    /// One rate-limit gauge in a provider's quota, ready to render as a progress bar.
     public struct Gauge: Sendable, Hashable, Codable {
         public var key: String
         public var label: String
+        /// The *used* fraction of this quota window as reported by the provider: `0.0` is a fresh
+        /// window, `1.0` is exhausted, and a bar bound to it fills as quota is consumed (do not
+        /// invert). Normally within `0...1`, but the Kit passes the provider value through without
+        /// clamping, so a value can momentarily read slightly above `1` when the provider counts an
+        /// over-limit request — clamp at the presentation layer if a bar must not overflow.
         public var fraction: Double
+        /// When the window is expected to reset, if known.
         public var resetsAt: Date?
+        /// Whether ``resetsAt`` is a real provider-reported reset time rather than one the backend
+        /// estimated locally. Show an exact countdown only when `true`; otherwise treat ``resetsAt``
+        /// as approximate.
         public var trustedReset: Bool
 
         public init(key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool) {
@@ -121,6 +131,9 @@ public struct ServerHealth: Sendable, Hashable {
 public enum BackendStatus: String, Sendable, Hashable, Codable {
     case idle
     case running
+    /// Render this exactly like ``idle`` (a settled turn). No current backend emits it — it is a
+    /// leftover from the removed agentapi TUI-scraping transport (0.6.1) — but it stays a valid case
+    /// so older cached ``ConversationState`` JSON that recorded it still decodes.
     case stable
     case unknown
 }
@@ -241,15 +254,24 @@ public protocol CodingAgentBackend: Sendable {
     /// unsupported.
     func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest]
     func availableModels() async throws -> [ModelInfo]
+    /// Named agent presets selectable per prompt via `SendPrompt.agent` (opencode exposes them at
+    /// `GET /agent`). Defaults to empty and no shipped backend overrides it yet, so an agent picker
+    /// has nothing to list — pass known `SendPrompt.agent` names out of band until discovery lands.
     func availableAgents() async throws -> [String]
     func defaultModel() async throws -> ModelSelection?
 
-    /// Reasoning-effort levels a conformer supports (e.g. Claude Code: low/medium/high). Empty if none.
+    /// Reasoning-effort levels a conformer accepts as `SendPrompt.reasoningEffort` (Claude Code:
+    /// low/medium/high/xhigh/max). Empty if the backend has no effort control.
     var reasoningEffortOptions: [String] { get }
-    /// Applies a reasoning-effort level immediately (Claude Code sends a `/effort` control command).
+    /// Applies a reasoning-effort level as a standing, out-of-band session setting — for a backend
+    /// that keeps effort server-side rather than reading it per message. The current backends take
+    /// effort per prompt via `SendPrompt.reasoningEffort` instead, so none override this and the
+    /// default throws ``AgentError/unsupported(_:)``; prefer the per-send parameter.
     func setReasoningEffort(_ level: String) async throws
-    /// Applies a model selection immediately, for backends where the model is a persistent session
-    /// setting rather than a per-message parameter (Claude Code sends a `/model` control command).
+    /// Applies a model selection as a standing, out-of-band session setting — for a backend that
+    /// persists the model server-side rather than reading it per message. The current backends take
+    /// the model per prompt via `SendPrompt.model` instead, so none override this and the default
+    /// throws ``AgentError/unsupported(_:)``; prefer the per-send parameter.
     func applyModelSelection(_ model: ModelSelection) async throws
     /// Clears the conversation in place (Claude Code sends a `/clear` control command) for backends
     /// that keep a single long-lived session rather than discrete ones.
@@ -309,7 +331,9 @@ extension CodingAgentBackend {
     public func setReasoningEffort(_ level: String) async throws {
         throw AgentError.unsupported("reasoningEffort")
     }
-    public func applyModelSelection(_ model: ModelSelection) async throws {}
+    public func applyModelSelection(_ model: ModelSelection) async throws {
+        throw AgentError.unsupported("modelSelection")
+    }
     public func clearConversation(_ sessionID: String) async throws {
         throw AgentError.unsupported("clearConversation")
     }

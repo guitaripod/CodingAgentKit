@@ -32,12 +32,14 @@ public struct OpenCodeClient: Sendable {
 
     /// The working directory is a QUERY parameter on opencode's session
     /// routes — a `directory` body field is silently ignored and the session
-    /// lands in the server's own cwd.
-    func createSession(directory: String?) async throws -> OCSession {
-        let query = directory.map { [URLQueryItem(name: "directory", value: $0)] } ?? []
+    /// lands in the server's own cwd. The title, by contrast, is a BODY field
+    /// on `POST /session`; when omitted the server auto-titles the session.
+    func createSession(title: String?, directory: String?) async throws -> OCSession {
+        let body = try JSONCoding.encoder.encode(OCSessionCreateRequest(title: title))
         return try decode(
             await http.send(
-                builder.request(.post, "/session", query: query, body: Data("{}".utf8))))
+                builder.request(
+                    .post, "/session", query: directoryQuery(directory), body: body)))
     }
 
     /// Question routes are directory-scoped like `/event`: the request id is

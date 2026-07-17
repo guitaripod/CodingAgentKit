@@ -27,12 +27,31 @@ public struct RequestBuilder: Sendable {
             throw AgentError.invalidURL("\(config.baseURL)\(path)")
         }
         if !query.isEmpty {
-            components.queryItems = (components.queryItems ?? []) + query
+            components.percentEncodedQueryItems =
+                (components.percentEncodedQueryItems ?? []) + query.map(Self.strictlyEncoded)
         }
         guard let resolved = components.url else {
             throw AgentError.invalidURL("\(config.baseURL)\(path)")
         }
         return resolved
+    }
+
+    private static let unreservedQueryCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+    /// Percent-encodes a query item's name and value so that only RFC 3986
+    /// unreserved characters stay literal. Foundation's default query encoding
+    /// leaves `+` on the wire, which servers with form-decoding semantics
+    /// (WHATWG `URLSearchParams`, `application/x-www-form-urlencoded` parsers)
+    /// corrupt to a space; encoding it as `%2B` survives both interpretations.
+    private static func strictlyEncoded(_ item: URLQueryItem) -> URLQueryItem {
+        URLQueryItem(
+            name: strictlyEncoded(item.name),
+            value: item.value.map(strictlyEncoded))
+    }
+
+    private static func strictlyEncoded(_ string: String) -> String {
+        string.addingPercentEncoding(withAllowedCharacters: unreservedQueryCharacters) ?? string
     }
 
     public func request(

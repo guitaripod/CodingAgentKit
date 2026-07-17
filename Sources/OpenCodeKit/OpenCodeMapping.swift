@@ -58,7 +58,12 @@ enum OpenCodeMapping {
 
     private static func totalTokens(_ tokens: OCTokens?) -> Int? {
         guard let tokens else { return nil }
-        let total = (tokens.input ?? 0) + (tokens.output ?? 0)
+        let input: Double = tokens.input ?? 0
+        let output: Double = tokens.output ?? 0
+        let reasoning: Double = tokens.reasoning ?? 0
+        let cacheRead: Double = tokens.cache?.read ?? 0
+        let cacheWrite: Double = tokens.cache?.write ?? 0
+        let total = input + output + reasoning + cacheRead + cacheWrite
         return total > 0 ? Int(total) : nil
     }
 

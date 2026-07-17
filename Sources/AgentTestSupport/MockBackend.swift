@@ -105,7 +105,8 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
             ?? BackendCapabilities(
                 supportsFileBrowsing: true, supportsDiffs: true, supportsPermissions: true,
                 supportsMultipleSessions: true, supportsModelSelection: true,
-                supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true)
+                supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true,
+                supportsQuestions: true)
         mutable.withLock {
             $0.sessions =
                 sessions
@@ -243,7 +244,7 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
             state.subscriptions += 1
             return state.subscriptions == 1 ? failAfter : nil
         }
-        let replay = fullLog(for: sessionID)
+        let (replay, snapshotAppendedCount) = replaySnapshot(for: sessionID)
         let failure = failure
         let interactive = interactive
         return AsyncThrowingStream { continuation in
@@ -268,7 +269,9 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
                     continuation.finish()
                     return
                 }
-                self.mutable.withLock { $0.continuations[sessionID, default: [:]][token] = continuation }
+                self.registerLiveContinuation(
+                    continuation, token: token, sessionID: sessionID,
+                    deliveringAppendedAfter: snapshotAppendedCount)
             }
             continuation.onTermination = { [weak self] _ in
                 task.cancel()
@@ -277,7 +280,28 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         }
     }
 
-    public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] { [] }
+    /// Registers a live subscriber atomically with the replay hand-off: under one lock it delivers
+    /// any events appended after the replay snapshot (so a subscriber attaching mid-reply misses
+    /// nothing) and installs the continuation. The `Task.isCancelled` guard drops a continuation
+    /// whose consumer already terminated during replay — `onTermination` cancels the task before
+    /// removing the token, so a cancelled task never leaves a stale continuation in the dictionary.
+    private func registerLiveContinuation(
+        _ continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation,
+        token: UUID, sessionID: String, deliveringAppendedAfter snapshotAppendedCount: Int
+    ) {
+        mutable.withLock { state in
+            guard !Task.isCancelled else { return }
+            let appended = state.appendedEvents[sessionID] ?? []
+            for step in appended.dropFirst(snapshotAppendedCount) {
+                continuation.yield(step.event)
+            }
+            state.continuations[sessionID, default: [:]][token] = continuation
+        }
+    }
+
+    public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] {
+        openQuestions(in: fullLog(for: sessionID))
+    }
 
     public func listFiles(path: String?) async throws -> [FileNode] {
         fileTree[path ?? "."] ?? fileTree[path ?? ""] ?? []
@@ -332,10 +356,37 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     }
 
     private func fullLog(for sessionID: String) -> [MockScriptStep] {
+        replaySnapshot(for: sessionID).log
+    }
+
+    /// Snapshots the session's replay log together with the count of already-appended live steps,
+    /// under a single lock, so a subscriber can later deliver exactly the steps appended after the
+    /// snapshot without gaps or duplicates.
+    private func replaySnapshot(for sessionID: String) -> (log: [MockScriptStep], appendedCount: Int)
+    {
         mutable.withLock { state in
+            let appended = state.appendedEvents[sessionID] ?? []
             let base = state.cleared.contains(sessionID) ? [] : baseScript(for: sessionID)
-            return base + (state.appendedEvents[sessionID] ?? [])
+            return (base + appended, appended.count)
         }
+    }
+
+    /// Folds a session log into the questions the agent is still waiting on, matching how a real
+    /// backend reports open questions: each `.question` stays pending until a matching
+    /// `.questionResolved` (emitted by `answerQuestion`/`rejectQuestion` in interactive mode) clears it.
+    private func openQuestions(in log: [MockScriptStep]) -> [QuestionRequest] {
+        var open: [QuestionRequest] = []
+        for step in log {
+            switch step.event {
+            case .question(let request):
+                if !open.contains(where: { $0.id == request.id }) { open.append(request) }
+            case .questionResolved(let requestID):
+                open.removeAll { $0.id == requestID }
+            default:
+                break
+            }
+        }
+        return open
     }
 
     /// Streams steps to the session's live subscribers with per-step delays, recording each into

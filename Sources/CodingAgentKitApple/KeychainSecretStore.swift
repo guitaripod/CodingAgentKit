@@ -33,7 +33,7 @@
         public func setValue(_ value: String, for key: String) throws {
             let attributes: [String: Any] = [
                 kSecValueData as String: Data(value.utf8),
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             ]
             let status = SecItemUpdate(
                 baseQuery(for: key) as CFDictionary, attributes as CFDictionary)
@@ -56,11 +56,18 @@
             }
         }
 
+        /// Pins every operation to the data-protection keychain so `kSecAttrAccessible`
+        /// and `kSecAttrAccessGroup` behave identically to iOS. Without this, macOS
+        /// routes generic-password items to the legacy file keychain, where those
+        /// attributes carry different (weaker) semantics. The flag must be present on
+        /// add, lookup, update and delete alike, or an item added to one keychain is
+        /// invisible to the other.
         private func baseQuery(for key: String) -> [String: Any] {
             var query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: key,
+                kSecUseDataProtectionKeychain as String: true,
             ]
             if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
             return query

@@ -147,6 +147,10 @@ struct OCModelInput: Encodable, Sendable {
     let modelID: String
 }
 
+struct OCSessionCreateRequest: Encodable, Sendable {
+    let title: String?
+}
+
 struct OCPromptRequest: Encodable, Sendable {
     let parts: [OCPartInput]
     let model: OCModelInput?

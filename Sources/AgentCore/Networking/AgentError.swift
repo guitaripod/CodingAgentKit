@@ -9,6 +9,37 @@ public enum AgentError: Error, Sendable, Equatable {
     case connection(String)
 }
 
+extension AgentError {
+    /// Whether reattempting the same request could plausibly succeed. Permanent HTTP failures —
+    /// authentication (401), authorization (403), a missing route or session (404), and other
+    /// client-side (4xx) rejections — keep failing identically, so a reconnect loop must surface a
+    /// terminal state instead of retrying them forever. Transport failures, transient server
+    /// errors (5xx), and the retry-friendly 4xx codes (408 Request Timeout, 425 Too Early, 429 Too
+    /// Many Requests) stay retryable. Structural client-side faults (bad URL, decode failure,
+    /// unsupported feature) reproduce identically and are never retryable.
+    public var isRetryable: Bool {
+        switch self {
+        case .http(let status, _):
+            return Self.isRetryableHTTPStatus(status)
+        case .connection, .server:
+            return true
+        case .decoding, .invalidURL, .unsupported:
+            return false
+        }
+    }
+
+    private static func isRetryableHTTPStatus(_ status: Int) -> Bool {
+        switch status {
+        case 408, 425, 429:
+            return true
+        case 400..<500:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
 extension AgentError: LocalizedError {
     public var errorDescription: String? {
         switch self {

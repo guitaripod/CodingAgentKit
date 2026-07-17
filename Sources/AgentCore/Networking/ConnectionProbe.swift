@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 public struct ConnectionProbe: Sendable {
     public enum Outcome: Sendable, Hashable {
         case ok(agentType: AgentType, version: String?)
@@ -8,7 +12,24 @@ public struct ConnectionProbe: Sendable {
         case notAnAgentServer
     }
 
-    public init() {}
+    typealias Transport = @Sendable (URLRequest) async throws -> Data
+
+    private let transportProvider: @Sendable (ConnectionPolicy) async -> Transport
+
+    public init() {
+        let pool = HTTPClientPool()
+        self.transportProvider = { policy in
+            let client = await pool.client(for: policy)
+            return { try await client.send($0) }
+        }
+    }
+
+    /// Testing seam: routes every probe request through `transport` instead
+    /// of a real `HTTPClient`, so outcome classification is exercisable
+    /// without a server.
+    init(transport: @escaping Transport) {
+        self.transportProvider = { _ in transport }
+    }
 
     /// Probes a base URL and classifies it: which agent backend (if any) answers, or why it failed.
     /// The unreachable retry smooths over transient flakiness for a single
@@ -20,10 +41,13 @@ public struct ConnectionProbe: Sendable {
         policy: ConnectionPolicy = .default,
         retryUnreachable: Bool = true
     ) async -> Outcome {
-        let outcome = await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
+        let transport = await transportProvider(policy)
+        let outcome = await attemptProbe(
+            baseURL: baseURL, credentials: credentials, policy: policy, transport: transport)
         if retryUnreachable, case .unreachable = outcome, !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
-            return await attemptProbe(baseURL: baseURL, credentials: credentials, policy: policy)
+            return await attemptProbe(
+                baseURL: baseURL, credentials: credentials, policy: policy, transport: transport)
         }
         return outcome
     }
@@ -31,14 +55,14 @@ public struct ConnectionProbe: Sendable {
     private func attemptProbe(
         baseURL: URL,
         credentials: BasicCredentials?,
-        policy: ConnectionPolicy
+        policy: ConnectionPolicy,
+        transport: Transport
     ) async -> Outcome {
         let builder = RequestBuilder(
             config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
-        let http = HTTPClient(policy: policy, logger: AgentLog.logger("probe"))
 
         do {
-            let data = try await http.send(builder.request(.get, "/global/health"))
+            let data = try await transport(builder.request(.get, "/global/health"))
             if let health = try? JSONCoding.decoder.decode(HealthProbe.self, from: data),
                 health.healthy != nil || health.version != nil
             {
@@ -57,7 +81,7 @@ public struct ConnectionProbe: Sendable {
         }
 
         do {
-            let data = try await http.send(builder.request(.get, "/status"))
+            let data = try await transport(builder.request(.get, "/status"))
             if let status = try? JSONCoding.decoder.decode(StatusProbe.self, from: data),
                 status.status != nil || status.agent != nil || status.agentType != nil
             {
@@ -93,5 +117,19 @@ public struct ConnectionProbe: Sendable {
             case agentType = "agent_type"
             case agent
         }
+    }
+}
+
+/// Hands out one `HTTPClient` per distinct policy for the lifetime of a
+/// `ConnectionProbe`, so bulk tailnet scans (hundreds of attempts) reuse a
+/// single client instead of allocating two fresh `URLSession`s per attempt.
+private actor HTTPClientPool {
+    private var clients: [ConnectionPolicy: HTTPClient] = [:]
+
+    func client(for policy: ConnectionPolicy) -> HTTPClient {
+        if let existing = clients[policy] { return existing }
+        let created = HTTPClient(policy: policy, logger: AgentLog.logger("probe"))
+        clients[policy] = created
+        return created
     }
 }

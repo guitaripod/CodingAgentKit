@@ -22,17 +22,10 @@ enum ConversationRunner {
         var sawRunning = false
 
         let events = backend.events(for: sessionID)
-        if let text = send {
-            let prompt = SendPrompt(text: text, model: model, attachments: attachments)
-            Task {
-                try? await Task.sleep(for: .milliseconds(300))
-                do {
-                    try await backend.send(prompt, to: sessionID)
-                } catch {
-                    FileHandle.standardError.write(Data("\n[error] send failed: \(error)\n".utf8))
-                }
-            }
-        }
+        let sendTask = makeSendTask(
+            backend: backend, sessionID: sessionID, send: send, model: model,
+            attachments: attachments)
+        defer { sendTask?.cancel() }
 
         for try await event in events {
             reducer.apply(event)
@@ -43,17 +36,64 @@ enum ConversationRunner {
                 FileHandle.standardError.write(Data("\n[error] \(failure.message)\n".utf8))
             case .status(.running):
                 sawRunning = true
-            case .status(.idle) where !followForever:
-                print("")
-                return
-            case .status(.stable) where !followForever && (send == nil || sawRunning):
-                print("")
-                return
+            case .status(.idle), .status(.stable):
+                if !followForever,
+                    await settleEndsRun(send: send, sawRunning: sawRunning, sendTask: sendTask)
+                {
+                    print("")
+                    return
+                }
             default:
                 break
             }
         }
+        _ = await sendTask?.value
         print("")
+    }
+
+    /// Delivers the `--send` prompt after a short delay that lets the event stream
+    /// attach first, reporting whether the prompt reached the backend. Kept as a
+    /// structured handle so the run can await delivery before exiting (the prompt
+    /// is never silently dropped and send errors always surface) and cancel it if
+    /// the stream fails mid-flight.
+    private static func makeSendTask(
+        backend: any CodingAgentBackend,
+        sessionID: String,
+        send: String?,
+        model: ModelSelection?,
+        attachments: [PromptAttachment]
+    ) -> Task<Bool, Never>? {
+        guard let text = send else { return nil }
+        let prompt = SendPrompt(text: text, model: model, attachments: attachments)
+        return Task {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                try await backend.send(prompt, to: sessionID)
+                return true
+            } catch is CancellationError {
+                return false
+            } catch {
+                FileHandle.standardError.write(Data("\n[error] send failed: \(error)\n".utf8))
+                return false
+            }
+        }
+    }
+
+    /// Whether an idle/stable event should end a non-follow run. With no pending
+    /// send, a settled turn is the end. With one, the run must first guarantee the
+    /// prompt was delivered: a settle seen after the agent started (`sawRunning`)
+    /// is the real end, while an earlier settle only ends the run if the prompt
+    /// could not be delivered — otherwise the response is still on its way.
+    private static func settleEndsRun(
+        send: String?, sawRunning: Bool, sendTask: Task<Bool, Never>?
+    ) async -> Bool {
+        guard send != nil, let sendTask else { return true }
+        if sawRunning {
+            _ = await sendTask.value
+            return true
+        }
+        let delivered = await sendTask.value
+        return !delivered
     }
 
     private static func render(

@@ -112,7 +112,7 @@ struct Diff: AsyncParsableCommand {
     @Argument(help: "Session id.") var session: String
 
     func run() async throws {
-        let backend = try requireFileBrowsing(connection, feature: "diff")
+        let backend = try requireCapability(connection, feature: "diff", \.supportsDiffs)
         let diffs = try await backend.diff(sessionID: session)
         if diffs.isEmpty {
             print("(no changes)")
@@ -126,12 +126,12 @@ struct Diff: AsyncParsableCommand {
 
 struct Files: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "List files at a path (opencode only).")
+        abstract: "List files at a path (requires a file-browsing backend).")
     @OptionGroup var connection: ConnectionOptions
     @Argument(help: "Path (default: .).") var path: String = "."
 
     func run() async throws {
-        let backend = try requireFileBrowsing(connection, feature: "files")
+        let backend = try requireCapability(connection, feature: "files", \.supportsFileBrowsing)
         for node in try await backend.listFiles(path: path) {
             print((node.isDirectory ? "d " : "  ") + node.path)
         }
@@ -145,7 +145,7 @@ struct Find: AsyncParsableCommand {
     @Argument(help: "Pattern.") var pattern: String
 
     func run() async throws {
-        let backend = try requireFileBrowsing(connection, feature: "find")
+        let backend = try requireCapability(connection, feature: "find", \.supportsFileBrowsing)
         for line in try await backend.find(pattern: pattern) {
             print(line)
         }
@@ -158,7 +158,8 @@ struct Providers: AsyncParsableCommand {
     @OptionGroup var connection: ConnectionOptions
 
     func run() async throws {
-        let backend = try requireFileBrowsing(connection, feature: "providers")
+        let backend = try requireCapability(
+            connection, feature: "providers", \.supportsModelSelection)
         for provider in try await backend.providers() {
             print("\(provider.id)\(provider.defaultModelID.map { " (default: \($0))" } ?? "")")
             for model in provider.models.prefix(8) {
@@ -171,13 +172,23 @@ struct Providers: AsyncParsableCommand {
     }
 }
 
-private func requireFileBrowsing(_ connection: ConnectionOptions, feature: String) throws
-    -> any FileBrowsingBackend
-{
-    guard let backend = try connection.makeBackend() as? FileBrowsingBackend else {
-        throw ValidationError("\(feature) is only supported by the opencode backend")
+/// Resolves a file-browsing backend for a subcommand only when the backend
+/// actually advertises the capability the subcommand needs. Every backend now
+/// conforms to `FileBrowsingBackend` (some with stub methods that return empty),
+/// so gating on conformance alone would let unsupported operations report a
+/// misleading empty result instead of an honest error.
+private func requireCapability(
+    _ connection: ConnectionOptions, feature: String,
+    _ capability: KeyPath<BackendCapabilities, Bool>
+) throws -> any FileBrowsingBackend {
+    let backend = try connection.makeBackend()
+    guard backend.capabilities[keyPath: capability],
+        let fileBrowsing = backend as? FileBrowsingBackend
+    else {
+        throw ValidationError(
+            "\(feature) is not supported by the \(backend.agentType.displayName) backend")
     }
-    return backend
+    return fileBrowsing
 }
 
 private func loadAttachment(_ path: String) throws -> PromptAttachment {

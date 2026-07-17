@@ -182,10 +182,19 @@ public struct TailnetScanner: Sendable {
     /// without auth beats password-gated, and a MagicDNS name beats a raw IP.
     public static func preferred(_ a: Suggestion, over b: Suggestion) -> Bool {
         if a.requiresAuth != b.requiresAuth { return !a.requiresAuth }
-        let aNamed = !(a.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
-        let bNamed = !(b.baseURL.host ?? "").allSatisfy { $0.isNumber || $0 == "." || $0 == ":" }
+        let aNamed = !isIPLiteral(a.baseURL.host ?? "")
+        let bNamed = !isIPLiteral(b.baseURL.host ?? "")
         if aNamed != bNamed { return aNamed }
         return false
+    }
+
+    /// Whether `host` is a raw IP address rather than a MagicDNS name. An IPv6
+    /// literal always contains a colon — its hex groups (e.g. `fd7a:115c::53`)
+    /// carry letters `a`–`f` that are not decimal digits, so a digits-only test
+    /// would misread it as a name; an IPv4 literal is only digits and dots.
+    /// Everything else counts as a name.
+    private static func isIPLiteral(_ host: String) -> Bool {
+        host.contains(":") || host.allSatisfy { $0.isNumber || $0 == "." }
     }
 
     /// Probes every candidate host/port of the scannable devices. Findings
