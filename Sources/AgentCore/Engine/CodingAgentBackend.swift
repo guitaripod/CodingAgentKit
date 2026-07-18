@@ -285,6 +285,14 @@ public protocol CodingAgentBackend: Sendable {
     /// Activity updates over APNs while the app is suspended. No-op for
     /// backends without push infrastructure.
     func registerLiveActivity(_ registration: LiveActivityRegistration, for sessionID: String) async throws
+    /// Registers the app's APNs device token server-wide, so the backend can push
+    /// turn-completion alerts and silent usage refreshes while the app is
+    /// suspended. No-op for backends without push infrastructure.
+    func registerDeviceToken(_ registration: DevicePushRegistration) async throws
+    /// Removes a previously registered APNs device token, so a server the app no
+    /// longer knows stops pushing to it. No-op for backends without push
+    /// infrastructure.
+    func unregisterDeviceToken(_ registration: DevicePushRegistration) async throws
     /// Live quotas for other providers the backend's host machine is signed into (the bridge
     /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
     func additionalUsageQuotas() async throws -> [UsageQuota]

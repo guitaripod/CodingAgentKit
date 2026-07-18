@@ -515,3 +515,15 @@ extension ClaudeCodeBackend {
             builder.request(.post, "/sessions/\(sessionID)/live-activity", body: body))
     }
 }
+
+extension ClaudeCodeBackend {
+    public func registerDeviceToken(_ registration: DevicePushRegistration) async throws {
+        let body = try BridgeCoding.encoder.encode(registration)
+        _ = try await http.send(builder.request(.post, "/push/device", body: body))
+    }
+
+    public func unregisterDeviceToken(_ registration: DevicePushRegistration) async throws {
+        let body = try BridgeCoding.encoder.encode(registration)
+        _ = try await http.send(builder.request(.post, "/push/device/unregister", body: body))
+    }
+}

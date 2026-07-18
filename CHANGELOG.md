@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+- **Device push registration.** `CodingAgentBackend` gains `registerDeviceToken(_:)` /
+  `unregisterDeviceToken(_:)` with a new `DevicePushRegistration` payload (`token`, `environment`),
+  mirroring the Live Activity registration pattern: empty no-op defaults so OpenCode/Mock conformers
+  are unaffected, and a `ClaudeCodeBackend` implementation posting to the bridge's
+  `/push/device` and `/push/device/unregister` routes. Lets an app hand its APNs device token to
+  every connected claude-bridge so the server can push turn-end alerts and usage refreshes.
+
 ## 0.7.0
 
 Reliability and cross-platform hardening pass. The SDK is now verified building and passing its full
