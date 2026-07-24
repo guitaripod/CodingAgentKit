@@ -15,6 +15,11 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsQuestions: Bool
     public var supportsRenaming: Bool
     public var supportsSubagents: Bool
+    /// Whether this backend stamps `completedAt` on finished assistant
+    /// messages. When false, a message upsert with a nil `completedAt` says
+    /// nothing about liveness, so the engine must not infer "running" from it
+    /// — only explicit status events and live text deltas count.
+    public var reportsMessageCompletion: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -30,7 +35,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsSessionUsage: Bool = false,
         supportsQuestions: Bool = false,
         supportsRenaming: Bool = false,
-        supportsSubagents: Bool = false
+        supportsSubagents: Bool = false,
+        reportsMessageCompletion: Bool = true
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -46,6 +52,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsQuestions = supportsQuestions
         self.supportsRenaming = supportsRenaming
         self.supportsSubagents = supportsSubagents
+        self.reportsMessageCompletion = reportsMessageCompletion
     }
 }
 

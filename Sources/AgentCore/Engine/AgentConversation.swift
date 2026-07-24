@@ -268,6 +268,7 @@ public actor AgentConversation {
             pendingQuestions.removeAll { $0.id == requestID }
         case .failure(let failure):
             lastFailure = failure
+            if status == .running { status = .idle }
         case .unknown:
             break
         }
@@ -277,13 +278,20 @@ public actor AgentConversation {
     /// Live streaming activity on an unfinished assistant message means a turn
     /// is in flight — some backends (opencode) never send an explicit running
     /// status, so it has to be inferred or clients never see a busy state.
+    /// Backends that never stamp `completedAt` (claude-bridge) get no upsert
+    /// inference at all: there a nil `completedAt` is meaningless, and a late
+    /// message upsert landing after the terminal idle would re-arm a running
+    /// state that nothing could ever clear again. Text deltas still count —
+    /// they only flow while tokens actually stream.
     private func impliesRunning(_ event: BackendEvent) -> Bool {
         switch event {
         case .partTextDelta:
             return reducer.snapshot.last?.role == .assistant
         case .messageUpserted(let message, _):
+            guard backend.capabilities.reportsMessageCompletion else { return false }
             return message.role == .assistant && message.completedAt == nil
         case .partUpserted(let messageID, _):
+            guard backend.capabilities.reportsMessageCompletion else { return false }
             guard let message = reducer.snapshot.last(where: { $0.id == messageID }) else {
                 return false
             }

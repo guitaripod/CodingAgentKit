@@ -16,7 +16,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsAbort: true,
         supportsSessionUsage: true,
         supportsRenaming: true,
-        supportsSubagents: true
+        supportsSubagents: true,
+        reportsMessageCompletion: false
     )
 
     public static let models: [ModelInfo] = [
