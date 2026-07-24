@@ -9,7 +9,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsPermissions: false,
         supportsMultipleSessions: true,
         supportsModelSelection: true,
-        supportsAttachments: false,
+        supportsAttachments: true,
         supportsReasoningEffort: true,
         supportsClearing: true,
         supportsForking: true,
@@ -20,11 +20,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         reportsMessageCompletion: false
     )
 
+    private static let vision = ModelCapabilities(
+        attachment: true, imageInput: true, pdfInput: true)
+
     public static let models: [ModelInfo] = [
-        ModelInfo(id: "fable", name: "Fable", providerID: "anthropic"),
-        ModelInfo(id: "opus", name: "Opus", providerID: "anthropic"),
-        ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic"),
-        ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic"),
+        ModelInfo(id: "fable", name: "Fable", providerID: "anthropic", capabilities: vision),
+        ModelInfo(id: "opus", name: "Opus", providerID: "anthropic", capabilities: vision),
+        ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic", capabilities: vision),
+        ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic", capabilities: vision),
     ]
 
     public var reasoningEffortOptions: [String] { ["low", "medium", "high", "xhigh", "max"] }
@@ -95,8 +98,16 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     }
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
+        let attachments = prompt.attachments.compactMap { attachment -> BRSendAttachment? in
+            guard let data = attachment.data, !data.isEmpty else { return nil }
+            return BRSendAttachment(
+                mime: attachment.mime, filename: attachment.filename,
+                dataBase64: data.base64EncodedString())
+        }
         let body = try BridgeCoding.encoder.encode(
-            BRSend(text: prompt.text, model: prompt.model?.modelID, effort: prompt.reasoningEffort))
+            BRSend(
+                text: prompt.text, model: prompt.model?.modelID, effort: prompt.reasoningEffort,
+                attachments: attachments.isEmpty ? nil : attachments))
         _ = try await http.send(
             builder.request(.post, "/sessions/\(sessionID)/message", body: body))
     }
@@ -372,6 +383,13 @@ struct BRSend: Encodable {
     let text: String
     let model: String?
     let effort: String?
+    let attachments: [BRSendAttachment]?
+}
+
+struct BRSendAttachment: Encodable {
+    let mime: String
+    let filename: String?
+    let dataBase64: String
 }
 
 /// Decodes claude-bridge SSE payloads into `BackendEvent`s. Stateful because the bridge
