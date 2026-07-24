@@ -84,6 +84,16 @@ struct OCProvider: Decodable, Sendable {
 struct OCModel: Decodable, Sendable {
     let id: String?
     let name: String?
+    let capabilities: OCModelCapabilities?
+}
+
+struct OCModelCapabilities: Decodable, Sendable {
+    struct Input: Decodable, Sendable {
+        let image: Bool?
+        let pdf: Bool?
+    }
+    let attachment: Bool?
+    let input: Input?
 }
 
 struct OCFileNode: Decodable, Sendable {

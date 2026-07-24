@@ -57,15 +57,34 @@ public struct SendPrompt: Sendable, Hashable, Codable {
     }
 }
 
+/// Per-model input capabilities, as advertised by the server's model catalog.
+/// Absent (`nil` on `ModelInfo`) means the server didn't say — callers should
+/// fall back to the backend-level capability rather than assuming either way.
+public struct ModelCapabilities: Sendable, Hashable, Codable {
+    public var attachment: Bool
+    public var imageInput: Bool
+    public var pdfInput: Bool
+
+    public init(attachment: Bool, imageInput: Bool, pdfInput: Bool) {
+        self.attachment = attachment
+        self.imageInput = imageInput
+        self.pdfInput = pdfInput
+    }
+}
+
 public struct ModelInfo: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var name: String
     public var providerID: String
+    public var capabilities: ModelCapabilities?
 
-    public init(id: String, name: String, providerID: String) {
+    public init(
+        id: String, name: String, providerID: String, capabilities: ModelCapabilities? = nil
+    ) {
         self.id = id
         self.name = name
         self.providerID = providerID
+        self.capabilities = capabilities
     }
 
     public var selection: ModelSelection { ModelSelection(providerID: providerID, modelID: id) }

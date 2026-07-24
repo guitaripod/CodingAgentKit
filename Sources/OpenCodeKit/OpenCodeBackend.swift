@@ -189,7 +189,13 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 .map {
                     ModelInfo(
                         id: $0.value.id ?? $0.key, name: $0.value.name ?? $0.key,
-                        providerID: provider.id)
+                        providerID: provider.id,
+                        capabilities: $0.value.capabilities.map { caps in
+                            ModelCapabilities(
+                                attachment: caps.attachment ?? false,
+                                imageInput: caps.input?.image ?? false,
+                                pdfInput: caps.input?.pdf ?? false)
+                        })
                 }
                 .sorted { $0.id < $1.id }
             return Provider(
