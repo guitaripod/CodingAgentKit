@@ -245,6 +245,12 @@ public protocol CodingAgentBackend: Sendable {
 
     func health() async throws -> ServerHealth
     func listSessions() async throws -> [AgentSession]
+    /// Worktrees this server knows about, for backends whose session list covers
+    /// only one at a time. Empty when the backend has no such notion.
+    func projects() async throws -> [AgentProject]
+    /// Sessions belonging to one worktree; `nil` means whatever the server
+    /// considers its own.
+    func listSessions(inWorktree worktree: String?) async throws -> [AgentSession]
     func createSession(title: String?, directory: String?) async throws -> AgentSession
     func deleteSession(_ sessionID: String) async throws
     func messages(for sessionID: String) async throws -> [ChatMessage]
@@ -352,6 +358,12 @@ extension CodingAgentBackend {
     public func clearConversation(_ sessionID: String) async throws {
         throw AgentError.unsupported("clearConversation")
     }
+    public func projects() async throws -> [AgentProject] { [] }
+
+    public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
+        try await listSessions()
+    }
+
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func usageQuota() async throws -> UsageQuota? { nil }
     public func additionalUsageQuotas() async throws -> [UsageQuota] { [] }

@@ -11,6 +11,12 @@ struct OCTime: Decodable, Sendable {
     let completed: Double?
 }
 
+struct OCProject: Decodable, Sendable {
+    let id: String
+    let worktree: String?
+    let time: OCTime?
+}
+
 struct OCSession: Decodable, Sendable {
     let id: String
     let title: String?

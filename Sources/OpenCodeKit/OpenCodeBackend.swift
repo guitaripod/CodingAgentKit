@@ -59,6 +59,15 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await client.listSessions().map(OpenCodeMapping.session)
     }
 
+    public func projects() async throws -> [AgentProject] {
+        try await client.projects().compactMap(OpenCodeMapping.project)
+    }
+
+    public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
+        guard let worktree else { return try await listSessions() }
+        return try await client.listSessions(directory: worktree).map(OpenCodeMapping.session)
+    }
+
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
         let session = OpenCodeMapping.session(
             try await client.createSession(title: title, directory: directory))

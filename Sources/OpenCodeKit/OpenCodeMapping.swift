@@ -25,6 +25,13 @@ enum OpenCodeMapping {
         return value.compactDescription
     }
 
+    static func project(_ project: OCProject) -> AgentProject? {
+        guard let worktree = project.worktree, !worktree.isEmpty else { return nil }
+        return AgentProject(
+            id: project.id, worktree: worktree,
+            updatedAt: project.time?.updated.map { date($0) })
+    }
+
     static func session(_ session: OCSession) -> AgentSession {
         AgentSession(
             id: session.id,

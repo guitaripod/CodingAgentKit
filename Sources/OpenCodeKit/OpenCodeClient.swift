@@ -30,6 +30,18 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/session")))
     }
 
+    /// `/session` answers only for the project the server was launched in unless
+    /// a worktree is named, so account-wide history has to be walked project by
+    /// project.
+    func listSessions(directory: String) async throws -> [OCSession] {
+        try decode(
+            await http.send(builder.request(.get, "/session", query: directoryQuery(directory))))
+    }
+
+    func projects() async throws -> [OCProject] {
+        try decode(await http.send(builder.request(.get, "/project")))
+    }
+
     /// The working directory is a QUERY parameter on opencode's session
     /// routes — a `directory` body field is silently ignored and the session
     /// lands in the server's own cwd. The title, by contrast, is a BODY field

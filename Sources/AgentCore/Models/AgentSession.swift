@@ -1,5 +1,19 @@
 import Foundation
 
+/// A worktree the backend keeps sessions for. Backends that scope their session
+/// list to one project at a time expose the rest through this.
+public struct AgentProject: Identifiable, Sendable, Hashable, Codable {
+    public let id: String
+    public var worktree: String
+    public var updatedAt: Date?
+
+    public init(id: String, worktree: String, updatedAt: Date? = nil) {
+        self.id = id
+        self.worktree = worktree
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public let agentType: AgentType
