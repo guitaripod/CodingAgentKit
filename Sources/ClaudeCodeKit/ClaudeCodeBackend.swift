@@ -310,6 +310,7 @@ struct BRPart: Decodable {
     let kind: String
     let text: String?
     let tool: BRTool?
+    let file: BRFile?
 
     var part: MessagePart {
         switch kind {
@@ -317,10 +318,23 @@ struct BRPart: Decodable {
             if let tool { return MessagePart(id: tool.id, kind: .tool(tool.toolCall)) }
         case "reasoning":
             return MessagePart(id: "reasoning", kind: .reasoning(text ?? ""))
+        case "file":
+            if let file { return MessagePart(id: "file", kind: .file(file.reference)) }
         default:
             break
         }
         return MessagePart(id: "text", kind: .text(text ?? ""))
+    }
+}
+
+struct BRFile: Decodable {
+    let path: String?
+    let mime: String?
+    let filename: String?
+    let url: String?
+
+    var reference: FileReference {
+        FileReference(path: path, mime: mime, url: url, filename: filename)
     }
 }
 
@@ -500,6 +514,15 @@ extension ClaudeCodeBackend: FileBrowsingBackend {
                 .get, "/files", query: [URLQueryItem(name: "path", value: path ?? ".")]))
         return try BridgeCoding.decoder.decode([BRFileEntry].self, from: data)
             .map { FileNode(path: $0.path, name: $0.name, isDirectory: $0.isDirectory) }
+    }
+
+    /// Attachment bytes ride the bridge's own auth, so a private tailnet URL
+    /// the client could not open directly still renders inline.
+    public func attachmentData(_ file: FileReference) async throws -> Data {
+        guard let url = file.url, url.hasPrefix("/") else {
+            throw AgentError.unsupported("attachment without a bridge url")
+        }
+        return try await http.send(builder.request(.get, url))
     }
 
     public func fileContent(path: String) async throws -> String {

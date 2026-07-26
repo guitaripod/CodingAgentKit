@@ -266,6 +266,11 @@ public protocol CodingAgentBackend: Sendable {
     /// reconnect, since the asked event is not replayed. Empty when
     /// unsupported.
     func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest]
+    /// Bytes behind a file part the backend itself handed out, fetched over the
+    /// same transport and credentials as the rest of the session — a client
+    /// cannot open the server's URL on its own when it sits behind auth or a
+    /// private overlay. Throws ``AgentError/unsupported(_:)`` by default.
+    func attachmentData(_ file: FileReference) async throws -> Data
     func availableModels() async throws -> [ModelInfo]
     /// Named agent presets selectable per prompt via `SendPrompt.agent` (opencode exposes them at
     /// `GET /agent`). Defaults to empty and no shipped backend overrides it yet, so an agent picker
@@ -376,6 +381,10 @@ extension CodingAgentBackend {
     }
 
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] { [] }
+
+    public func attachmentData(_ file: FileReference) async throws -> Data {
+        throw AgentError.unsupported("attachments")
+    }
 
     public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
         throw AgentError.unsupported("subagents")
