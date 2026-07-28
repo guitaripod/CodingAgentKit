@@ -119,6 +119,13 @@ enum ConversationRunner {
                         print("\n[tool] \(tool.name) — \(tool.status.rawValue)\(title)")
                         flush()
                     }
+                case .compaction(let compaction):
+                    guard shownTools.insert(key).inserted else { break }
+                    let sizes = [compaction.tokensBefore, compaction.tokensAfter]
+                        .compactMap { $0 }
+                    let detail = sizes.count == 2 ? " \(sizes[0]) → \(sizes[1]) tokens" : ""
+                    print("\n[compacted]\(detail)")
+                    flush()
                 case .file, .unknown:
                     break
                 }
