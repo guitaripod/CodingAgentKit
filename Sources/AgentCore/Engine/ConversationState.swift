@@ -19,6 +19,9 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// The standing goal the agent is working toward, or the last one it settled. `nil` when the
     /// backend doesn't track goals or none was ever set.
     public var goal: SessionGoal?
+    /// A compaction underway, or the one that just failed. `nil` whenever nothing is being
+    /// summarized — which is almost always.
+    public var compaction: CompactionActivity?
 
     public init(
         messages: [ChatMessage] = [],
@@ -28,7 +31,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         lastFailure: BackendFailure? = nil,
         connection: ConnectionPhase = .connecting,
         hasLoadedTranscript: Bool = false,
-        goal: SessionGoal? = nil
+        goal: SessionGoal? = nil,
+        compaction: CompactionActivity? = nil
     ) {
         self.messages = messages
         self.status = status
@@ -38,9 +42,16 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.connection = connection
         self.hasLoadedTranscript = hasLoadedTranscript
         self.goal = goal
+        self.compaction = compaction
     }
 
     public var isBusy: Bool { status == .running }
+
+    /// A compaction actually in flight — a failed attempt stays in ``compaction`` so a client can
+    /// explain it, but must not read as work still happening.
+    public var activeCompaction: CompactionActivity? {
+        compaction.flatMap { $0.isRunning ? $0 : nil }
+    }
 
     /// The goal still being pursued, if any — a settled goal stays in ``goal`` so a client can
     /// report the outcome, but must not present it as ongoing work.

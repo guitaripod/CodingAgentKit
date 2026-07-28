@@ -21,6 +21,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsSubagents: true,
         supportsCommands: true,
         supportsGoals: true,
+        supportsCompaction: true,
         reportsMessageCompletion: false
     )
 
@@ -363,7 +364,7 @@ struct BRMessage: Decodable {
             return seen == 0 ? part : MessagePart(id: "\(part.id)-\(seen)", kind: part.kind)
         }
         return ChatMessage(
-            id: id, role: role == "user" ? .user : .assistant, agentType: .claudeCode,
+            id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: .claudeCode,
             parts: uniqueParts, createdAt: createdAt)
     }
 }
@@ -373,6 +374,7 @@ struct BRPart: Decodable {
     let text: String?
     let tool: BRTool?
     let file: BRFile?
+    let compaction: BRCompaction?
 
     var part: MessagePart {
         switch kind {
@@ -382,10 +384,32 @@ struct BRPart: Decodable {
             return MessagePart(id: "reasoning", kind: .reasoning(text ?? ""))
         case "file":
             if let file { return MessagePart(id: "file", kind: .file(file.reference)) }
+        case "compaction":
+            if let compaction {
+                return MessagePart(id: "compaction", kind: .compaction(compaction.compaction))
+            }
         default:
             break
         }
         return MessagePart(id: "text", kind: .text(text ?? ""))
+    }
+}
+
+struct BRCompaction: Decodable {
+    let trigger: String?
+    let tokensBefore: Int?
+    let tokensAfter: Int?
+    let durationMs: Double?
+    let preservedMessages: Int?
+    let summary: String?
+
+    var compaction: Compaction {
+        Compaction(
+            trigger: trigger.flatMap(Compaction.Trigger.init(rawValue:)),
+            tokensBefore: tokensBefore, tokensAfter: tokensAfter,
+            duration: durationMs.map { $0 / 1000 },
+            preservedMessageCount: preservedMessages,
+            summary: summary?.isEmpty == true ? nil : summary)
     }
 }
 
@@ -517,6 +541,16 @@ public struct BridgeEventDecoder {
             switch object["status"] as? String {
             case "running": return .status(.running)
             default: return .status(.idle)
+            }
+        case "compaction":
+            switch object["phase"] as? String {
+            case "started": return .compaction(CompactionActivity(startedAt: Date()))
+            case "failed":
+                return .compaction(
+                    CompactionActivity(
+                        startedAt: Date(),
+                        failure: object["error"] as? String ?? "Compaction failed."))
+            default: return .compaction(nil)
             }
         case "goal":
             guard let raw = object["goal"] else { return .goal(nil) }

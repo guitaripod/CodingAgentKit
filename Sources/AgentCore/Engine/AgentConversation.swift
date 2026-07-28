@@ -17,6 +17,7 @@ public actor AgentConversation {
     private var connection: ConnectionPhase = .connecting
     private var loadedTranscript = false
     private var goal: SessionGoal?
+    private var compaction: CompactionActivity?
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -57,7 +58,8 @@ public actor AgentConversation {
             lastFailure: lastFailure,
             connection: connection,
             hasLoadedTranscript: loadedTranscript,
-            goal: goal
+            goal: goal,
+            compaction: compaction
         )
     }
 
@@ -93,6 +95,7 @@ public actor AgentConversation {
         attachments: [PromptAttachment] = []
     ) async throws {
         lastFailure = nil
+        compaction = nil
         try await backend.send(
             SendPrompt(
                 text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
@@ -116,8 +119,20 @@ public actor AgentConversation {
     /// this starts a fresh turn, so a previous failure stops being current state.
     public func run(_ command: AgentCommand, arguments: String? = nil) async throws {
         lastFailure = nil
+        compaction = nil
         try await backend.runCommand(command, arguments: arguments, in: sessionID)
         emit()
+    }
+
+    /// Replaces the conversation so far with a summary of it, freeing the context window.
+    /// `instructions` steers what the summary must keep. The transcript is untouched — only what
+    /// the agent carries forward changes — and the backend reports the boundary it left behind as
+    /// a ``Compaction`` part in the transcript.
+    public func compact(instructions: String? = nil) async throws {
+        let trimmed = instructions?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await run(
+            AgentCommand(name: "compact", details: "", source: .builtin),
+            arguments: (trimmed?.isEmpty ?? true) ? nil : trimmed)
     }
 
     /// Sets the standing goal. The agent acknowledges it and starts working immediately, so this
@@ -329,6 +344,8 @@ public actor AgentConversation {
             if value == .idle || value == .stable { persist() }
         case .goal(let value):
             goal = value
+        case .compaction(let value):
+            compaction = value
         case .permission(let request):
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
                 pendingPermissions.append(request)

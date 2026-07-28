@@ -25,6 +25,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsCommands: Bool
     /// Whether the backend reports a standing ``SessionGoal`` for a session.
     public var supportsGoals: Bool
+    /// Whether the backend can summarize a conversation into its own context
+    /// (``AgentConversation/compact(instructions:)``) and reports the boundary it left behind as a
+    /// ``Compaction`` part in the transcript.
+    public var supportsCompaction: Bool
     /// Whether this backend stamps `completedAt` on finished assistant
     /// messages. When false, a message upsert with a nil `completedAt` says
     /// nothing about liveness, so the engine must not infer "running" from it
@@ -49,6 +53,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsSubagents: Bool = false,
         supportsCommands: Bool = false,
         supportsGoals: Bool = false,
+        supportsCompaction: Bool = false,
         reportsMessageCompletion: Bool = true
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
@@ -68,6 +73,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsSubagents = supportsSubagents
         self.supportsCommands = supportsCommands
         self.supportsGoals = supportsGoals
+        self.supportsCompaction = supportsCompaction
         self.reportsMessageCompletion = reportsMessageCompletion
     }
 }
@@ -248,6 +254,9 @@ public enum BackendEvent: Sendable {
     case status(BackendStatus)
     /// The session's standing goal changed; `nil` once nothing is being pursued.
     case goal(SessionGoal?)
+    /// A compaction started, finished (`nil`), or failed. Distinct from ``status`` because
+    /// compaction runs *inside* a turn: the backend is still running, just not answering.
+    case compaction(CompactionActivity?)
     case permission(PermissionRequest)
     case question(QuestionRequest)
     case questionResolved(requestID: String)

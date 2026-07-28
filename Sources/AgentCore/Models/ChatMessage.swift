@@ -68,6 +68,7 @@ public struct MessagePart: Identifiable, Sendable, Hashable, Codable {
         case reasoning(String)
         case tool(ToolCall)
         case file(FileReference)
+        case compaction(Compaction)
         case unknown(type: String)
     }
 
@@ -98,6 +99,7 @@ extension MessagePart.Kind: Codable {
         case reasoning
         case tool
         case file
+        case compaction
         case unknown
     }
 
@@ -108,6 +110,7 @@ extension MessagePart.Kind: Codable {
         case .reasoning: self = .reasoning(try container.decode(String.self, forKey: .value))
         case .tool: self = .tool(try container.decode(ToolCall.self, forKey: .value))
         case .file: self = .file(try container.decode(FileReference.self, forKey: .value))
+        case .compaction: self = .compaction(try container.decode(Compaction.self, forKey: .value))
         case .unknown: self = .unknown(type: try container.decode(String.self, forKey: .value))
         }
     }
@@ -126,6 +129,9 @@ extension MessagePart.Kind: Codable {
             try container.encode(value, forKey: .value)
         case .file(let value):
             try container.encode(Tag.file, forKey: .tag)
+            try container.encode(value, forKey: .value)
+        case .compaction(let value):
+            try container.encode(Tag.compaction, forKey: .tag)
             try container.encode(value, forKey: .value)
         case .unknown(let type):
             try container.encode(Tag.unknown, forKey: .tag)
