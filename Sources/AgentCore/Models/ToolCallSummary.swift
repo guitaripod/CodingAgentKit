@@ -17,6 +17,8 @@ public struct ToolCallSummary: Sendable, Hashable {
         case subagent
         case workflow
         case skill
+        /// The agent asking the user to choose between options.
+        case question
         case other
     }
 
@@ -78,6 +80,7 @@ enum ToolCallSummaryBuilder {
         case .subagent: return subagent(call, kind)
         case .workflow: return workflow(call, kind)
         case .skill: return skill(call, kind)
+        case .question: return question(call, kind)
         case .other:
             return make(kind, displayOutput: strippedOutput(call))
         }
@@ -91,6 +94,7 @@ enum ToolCallSummaryBuilder {
         if contains("todo") || contains("taskcreate", "taskupdate", "tasklist", "taskget") {
             return .taskTracking
         }
+        if lowered == "askuserquestion" { return .question }
         if lowered == "task" || lowered == "agent" { return .subagent }
         if contains("workflow") { return .workflow }
         if lowered == "skill" { return .skill }
@@ -195,6 +199,26 @@ enum ToolCallSummaryBuilder {
         make(
             kind, title: field(call, "skill"),
             detail: field(call, "args").flatMap { $0.isEmpty ? nil : String($0.prefix(60)) })
+    }
+
+    /// An ask reads as the decision it asked for: the question as the title and,
+    /// once answered, the chosen option as the detail. The raw result ("Your
+    /// questions have been answered: …") repeats both, so it is not shown.
+    private static func question(_ call: ToolCall, _ kind: ToolCallSummary.Kind) -> ToolCallSummary {
+        let request = QuestionRequest(toolCall: call, sessionID: "")
+        let questions = request?.questions.map(\.question) ?? []
+        let answers = call.recordedAnswers
+        let title =
+            questions.count > 1
+            ? questions.first.map { "\($0)  +\(questions.count - 1) more" } : questions.first
+        return make(
+            kind, title: title ?? field(call, "question") ?? fallbackQuestionTitle(call),
+            detail: answers.isEmpty ? nil : answers.map(\.answer).joined(separator: ", "),
+            displayOutput: call.status == .error ? strippedOutput(call) : nil)
+    }
+
+    private static func fallbackQuestionTitle(_ call: ToolCall) -> String? {
+        call.status == .completed ? "Answered" : "Waiting for your answer"
     }
 
     private static func make(

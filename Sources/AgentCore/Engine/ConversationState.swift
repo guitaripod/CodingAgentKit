@@ -16,6 +16,9 @@ public struct ConversationState: Sendable, Hashable, Codable {
     public var lastFailure: BackendFailure?
     public var connection: ConnectionPhase
     public var hasLoadedTranscript: Bool
+    /// The standing goal the agent is working toward, or the last one it settled. `nil` when the
+    /// backend doesn't track goals or none was ever set.
+    public var goal: SessionGoal?
 
     public init(
         messages: [ChatMessage] = [],
@@ -24,7 +27,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         pendingQuestions: [QuestionRequest] = [],
         lastFailure: BackendFailure? = nil,
         connection: ConnectionPhase = .connecting,
-        hasLoadedTranscript: Bool = false
+        hasLoadedTranscript: Bool = false,
+        goal: SessionGoal? = nil
     ) {
         self.messages = messages
         self.status = status
@@ -33,9 +37,14 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.lastFailure = lastFailure
         self.connection = connection
         self.hasLoadedTranscript = hasLoadedTranscript
+        self.goal = goal
     }
 
     public var isBusy: Bool { status == .running }
+
+    /// The goal still being pursued, if any — a settled goal stays in ``goal`` so a client can
+    /// report the outcome, but must not present it as ongoing work.
+    public var activeGoal: SessionGoal? { goal.flatMap { $0.isActive ? $0 : nil } }
 
     /// True while the transcript may still be on its way: nothing has been
     /// loaded yet (no cache seed, no server fetch) — distinguish this from a

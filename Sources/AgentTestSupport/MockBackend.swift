@@ -44,7 +44,9 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     private let fileContents: [String: String]
     private let diffs: [FileDiff]
     private let subagentSummaries: [SubagentSummary]
+    private let subagentOwners: [String: [SubagentSummary]]
     private let subagentScripts: [String: [MockScriptStep]]
+    private let derivesQuestionsFromTranscript: Bool
     private let mutable = Mutex(Mutable())
 
     private struct Mutable {
@@ -79,7 +81,9 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         fileContents: [String: String] = [:],
         diffs: [FileDiff] = [],
         subagents: [SubagentSummary] = [],
-        subagentScripts: [String: [MockScriptStep]] = [:]
+        subagentsBySession: [String: [SubagentSummary]] = [:],
+        subagentScripts: [String: [MockScriptStep]] = [:],
+        derivesQuestionsFromTranscript: Bool = false
     ) {
         self.agentType = agentType
         self.script = script
@@ -99,7 +103,9 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         self.fileContents = fileContents
         self.diffs = diffs
         self.subagentSummaries = subagents
+        self.subagentOwners = subagentsBySession
         self.subagentScripts = subagentScripts
+        self.derivesQuestionsFromTranscript = derivesQuestionsFromTranscript
         self.capabilities =
             capabilities
             ?? BackendCapabilities(
@@ -303,6 +309,16 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         openQuestions(in: fullLog(for: sessionID))
     }
 
+    /// Mirrors a Claude-style ask, where the question is an unanswered tool call
+    /// in the transcript rather than a pushed request. Opt in per instance so the
+    /// opencode-shaped scripts keep exercising the event path.
+    public func pendingQuestions(
+        in messages: [ChatMessage], sessionID: String
+    ) -> [QuestionRequest] {
+        guard derivesQuestionsFromTranscript else { return [] }
+        return QuestionRequest.awaitingAnswer(in: messages, sessionID: sessionID)
+    }
+
     public func listFiles(path: String?) async throws -> [FileNode] {
         fileTree[path ?? "."] ?? fileTree[path ?? ""] ?? []
     }
@@ -338,8 +354,10 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     public func usageQuota() async throws -> UsageQuota? { quota }
     public func additionalUsageQuotas() async throws -> [UsageQuota] { additionalQuotas }
 
+    /// Scoped per session when a fixture says which conversation spawned what,
+    /// so a demo session that spawned nothing reports nothing.
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
-        subagentSummaries
+        subagentOwners.isEmpty ? subagentSummaries : (subagentOwners[sessionID] ?? [])
     }
 
     public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {

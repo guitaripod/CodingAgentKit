@@ -173,6 +173,25 @@ struct OCPromptRequest: Encodable, Sendable {
     let agent: String?
 }
 
+struct OCCommand: Decodable, Sendable {
+    let name: String
+    let description: String?
+    let agent: String?
+    let model: String?
+    /// `command`, `mcp`, or `skill`.
+    let source: String?
+    let subtask: Bool?
+    /// Placeholder names the command's template expects, if any.
+    let hints: [String]?
+}
+
+struct OCCommandRequest: Encodable, Sendable {
+    let command: String
+    let arguments: String?
+    let model: OCModelInput?
+    let agent: String?
+}
+
 struct OCQuestionRequestDTO: Decodable {
     struct Option: Decodable {
         let label: String

@@ -44,6 +44,22 @@ enum OpenCodeMapping {
         )
     }
 
+    /// A child session read as a subagent. opencode records no completion flag
+    /// on a session, so liveness is read from how recently it was written —
+    /// the same signal the session list uses to say a conversation is running.
+    static let subagentActivityWindow: TimeInterval = 45
+
+    static func subagent(_ session: OCSession) -> SubagentSummary {
+        let updatedAt = date(session.time?.updated ?? session.time?.created)
+        let active = updatedAt.timeIntervalSinceNow > -subagentActivityWindow
+        return SubagentSummary(
+            id: session.id,
+            title: session.title ?? "Agent",
+            updatedAt: updatedAt,
+            isActive: active,
+            isCompleted: !active)
+    }
+
     static func shell(_ message: OCMessage) -> ChatMessage {
         let messageRole = role(message.role)
         let completed = message.time?.completed

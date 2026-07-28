@@ -11,9 +11,12 @@ public actor AgentConversation {
     private var status: BackendStatus = .unknown
     private var pendingPermissions: [PermissionRequest] = []
     private var pendingQuestions: [QuestionRequest] = []
+    private var transcriptQuestions: [QuestionRequest] = []
+    private var resolvedQuestionIDs: Set<String> = []
     private var lastFailure: BackendFailure?
     private var connection: ConnectionPhase = .connecting
     private var loadedTranscript = false
+    private var goal: SessionGoal?
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -50,10 +53,11 @@ public actor AgentConversation {
             messages: reducer.snapshot,
             status: status,
             pendingPermissions: pendingPermissions,
-            pendingQuestions: pendingQuestions,
+            pendingQuestions: openQuestions,
             lastFailure: lastFailure,
             connection: connection,
-            hasLoadedTranscript: loadedTranscript
+            hasLoadedTranscript: loadedTranscript,
+            goal: goal
         )
     }
 
@@ -108,16 +112,72 @@ public actor AgentConversation {
         try await backend.abort(sessionID: sessionID)
     }
 
+    /// Runs a server-side slash command. Like ``send(_:model:reasoningEffort:agent:attachments:)``
+    /// this starts a fresh turn, so a previous failure stops being current state.
+    public func run(_ command: AgentCommand, arguments: String? = nil) async throws {
+        lastFailure = nil
+        try await backend.runCommand(command, arguments: arguments, in: sessionID)
+        emit()
+    }
+
+    /// Sets the standing goal. The agent acknowledges it and starts working immediately, so this
+    /// is a turn like any other.
+    public func setGoal(_ condition: String) async throws {
+        try await run(
+            AgentCommand(name: "goal", details: "", source: .builtin), arguments: condition)
+    }
+
+    /// Abandons the standing goal early. A goal that has been met clears itself.
+    public func clearGoal() async throws {
+        try await run(
+            AgentCommand(name: "goal", details: "", source: .builtin), arguments: "clear")
+    }
+
     public func answer(_ question: QuestionRequest, answers: [[String]]) async throws {
         try await backend.answerQuestion(question, answers: answers)
-        pendingQuestions.removeAll { $0.id == question.id }
-        emit()
+        resolve(question)
     }
 
     public func reject(_ question: QuestionRequest) async throws {
         try await backend.rejectQuestion(question)
+        resolve(question)
+    }
+
+    /// Settles a question the client answered on its own — a backend whose
+    /// ``BackendCapabilities/answersQuestionsByMessage`` is set is answered by
+    /// the ordinary send path, so the card must stop asking without a second,
+    /// unqueued message going out behind it.
+    public func markAnswered(_ question: QuestionRequest) {
+        resolve(question)
+    }
+
+    /// A question read out of the transcript stays in the transcript — an ask
+    /// answered from here is never given a tool result, and one answered in the
+    /// terminal that spawned it may not be either. Remembering what was settled
+    /// keeps a resolved card from reappearing on the next refresh.
+    private func resolve(_ question: QuestionRequest) {
+        resolvedQuestionIDs.insert(question.id)
         pendingQuestions.removeAll { $0.id == question.id }
+        transcriptQuestions.removeAll { $0.id == question.id }
         emit()
+    }
+
+    /// Questions the user still has to decide: whatever the backend pushed or
+    /// the transcript implies, minus everything already answered or dismissed.
+    private var openQuestions: [QuestionRequest] {
+        var seen = Set<String>()
+        return (pendingQuestions + transcriptQuestions).filter {
+            !resolvedQuestionIDs.contains($0.id) && seen.insert($0.id).inserted
+        }
+    }
+
+    /// Re-reads the transcript for an ask-the-user tool call still waiting on an
+    /// answer. Cheap enough to run on every structural update, which is what
+    /// makes a question asked mid-turn appear without its own event.
+    private func syncTranscriptQuestions() {
+        guard capabilitiesSupportQuestions else { return }
+        transcriptQuestions = backend.pendingQuestions(
+            in: reducer.snapshot, sessionID: sessionID)
     }
 
     private var capabilitiesSupportQuestions: Bool { backend.capabilities.supportsQuestions }
@@ -125,12 +185,22 @@ public actor AgentConversation {
     public func refresh() async throws {
         let messages = try await backend.messages(for: sessionID)
         let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
+        let goal = await fetchGoal()
         reducer = MessageReducer(agentType: backend.agentType, messages: messages)
         loadedTranscript = true
         deriveStatusFromTranscript()
         if capabilitiesSupportQuestions { pendingQuestions = questions }
+        syncTranscriptQuestions()
+        if backend.capabilities.supportsGoals { self.goal = goal }
         persist()
         emit()
+    }
+
+    /// A goal lookup must never fail a transcript refresh — a server too old to report goals just
+    /// leaves the chip absent.
+    private func fetchGoal() async -> SessionGoal? {
+        guard backend.capabilities.supportsGoals else { return nil }
+        return try? await backend.goal(for: sessionID)
     }
 
     /// The history fetch and the event-stream connection race concurrently to overlap their
@@ -252,10 +322,13 @@ public actor AgentConversation {
             if status != .running, impliesRunning(event) { status = .running }
         case .messageUpserted, .partUpserted, .partRemoved, .messageRemoved:
             reducer.apply(event)
+            syncTranscriptQuestions()
             if status != .running, impliesRunning(event) { status = .running }
         case .status(let value):
             status = value
             if value == .idle || value == .stable { persist() }
+        case .goal(let value):
+            goal = value
         case .permission(let request):
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
                 pendingPermissions.append(request)
@@ -265,7 +338,9 @@ public actor AgentConversation {
                 pendingQuestions.append(request)
             }
         case .questionResolved(let requestID):
+            resolvedQuestionIDs.insert(requestID)
             pendingQuestions.removeAll { $0.id == requestID }
+            transcriptQuestions.removeAll { $0.id == requestID }
         case .failure(let failure):
             lastFailure = failure
             if status == .running { status = .idle }
@@ -350,6 +425,7 @@ public actor AgentConversation {
         guard gen == generation, !cached.isEmpty, reducer.snapshot.isEmpty else { return }
         reducer = MessageReducer(agentType: backend.agentType, messages: cached)
         loadedTranscript = true
+        syncTranscriptQuestions()
         emit()
     }
 
@@ -357,11 +433,14 @@ public actor AgentConversation {
         do {
             let messages = try await backend.messages(for: sessionID)
             let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
+            let goal = await fetchGoal()
             guard gen == generation, !reachedTerminal else { return }
             reducer = MessageReducer(agentType: backend.agentType, messages: messages)
             loadedTranscript = true
             deriveStatusFromTranscript()
             if capabilitiesSupportQuestions { pendingQuestions = questions }
+            syncTranscriptQuestions()
+            if backend.capabilities.supportsGoals { self.goal = goal }
             lastFailure = nil
             persist()
             emit()

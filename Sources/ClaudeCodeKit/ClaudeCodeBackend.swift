@@ -15,8 +15,12 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsForking: true,
         supportsAbort: true,
         supportsSessionUsage: true,
+        supportsQuestions: true,
+        answersQuestionsByMessage: true,
         supportsRenaming: true,
         supportsSubagents: true,
+        supportsCommands: true,
+        supportsGoals: true,
         reportsMessageCompletion: false
     )
 
@@ -97,6 +101,21 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).messages.map(\.chat)
     }
 
+    /// Bridges predating the command catalog answer 404, which decodes to an empty list rather
+    /// than an error — the app then shows only its own actions.
+    public func availableCommands(directory: String?) async throws -> [AgentCommand] {
+        let query = directory.map { [URLQueryItem(name: "directory", value: $0)] } ?? []
+        guard let data = try? await http.send(builder.request(.get, "/commands", query: query)),
+            let commands = try? BridgeCoding.decoder.decode([BRLenient<AgentCommand>].self, from: data)
+        else { return [] }
+        return commands.compactMap(\.value)
+    }
+
+    public func goal(for sessionID: String) async throws -> SessionGoal? {
+        let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
+        return try BridgeCoding.decoder.decode(BRSession.self, from: data).goal?.goal
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         let attachments = prompt.attachments.compactMap { attachment -> BRSendAttachment? in
             guard let data = attachment.data, !data.isEmpty else { return nil }
@@ -111,6 +130,30 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         _ = try await http.send(
             builder.request(.post, "/sessions/\(sessionID)/message", body: body))
     }
+
+    /// Claude asks through the `AskUserQuestion` tool, which blocks on its own
+    /// tool result rather than on a bridge request, so the pending ask lives in
+    /// the transcript: the newest one still without a result is the one waiting
+    /// on the user. Only the newest — an older unanswered ask has been overtaken
+    /// by the conversation and must not bury the current one.
+    public func pendingQuestions(
+        in messages: [ChatMessage], sessionID: String
+    ) -> [QuestionRequest] {
+        QuestionRequest.awaitingAnswer(in: messages, sessionID: sessionID)
+    }
+
+    /// The bridge runs Claude headlessly, one process per turn, so there is no
+    /// channel back into the pending tool call — the answer is delivered as the
+    /// next user message, which is exactly how a person would answer anyway.
+    public func answerQuestion(_ request: QuestionRequest, answers: [[String]]) async throws {
+        let text = request.answerMessage(answers)
+        guard !text.isEmpty else { return }
+        try await send(SendPrompt(text: text), to: request.sessionID)
+    }
+
+    /// Dismissal is local: nothing is sent, so the agent is left exactly as it
+    /// was and the user can still answer later from the transcript.
+    public func rejectQuestion(_ request: QuestionRequest) async throws {}
 
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
         let stream: AsyncThrowingStream<SSEvent, Error>
@@ -272,6 +315,7 @@ struct BRSession: Decodable {
     let messages: [BRMessage]
     let lastCostUSD: Double?
     let lastTokens: Int?
+    let goal: BRGoal?
 
     var session: AgentSession {
         AgentSession(
@@ -279,6 +323,24 @@ struct BRSession: Decodable {
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
+    }
+}
+
+struct BRGoal: Decodable {
+    let condition: String
+    let met: Bool?
+    let failed: Bool?
+    let reason: String?
+    let iterations: Int?
+    let durationMs: Double?
+    let tokens: Int?
+    let updatedAt: Date?
+
+    var goal: SessionGoal {
+        SessionGoal(
+            condition: condition, isMet: met ?? false, didFail: failed ?? false, reason: reason,
+            iterations: iterations, duration: durationMs.map { $0 / 1000 }, tokens: tokens,
+            updatedAt: updatedAt)
     }
 }
 
@@ -456,6 +518,12 @@ public struct BridgeEventDecoder {
             case "running": return .status(.running)
             default: return .status(.idle)
             }
+        case "goal":
+            guard let raw = object["goal"] else { return .goal(nil) }
+            guard let goalData = try? JSONSerialization.data(withJSONObject: raw),
+                let goal = try? BridgeCoding.decoder.decode(BRGoal.self, from: goalData)
+            else { return .goal(nil) }
+            return .goal(goal.goal)
         case "error":
             return .failure(BackendFailure(message: object["error"] as? String ?? "error"))
         default:

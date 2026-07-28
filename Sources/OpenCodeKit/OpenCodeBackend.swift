@@ -12,7 +12,9 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsAttachments: true,
         supportsAbort: true,
         supportsSessionUsage: false,
-        supportsQuestions: true
+        supportsQuestions: true,
+        supportsSubagents: true,
+        supportsCommands: true
     )
 
     let client: OpenCodeClient
@@ -83,6 +85,27 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await client.messages(sessionID: sessionID).map(OpenCodeMapping.message)
     }
 
+    /// opencode gives a spawned agent a session of its own, parented to the one
+    /// that spawned it. Those children are subagents, not conversations: they
+    /// are reported here so a client can nest them under their parent rather
+    /// than list them as chats in their own right.
+    public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
+        let sessions: [OCSession]
+        if let directory = await directories.directory(for: sessionID, client: client) {
+            sessions = (try? await client.listSessions(directory: directory)) ?? []
+        } else {
+            sessions = (try? await client.listSessions()) ?? []
+        }
+        return sessions
+            .filter { $0.parentID == sessionID }
+            .map(OpenCodeMapping.subagent)
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
+        try await client.messages(sessionID: agentID).map(OpenCodeMapping.message)
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         let model = prompt.model.map {
             OCModelInput(providerID: $0.providerID, modelID: $0.modelID)
@@ -136,6 +159,66 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public func abort(sessionID: String) async throws {
         try await client.abort(sessionID: sessionID)
+    }
+
+    /// opencode's catalog is whatever the server resolves for its own workspace — user and project
+    /// command files, MCP prompts, and skills — so `directory` is ignored here.
+    public func availableCommands(directory: String?) async throws -> [AgentCommand] {
+        try await client.commands().map(Self.command)
+    }
+
+    static func command(for command: OCCommand) -> AgentCommand {
+        AgentCommand(
+            name: command.name,
+            details: command.description ?? "",
+            argumentHint: argumentHint(for: command),
+            source: source(for: command))
+    }
+
+    /// `POST /session/:id/command` only answers when the turn it starts has ended, so awaiting it
+    /// would leave the caller blocked for the whole turn. The command is dispatched and the result
+    /// left to the event stream, matching how `prompt_async` behaves for an ordinary message; a
+    /// dispatch failure has no reply channel, so it is logged rather than lost silently.
+    public var resolvesCommandsFromPromptText: Bool { false }
+
+    public func runCommand(
+        _ command: AgentCommand, arguments: String?, in sessionID: String
+    ) async throws {
+        let directory = await directories.directory(for: sessionID, client: client)
+        let request = OCCommandRequest(
+            command: command.name, arguments: arguments, model: nil, agent: nil)
+        let client = self.client
+        Task.detached {
+            do {
+                try await client.runCommand(
+                    sessionID: sessionID, directory: directory, request: request)
+            } catch {
+                AgentLog.logger("opencode").error(
+                    "command /\(command.name) failed: \(error)")
+            }
+        }
+    }
+
+    private static func source(for command: OCCommand) -> AgentCommand.Source {
+        switch command.source {
+        case "mcp": return .mcp
+        case "skill": return .skill
+        case "command": return .custom
+        default: return .custom
+        }
+    }
+
+    /// opencode describes a command's placeholders as template variables (`$ARGUMENTS`, `$1`);
+    /// render them the way an argument hint reads elsewhere so one palette can present every
+    /// backend's commands identically, without leaking template syntax at the user.
+    private static func argumentHint(for command: OCCommand) -> String? {
+        guard let hints = command.hints, !hints.isEmpty else { return nil }
+        return hints
+            .map { hint in
+                let bare = hint.hasPrefix("$") ? String(hint.dropFirst()) : hint
+                return "<\(bare.uppercased() == "ARGUMENTS" ? "arguments" : bare)>"
+            }
+            .joined(separator: " ")
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws

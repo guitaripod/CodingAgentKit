@@ -13,8 +13,18 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsAbort: Bool
     public var supportsSessionUsage: Bool
     public var supportsQuestions: Bool
+    /// Whether answering a question is indistinguishable from sending its text as
+    /// a prompt — true for an agent whose ask blocks on a tool result no client
+    /// can write. A client should then route the answer through its ordinary send
+    /// path, so it queues behind a running turn instead of being refused by it.
+    public var answersQuestionsByMessage: Bool
     public var supportsRenaming: Bool
     public var supportsSubagents: Bool
+    /// Whether the backend can list the slash commands it will resolve, so a client can offer them
+    /// for completion instead of guessing.
+    public var supportsCommands: Bool
+    /// Whether the backend reports a standing ``SessionGoal`` for a session.
+    public var supportsGoals: Bool
     /// Whether this backend stamps `completedAt` on finished assistant
     /// messages. When false, a message upsert with a nil `completedAt` says
     /// nothing about liveness, so the engine must not infer "running" from it
@@ -34,8 +44,11 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsAbort: Bool = false,
         supportsSessionUsage: Bool = false,
         supportsQuestions: Bool = false,
+        answersQuestionsByMessage: Bool = false,
         supportsRenaming: Bool = false,
         supportsSubagents: Bool = false,
+        supportsCommands: Bool = false,
+        supportsGoals: Bool = false,
         reportsMessageCompletion: Bool = true
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
@@ -50,8 +63,11 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsAbort = supportsAbort
         self.supportsSessionUsage = supportsSessionUsage
         self.supportsQuestions = supportsQuestions
+        self.answersQuestionsByMessage = answersQuestionsByMessage
         self.supportsRenaming = supportsRenaming
         self.supportsSubagents = supportsSubagents
+        self.supportsCommands = supportsCommands
+        self.supportsGoals = supportsGoals
         self.reportsMessageCompletion = reportsMessageCompletion
     }
 }
@@ -230,6 +246,8 @@ public enum BackendEvent: Sendable {
     case partRemoved(messageID: String, partID: String)
     case messageRemoved(messageID: String)
     case status(BackendStatus)
+    /// The session's standing goal changed; `nil` once nothing is being pursued.
+    case goal(SessionGoal?)
     case permission(PermissionRequest)
     case question(QuestionRequest)
     case questionResolved(requestID: String)
@@ -266,6 +284,11 @@ public protocol CodingAgentBackend: Sendable {
     /// reconnect, since the asked event is not replayed. Empty when
     /// unsupported.
     func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest]
+    /// Questions readable straight out of a transcript the client already holds,
+    /// for agents whose ask-the-user tool is an ordinary tool call awaiting its
+    /// result rather than a side-channel request. Pure and synchronous, so a
+    /// conversation can re-derive it on every structural update for free.
+    func pendingQuestions(in messages: [ChatMessage], sessionID: String) -> [QuestionRequest]
     /// Bytes behind a file part the backend itself handed out, fetched over the
     /// same transport and credentials as the rest of the session — a client
     /// cannot open the server's URL on its own when it sits behind auth or a
@@ -319,6 +342,20 @@ public protocol CodingAgentBackend: Sendable {
     func forkSession(_ sessionID: String) async throws -> AgentSession
     /// Renames a session's display title.
     func renameSession(_ sessionID: String, title: String) async throws
+    /// Slash commands this server will resolve — built-ins plus whatever the machine and the given
+    /// worktree contribute. Empty when the backend can't enumerate them.
+    func availableCommands(directory: String?) async throws -> [AgentCommand]
+    /// Runs a slash command in a session. Backends with a dedicated command API use it; the rest
+    /// fall back to sending `/name arguments` as prompt text, which is how a CLI-backed agent
+    /// resolves commands anyway.
+    func runCommand(_ command: AgentCommand, arguments: String?, in sessionID: String) async throws
+    /// Whether running a command is indistinguishable from sending its text as a prompt. When true
+    /// a client can route commands through its ordinary send path — echoing the typed command into
+    /// the transcript and showing the turn start — instead of firing a side-channel request whose
+    /// effect only appears once the server streams it back.
+    var resolvesCommandsFromPromptText: Bool { get }
+    /// The session's standing goal, if the backend tracks one.
+    func goal(for sessionID: String) async throws -> SessionGoal?
     /// Subagents spawned within a session (Claude Code sidecar transcripts). Empty when unsupported.
     func subagents(for sessionID: String) async throws -> [SubagentSummary]
     /// A subagent's full transcript, rendered in the same message model as the session itself.
@@ -344,6 +381,10 @@ extension CodingAgentBackend {
     }
 
     public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] { [] }
+
+    public func pendingQuestions(
+        in messages: [ChatMessage], sessionID: String
+    ) -> [QuestionRequest] { [] }
 
     public func deleteSession(_ sessionID: String) async throws {
         throw AgentError.unsupported("deleteSession")
@@ -379,6 +420,20 @@ extension CodingAgentBackend {
     public func renameSession(_ sessionID: String, title: String) async throws {
         throw AgentError.unsupported("rename")
     }
+
+    public func availableCommands(directory: String?) async throws -> [AgentCommand] { [] }
+
+    /// Prompt text is the universal fallback: an agent CLI resolves `/name args` from a plain
+    /// prompt, so a backend only needs to override this if it has a first-class command endpoint.
+    public func runCommand(
+        _ command: AgentCommand, arguments: String?, in sessionID: String
+    ) async throws {
+        try await send(SendPrompt(text: command.invocation(arguments: arguments)), to: sessionID)
+    }
+
+    public var resolvesCommandsFromPromptText: Bool { true }
+
+    public func goal(for sessionID: String) async throws -> SessionGoal? { nil }
 
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] { [] }
 

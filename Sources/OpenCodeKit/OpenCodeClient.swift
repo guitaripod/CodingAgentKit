@@ -95,6 +95,20 @@ public struct OpenCodeClient: Sendable {
             builder.request(.post, "/session/\(sessionID)/prompt_async", body: body))
     }
 
+    func commands() async throws -> [OCCommand] {
+        try decode(await http.send(builder.request(.get, "/command")))
+    }
+
+    /// Unlike `prompt_async`, opencode has no non-blocking command route: this returns only once
+    /// the turn it starts has finished.
+    func runCommand(sessionID: String, directory: String?, request: OCCommandRequest) async throws {
+        let body = try JSONCoding.encoder.encode(request)
+        try await http.send(
+            builder.request(
+                .post, "/session/\(sessionID)/command", query: directoryQuery(directory),
+                body: body))
+    }
+
     func abort(sessionID: String) async throws {
         try await http.send(
             builder.request(.post, "/session/\(sessionID)/abort", body: Data("{}".utf8)))

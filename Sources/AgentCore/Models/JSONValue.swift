@@ -54,6 +54,11 @@ public enum JSONValue: Sendable, Hashable, Codable {
         return nil
     }
 
+    public var boolValue: Bool? {
+        if case .bool(let value) = self { return value }
+        return nil
+    }
+
     /// The value as an `Int64` when it is exactly an integer — either an
     /// `.integer` or a `.number` with no fractional part that fits `Int64`.
     public var intValue: Int64? {
