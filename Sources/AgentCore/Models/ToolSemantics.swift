@@ -55,7 +55,7 @@ extension AgentSession {
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && !$0.hasPrefix("/") }
-        guard var title = line else { return "Agent session" }
+        guard var title = line else { return AgentText.string("Agent session") }
         title = title.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         if title.count > 48 {
             let prefix = String(title.prefix(48))
@@ -68,7 +68,7 @@ extension AgentSession {
             }
         }
         title = title.trimmingCharacters(in: CharacterSet(charactersIn: " .,:;–—-"))
-        guard !title.isEmpty else { return "Agent session" }
+        guard !title.isEmpty else { return AgentText.string("Agent session") }
         return title.prefix(1).uppercased() + title.dropFirst()
     }
 }

@@ -52,11 +52,12 @@ extension AgentError: LocalizedError {
             }
             let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
             return "HTTP \(status)\(trimmed.isEmpty ? "" : ": \(trimmed)")"
-        case .decoding(let detail): return "Decoding failed: \(detail)"
-        case .invalidURL(let detail): return "Invalid URL: \(detail)"
-        case .unsupported(let feature): return "Unsupported by this backend: \(feature)"
-        case .server(let detail): return "Server error: \(detail)"
-        case .connection(let detail): return "Connection error: \(detail)"
+        case .decoding(let detail): return AgentText.format("Decoding failed: %@", detail)
+        case .invalidURL(let detail): return AgentText.format("Invalid URL: %@", detail)
+        case .unsupported(let feature):
+            return AgentText.format("Unsupported by this backend: %@", feature)
+        case .server(let detail): return AgentText.format("Server error: %@", detail)
+        case .connection(let detail): return AgentText.format("Connection error: %@", detail)
         }
     }
 }

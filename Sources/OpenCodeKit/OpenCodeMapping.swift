@@ -54,7 +54,7 @@ enum OpenCodeMapping {
         let active = updatedAt.timeIntervalSinceNow > -subagentActivityWindow
         return SubagentSummary(
             id: session.id,
-            title: session.title ?? "Agent",
+            title: session.title ?? SubagentSummary.untitled,
             updatedAt: updatedAt,
             isActive: active,
             isCompleted: !active)

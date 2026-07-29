@@ -549,7 +549,8 @@ public struct BridgeEventDecoder {
                 return .compaction(
                     CompactionActivity(
                         startedAt: Date(),
-                        failure: object["error"] as? String ?? "Compaction failed."))
+                        failure: object["error"] as? String
+                            ?? CompactionActivity.unexplainedFailure))
             default: return .compaction(nil)
             }
         case "goal":

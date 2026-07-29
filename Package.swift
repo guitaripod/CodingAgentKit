@@ -23,6 +23,7 @@ let cliSwiftSettings: [SwiftSetting] = strict + linuxSwiftSettings
 
 let package = Package(
     name: "CodingAgentKit",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v18),
         .macOS(.v15),
@@ -51,6 +52,7 @@ let package = Package(
                     condition: .when(platforms: [.linux])),
                 .product(name: "Logging", package: "swift-log"),
             ],
+            resources: [.process("Resources")],
             swiftSettings: strict
         ),
         .target(

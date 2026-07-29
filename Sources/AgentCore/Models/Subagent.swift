@@ -23,6 +23,9 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         self.isActive = isActive
         self.isCompleted = isCompleted
     }
+
+    /// Fallback display title for a subagent the backend never named.
+    public static var untitled: String { AgentText.string("Agent") }
 }
 
 /// Read-only view over one subagent's transcript, shaped as a backend so the

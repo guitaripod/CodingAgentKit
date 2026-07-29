@@ -65,4 +65,7 @@ public struct CompactionActivity: Sendable, Hashable, Codable {
     }
 
     public var isRunning: Bool { failure == nil }
+
+    /// What to show when the agent reported a failed compaction without saying why.
+    public static var unexplainedFailure: String { AgentText.string("Compaction failed.") }
 }

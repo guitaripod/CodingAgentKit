@@ -124,7 +124,7 @@ enum ToolCallSummaryBuilder {
             let lines = output.reduce(into: 1) { count, char in
                 if char == "\n" { count += 1 }
             }
-            metric = "\(lines) line\(lines == 1 ? "" : "s")"
+            metric = AgentText.count("%lld lines", lines)
         }
         return make(
             kind, title: path.map(basename), detail: path.map(directory), metric: metric,
@@ -173,7 +173,7 @@ enum ToolCallSummaryBuilder {
 
     private static func taskTracking(_ call: ToolCall, _ kind: ToolCallSummary.Kind) -> ToolCallSummary {
         var title = field(call, "subject")
-        if title == nil, let id = field(call, "taskId") { title = "Task #\(id)" }
+        if title == nil, let id = field(call, "taskId") { title = AgentText.format("Task #%@", id) }
         let status = field(call, "status")
         return make(
             kind, title: title,
@@ -210,7 +210,9 @@ enum ToolCallSummaryBuilder {
         let answers = call.recordedAnswers
         let title =
             questions.count > 1
-            ? questions.first.map { "\($0)  +\(questions.count - 1) more" } : questions.first
+            ? questions.first.map {
+                $0 + "  " + AgentText.count("+%lld more", questions.count - 1)
+            } : questions.first
         return make(
             kind, title: title ?? field(call, "question") ?? fallbackQuestionTitle(call),
             detail: answers.isEmpty ? nil : answers.map(\.answer).joined(separator: ", "),
@@ -218,7 +220,8 @@ enum ToolCallSummaryBuilder {
     }
 
     private static func fallbackQuestionTitle(_ call: ToolCall) -> String? {
-        call.status == .completed ? "Answered" : "Waiting for your answer"
+        call.status == .completed
+            ? AgentText.string("Answered") : AgentText.string("Waiting for your answer")
     }
 
     private static func make(
