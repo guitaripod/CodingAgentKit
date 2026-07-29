@@ -30,6 +30,17 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// backend's session list doesn't carry one.
     public var model: String?
     public var reasoningEffort: String?
+    /// Agents working for this session right now. A session that has handed its
+    /// turn to subagents is live while its own transcript stays silent, so this
+    /// is what a list has to describe it with.
+    public var activeAgents: Int?
+    /// What the single working agent was sent to do; nil when several are
+    /// working, or none.
+    public var agentTask: String?
+
+    /// Live work is happening for this session — its own turn is in flight, or
+    /// agents it spawned are still running.
+    public var isWorking: Bool { isActive == true || (activeAgents ?? 0) > 0 }
 
     public init(
         id: String,
@@ -41,7 +52,9 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         updatedAt: Date,
         isActive: Bool? = nil,
         model: String? = nil,
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil,
+        activeAgents: Int? = nil,
+        agentTask: String? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -53,5 +66,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.isActive = isActive
         self.model = model
         self.reasoningEffort = reasoningEffort
+        self.activeAgents = activeAgents
+        self.agentTask = agentTask
     }
 }

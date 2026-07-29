@@ -284,13 +284,16 @@ struct BRSummary: Decodable {
     let createdAt: Date?
     let updatedAt: Date?
     let active: Bool?
+    let agents: Int?
+    let agentTask: String?
 
     var session: AgentSession {
         AgentSession(
             id: id, agentType: .claudeCode, title: title, directory: directory,
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
-            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
+            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
+            activeAgents: agents, agentTask: agentTask)
     }
 }
 
