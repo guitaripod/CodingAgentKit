@@ -33,7 +33,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.7.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.9.0")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
@@ -95,21 +95,36 @@ Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `S
 | File browsing (`FileBrowsingBackend`) | `supportsFileBrowsing` | ✅ | ✅ ¹ |
 | Diffs | `supportsDiffs` | ✅ | — |
 | Permission prompts | `supportsPermissions` | ✅ | — |
-| Structured questions | `supportsQuestions` | ✅ | — |
+| Structured questions | `supportsQuestions` | ✅ | ✅ ² |
 | Multiple sessions | `supportsMultipleSessions` | ✅ | ✅ |
 | Model selection (per prompt) | `supportsModelSelection` | ✅ | ✅ |
-| Attachments (files/images in prompts) | `supportsAttachments` | ✅ | — |
+| Attachments (files/images in prompts) | `supportsAttachments` | ✅ | ✅ |
 | Reasoning effort (per prompt) | `supportsReasoningEffort` | — | ✅ (low/medium/high/xhigh/max) |
 | Clear conversation in place | `supportsClearing` | — | ✅ |
 | Fork session (branch with same history) | `supportsForking` | — | ✅ (bridge `--fork-session`) |
 | Rename session | `supportsRenaming` | — | ✅ |
 | Abort current turn | `supportsAbort` | ✅ | ✅ |
 | Session usage (per-turn cost/tokens) | `supportsSessionUsage` | — | ✅ |
-| Subagents (sidecar transcripts) | `supportsSubagents` | — | ✅ |
-| Live usage quota (rate-limit gauges) | — ² | — | ✅ |
+| Subagents (sidecar transcripts) | `supportsSubagents` | ✅ | ✅ |
+| Server-side slash commands | `supportsCommands` | ✅ | ✅ |
+| Goals (`/goal`, run until a condition holds) | `supportsGoals` | — | ✅ |
+| Compaction as a transcript event | `supportsCompaction` | — | ✅ |
+| Live usage quota (rate-limit gauges) | — ³ | — | ✅ |
 
 ¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
-² No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
+² The bridge's questions arrive in the transcript rather than as a protocol prompt, and `answersQuestionsByMessage` is `true`: answer by sending an ordinary message, not by calling a respond endpoint. `QuestionRequest.awaitingAnswer` derives what is still open from the transcript.
+³ No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
+
+### Beyond messages
+
+A transcript is more than text and tool calls, and the Kit models the rest as first-class parts and reads rather than leaving them for each client to re-derive:
+
+- **`Compaction`** — a context compaction is a seam in the conversation: tokens before/after, how long it took, how many messages carried over, and the CLI's own summary. It arrives as a `MessagePart`, not as a wall of prose in the chat.
+- **`QuestionRequest`** — structured multi-question, multi-option asks with free-text "Other", plus the transcript-derived answer state above.
+- **Subagents** — `subagents(for:)` and `subagentMessages(sessionID:agentID:)` fetch a spawned agent's own transcript, keyed back to the tool call that spawned it.
+- **`AgentCommand`** — what a turn will actually resolve on that machine: built-ins, user, project and plugin commands, with argument hints.
+- **`GoalStatus`** — a `/goal` in flight, whether it was met or failed, and what it cost.
+- **Tool-call summaries** — `ToolCallSummary` turns raw tool JSON into the line a human wants to read ("Read `ReconnectScheduler.swift` · 148 lines"), so clients don't each write their own.
 
 ## Discovering servers on a tailnet
 
@@ -175,6 +190,7 @@ Credential storage is abstracted behind `SecretStore` (an `EnvironmentSecretStor
 
 - SSE streams over native `URLSession.bytes` with an incremental `SSEParser` on Apple platforms; on Linux (where `URLSession.bytes` does not exist) it falls back to [`mattt/EventSource`](https://github.com/mattt/EventSource) with the `AsyncHTTPClient` trait. REST uses `URLSession.data(for:)`, which exists everywhere.
 - No `UIKit`/`AVFoundation`/`Combine`/`Security`/`os` imports anywhere in `Sources/`. Logging goes through `swift-log`; an app bootstraps an OSLog backend, Linux uses stdout.
+- Every string the Kit puts in front of a person — error messages, tool-call summaries, status fallbacks — resolves through `AgentText` against `AgentCore`'s own `Localizable.xcstrings`, so a localized app doesn't get English leaking out of its engine.
 
 ## Develop & test
 
