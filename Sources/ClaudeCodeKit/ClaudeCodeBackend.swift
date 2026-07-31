@@ -45,9 +45,16 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         self.http = HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge"))
     }
 
+    /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
+    /// carries the bridge's version, which is what a client shows and compares against a release.
     public func health() async throws -> ServerHealth {
-        _ = try await http.send(builder.request(.get, "/health"))
-        return ServerHealth(healthy: true, version: "claude")
+        guard let data = try? await http.send(builder.request(.get, "/status")),
+            let status = try? BridgeCoding.decoder.decode(BRStatus.self, from: data)
+        else {
+            _ = try await http.send(builder.request(.get, "/health"))
+            return ServerHealth(healthy: true, version: nil)
+        }
+        return ServerHealth(healthy: true, version: status.version)
     }
 
     public func listSessions() async throws -> [AgentSession] {
@@ -628,7 +635,10 @@ extension ClaudeCodeBackend: FileBrowsingBackend {
         guard let url = file.url, url.hasPrefix("/") else {
             throw AgentError.unsupported("attachment without a bridge url")
         }
-        return try await http.send(builder.request(.get, url))
+        let components = URLComponents(string: url)
+        return try await http.send(
+            builder.request(
+                .get, components?.path ?? url, query: components?.queryItems ?? []))
     }
 
     public func fileContent(path: String) async throws -> String {
@@ -643,6 +653,12 @@ extension ClaudeCodeBackend: FileBrowsingBackend {
     public func providers() async throws -> [Provider] { [] }
 }
 
+struct BRStatus: Decodable {
+    let agent: String?
+    let model: String?
+    let version: String?
+}
+
 struct BRFileEntry: Decodable {
     let path: String
     let name: String
@@ -652,6 +668,30 @@ struct BRFileEntry: Decodable {
 struct BRFileContent: Decodable {
     let path: String
     let content: String
+}
+
+/// The bridge is installed from source and can pull, rebuild and restart itself, so a client can
+/// keep a server current without anyone opening a terminal on the machine it runs on.
+extension ClaudeCodeBackend: SelfUpdatingBackend {
+    public func updateStatus(checkingRemote: Bool) async throws -> ServerUpdate {
+        let data = try await http.send(
+            builder.request(
+                .get, "/update",
+                query: checkingRemote ? [] : [URLQueryItem(name: "check", value: "false")]))
+        return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+    }
+
+    public func startUpdate() async throws -> ServerUpdate {
+        do {
+            let data = try await http.send(builder.request(.post, "/update"))
+            return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+        } catch AgentError.http(let status, let body) where status == 409 {
+            guard let data = body.data(using: .utf8),
+                let refused = try? BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+            else { throw AgentError.unsupported("The server refused to update itself.") }
+            return refused
+        }
+    }
 }
 
 extension ClaudeCodeBackend {

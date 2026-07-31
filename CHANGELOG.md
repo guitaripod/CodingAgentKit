@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`SelfUpdatingBackend`.** A server that can install its own updates: `updateStatus(checkingRemote:)`
+  reports the running version, whether the remote is ahead and by which commits, and whether this
+  install can move at all; `startUpdate()` asks it to. `ClaudeCodeBackend` conforms — a bridge too
+  old to know the route throws `AgentError.unsupported`. `ServerUpdate.phase` follows a run through
+  the server's own restart, so a client can keep watching something that stops answering.
+- **`health()` reports the bridge's version.** It reads `/status`, which costs the same round trip
+  as `/health` and carries what the server is actually running, instead of the constant `"claude"`.
+
+### Fixed
+- **Attachment URLs may carry a query string.** `ClaudeCodeBackend.attachmentData` now splits a
+  relative bridge URL into path and query items instead of handing the whole string to
+  `appendingPathComponent`, which percent-encoded the `?` and 404'd. Lets the bridge address
+  attachment bytes by file path (`/files/raw?path=…`) — the shape it uses for a picture the agent
+  read — not only by stored attachment name.
+
 ## 0.8.0
 
 ### Added
