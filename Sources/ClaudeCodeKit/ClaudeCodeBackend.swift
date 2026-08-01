@@ -670,6 +670,35 @@ struct BRFileContent: Decodable {
     let content: String
 }
 
+/// The CLI's sign-in is a terminal program; the bridge runs it on a pseudo-terminal and relays the
+/// two halves a person has to supply — opening a link, and returning the code it produces.
+extension ClaudeCodeBackend: AuthenticatingBackend {
+    public func authStatus() async throws -> ServerAuth {
+        try await decodeAuth(http.send(builder.request(.get, "/auth")))
+    }
+
+    public func beginSignIn() async throws -> ServerAuth {
+        try await decodeAuth(http.send(builder.request(.post, "/auth/login")))
+    }
+
+    public func submitSignInCode(_ code: String) async throws -> ServerAuth {
+        let body = try BridgeCoding.encoder.encode(BRAuthCode(code: code))
+        return try await decodeAuth(http.send(builder.request(.post, "/auth/code", body: body)))
+    }
+
+    public func cancelSignIn() async throws {
+        _ = try? await http.send(builder.request(.post, "/auth/cancel"))
+    }
+
+    private func decodeAuth(_ data: Data) throws -> ServerAuth {
+        try BridgeCoding.decoder.decode(ServerAuth.self, from: data)
+    }
+}
+
+struct BRAuthCode: Encodable {
+    let code: String
+}
+
 /// The bridge is installed from source and can pull, rebuild and restart itself, so a client can
 /// keep a server current without anyone opening a terminal on the machine it runs on.
 extension ClaudeCodeBackend: SelfUpdatingBackend {

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **`AuthenticatingBackend` + `ServerAuth`.** Whether the agent behind a server is signed in, and
+  the three-step browser sign-in that fixes it when it isn't: `beginSignIn()` returns the URL the
+  server printed, `submitSignInCode(_:)` hands back the code it produced. `ClaudeCodeBackend`
+  conforms; a bridge without the routes throws `AgentError.unsupported`.
 - **`SelfUpdatingBackend`.** A server that can install its own updates: `updateStatus(checkingRemote:)`
   reports the running version, whether the remote is ahead and by which commits, and whether this
   install can move at all; `startUpdate()` asks it to. `ClaudeCodeBackend` conforms — a bridge too
