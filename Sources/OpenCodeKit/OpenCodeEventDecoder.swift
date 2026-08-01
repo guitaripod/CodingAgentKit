@@ -73,6 +73,13 @@ public enum OpenCodeEventDecoder {
             guard let requestID = properties?["requestID"]?.stringValue else { return nil }
             return .questionResolved(requestID: requestID)
 
+        case "permission.replied", "permission.rejected", "permission.updated",
+            "permission.answered":
+            guard let requestID = properties?["id"]?.stringValue
+                    ?? properties?["permissionID"]?.stringValue
+            else { return nil }
+            return .permissionResolved(requestID: requestID)
+
         case "permission.asked":
             guard let id = properties?["id"]?.stringValue else { return nil }
             let tool = properties?["tool"]?.stringValue

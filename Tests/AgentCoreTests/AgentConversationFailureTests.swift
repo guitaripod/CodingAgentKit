@@ -152,7 +152,7 @@ private func firstState(
         #expect(abs(under - base0) < 1e-6)
     }
 
-    @Test func resubscribingSupersedesTheEarlierStream() async {
+    @Test func everyObserverSeesTheSameConversation() async {
         let backend = MockBackend(
             agentType: .openCode,
             script: [MockScriptStep(assistantEvent("a", "hi")), MockScriptStep(.status(.idle))])
@@ -160,34 +160,93 @@ private func firstState(
             backend: backend, sessionID: "s", policy: recoveryPolicy)
 
         let firstStream = await conversation.states()
-        let firstStreamEnded = Task {
-            var count = 0
-            for await _ in firstStream {
-                count += 1
-                if count > 500 { break }
-            }
-            return count <= 500
-        }
-
-        try? await Task.sleep(for: .milliseconds(20))
         let secondStream = await conversation.states()
 
-        let endedNaturally = await firstStreamEnded.value
-        #expect(endedNaturally)
+        async let first = settledState(of: firstStream)
+        async let second = settledState(of: secondStream)
+        let (a, b) = await (first, second)
 
+        #expect(a?.messages.filter { $0.role == .assistant }.count == 1)
+        #expect(a?.messages.first?.text == "hi")
+        #expect(b?.messages.map(\.id) == a?.messages.map(\.id))
+        #expect(b?.messages.first?.text == "hi")
+    }
+
+    @Test func lettingOneObserverGoLeavesTheOtherRunning() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [MockScriptStep(assistantEvent("a", "hi")), MockScriptStep(.status(.idle))])
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: recoveryPolicy)
+
+        let survivor = await conversation.states()
+        do {
+            let transient = await conversation.states()
+            var iterator = transient.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+        try? await Task.sleep(for: .milliseconds(40))
+        #expect(await conversation.hasObservers)
+
+        let settled = await settledState(of: survivor)
+        #expect(settled?.messages.first?.text == "hi")
+    }
+
+    @Test func anApprovalAnsweredElsewhereStopsAsking() async {
+        let request = PermissionRequest(id: "p1", sessionID: "s", title: "Run tests", toolName: "bash")
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(.permission(request)),
+                MockScriptStep(.permissionResolved(requestID: "p1")),
+                MockScriptStep(.permission(request)),
+                MockScriptStep(.status(.idle)),
+            ])
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: recoveryPolicy)
+
+        var sawTheRequest = false
         var settled: ConversationState?
-        var guardCount = 0
-        for await state in secondStream {
-            guardCount += 1
+        var seen = 0
+        for await state in await conversation.states() {
+            seen += 1
+            if !state.pendingPermissions.isEmpty { sawTheRequest = true }
             if state.status == .idle {
                 settled = state
                 break
             }
-            if guardCount > 500 { break }
+            if seen > 500 { break }
         }
 
-        #expect(settled?.messages.filter { $0.role == .assistant }.count == 1)
+        #expect(sawTheRequest)
+        #expect(settled?.pendingPermissions.isEmpty == true)
+    }
+
+    @Test func reconnectingKeepsEveryObserver() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [MockScriptStep(assistantEvent("a", "hi")), MockScriptStep(.status(.idle))])
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: recoveryPolicy)
+
+        let stream = await conversation.states()
+        await conversation.reconnect()
+        #expect(await conversation.hasObservers)
+
+        let settled = await settledState(of: stream)
         #expect(settled?.messages.first?.text == "hi")
+    }
+
+    private func settledState(of stream: AsyncStream<ConversationState>) async
+        -> ConversationState?
+    {
+        var seen = 0
+        for await state in stream {
+            seen += 1
+            if state.status == .idle { return state }
+            if seen > 500 { return nil }
+        }
+        return nil
     }
 
     @Test func liveDeltaForUnknownPartTriggersTranscriptRecovery() async {

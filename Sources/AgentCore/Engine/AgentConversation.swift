@@ -21,8 +21,9 @@ public actor AgentConversation {
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
-    private var continuation: AsyncStream<ConversationState>.Continuation?
+    private var subscribers: [UUID: AsyncStream<ConversationState>.Continuation] = [:]
     private var generation = 0
+    private var resolvedPermissionIDs: Set<String> = []
 
     private var initialRefreshInFlight = false
     private var bufferedInitialEvents: [BackendEvent] = []
@@ -63,26 +64,62 @@ public actor AgentConversation {
         )
     }
 
-    /// A stream of full conversation snapshots, updated as events arrive and the connection changes.
-    /// Auto-reconnects with backoff; calling again supersedes the previous stream.
+    /// A stream of full conversation snapshots, updated as events arrive and the connection
+    /// changes. Auto-reconnects with backoff.
+    ///
+    /// Every caller gets its own stream over one shared connection: a desktop window, a second
+    /// window on the same session, and a session list can all observe at once, and the backend
+    /// sees one subscriber. The run loop starts with the first observer and stops with the last.
+    /// Calling this again is no longer how a client forces a reconnect — see ``reconnect()``.
     public func states() -> AsyncStream<ConversationState> {
-        stop()
-        generation += 1
-        let currentGeneration = generation
-
+        let id = UUID()
         let (stream, continuation) = AsyncStream.makeStream(
             of: ConversationState.self, bufferingPolicy: .bufferingNewest(1))
-        self.continuation = continuation
+        subscribers[id] = continuation
         continuation.yield(state)
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSubscriber(id) }
+        }
+        startStreamIfNeeded()
+        return stream
+    }
 
+    /// Drops one observer, tearing the connection down only when the last one leaves — otherwise
+    /// closing a second window would end the first window's stream.
+    private func removeSubscriber(_ id: UUID) {
+        subscribers[id] = nil
+        guard subscribers.isEmpty else { return }
+        stop()
+    }
+
+    private func startStreamIfNeeded() {
+        guard streamTask == nil else { return }
+        generation += 1
+        let currentGeneration = generation
         streamTask = Task { [weak self] in
             await self?.runLoop(generation: currentGeneration)
         }
-        continuation.onTermination = { [weak self] _ in
-            Task { await self?.stop(generation: currentGeneration) }
-        }
-        return stream
     }
+
+    /// Drops the current connection and dials again immediately, without disturbing any observer.
+    ///
+    /// A suspended app resumes holding a socket that looks alive and delivers nothing, so coming
+    /// back to the foreground has to force a fresh stream. That used to be a side effect of calling
+    /// ``states()`` a second time; now that a second call is a second observer, the reconnect has
+    /// to be asked for.
+    public func reconnect() {
+        guard !subscribers.isEmpty else { return }
+        generation += 1
+        let currentGeneration = generation
+        streamTask?.cancel()
+        streamTask = Task { [weak self] in
+            await self?.runLoop(generation: currentGeneration)
+        }
+    }
+
+    /// Whether anything is currently observing — a supervisor uses this to decide when a session
+    /// may be released.
+    public var hasObservers: Bool { !subscribers.isEmpty }
 
     /// A new prompt starts a fresh turn, so the previous turn's failure is no
     /// longer current state — without this, one failed turn leaves a sticky
@@ -107,6 +144,7 @@ public actor AgentConversation {
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     {
         try await backend.respond(to: permission, decision: decision)
+        resolvedPermissionIDs.insert(permission.id)
         pendingPermissions.removeAll { $0.id == permission.id }
         emit()
     }
@@ -347,9 +385,13 @@ public actor AgentConversation {
         case .compaction(let value):
             compaction = value
         case .permission(let request):
+            guard !resolvedPermissionIDs.contains(request.id) else { break }
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
                 pendingPermissions.append(request)
             }
+        case .permissionResolved(let requestID):
+            resolvedPermissionIDs.insert(requestID)
+            pendingPermissions.removeAll { $0.id == requestID }
         case .question(let request):
             if !pendingQuestions.contains(where: { $0.id == request.id }) {
                 pendingQuestions.append(request)
@@ -496,17 +538,14 @@ public actor AgentConversation {
     }
 
     private func emit() {
-        continuation?.yield(state)
+        let snapshot = state
+        for continuation in subscribers.values { continuation.yield(snapshot) }
     }
 
     private func finish(generation gen: Int) {
         guard gen == generation else { return }
-        continuation?.finish()
-    }
-
-    private func stop(generation gen: Int) {
-        guard gen == generation else { return }
-        stop()
+        for continuation in subscribers.values { continuation.finish() }
+        subscribers.removeAll()
     }
 
     private func stop() {
@@ -514,7 +553,7 @@ public actor AgentConversation {
         streamTask = nil
         persistTask?.cancel()
         persistTask = nil
-        continuation?.finish()
-        continuation = nil
+        for continuation in subscribers.values { continuation.finish() }
+        subscribers.removeAll()
     }
 }

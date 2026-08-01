@@ -258,6 +258,10 @@ public enum BackendEvent: Sendable {
     /// compaction runs *inside* a turn: the backend is still running, just not answering.
     case compaction(CompactionActivity?)
     case permission(PermissionRequest)
+    /// An approval stopped being pending — answered here, on another device, or in the terminal.
+    /// Without it a second client keeps a live approval card for a tool the first already allowed,
+    /// and answering it posts a decision the server has no request for.
+    case permissionResolved(requestID: String)
     case question(QuestionRequest)
     case questionResolved(requestID: String)
     case failure(BackendFailure)
