@@ -39,10 +39,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     private let builder: RequestBuilder
     private let http: HTTPClient
+    private let stream: BridgeStream
 
     public init(config: ServerConfig) {
-        self.builder = RequestBuilder(config: config)
-        self.http = HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge"))
+        let builder = RequestBuilder(config: config)
+        let http = HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge"))
+        self.builder = builder
+        self.http = http
+        self.stream = BridgeStreamRegistry.stream(config: config, builder: builder, http: http)
     }
 
     /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
@@ -163,27 +167,52 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// was and the user can still answer later from the transcript.
     public func rejectQuestion(_ request: QuestionRequest) async throws {}
 
+    /// One multiplexed `/stream` socket per server when the bridge speaks proto 2 — every open
+    /// conversation and list shares it, and a reconnect replays rather than refetches. An older
+    /// bridge gets the per-session `/events` route it has always had.
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
+        let shared = stream
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                if await shared.supportsStream() {
+                    do {
+                        for try await event in await shared.sessionEvents(sessionID) {
+                            continuation.yield(event)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                    return
+                }
+                await Self.legacyEvents(
+                    for: sessionID, builder: self.builder, http: self.http,
+                    continuation: continuation)
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func legacyEvents(
+        for sessionID: String, builder: RequestBuilder, http: HTTPClient,
+        continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation
+    ) async {
         let stream: AsyncThrowingStream<SSEvent, Error>
         do {
             stream = http.serverSentEvents(
                 try builder.eventStreamRequest("/sessions/\(sessionID)/events"))
         } catch {
-            return AsyncThrowingStream { $0.finish(throwing: error) }
+            continuation.finish(throwing: error)
+            return
         }
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                var decoder = BridgeEventDecoder()
-                do {
-                    for try await sse in stream {
-                        if let event = decoder.decode(sse) { continuation.yield(event) }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
+        var decoder = BridgeEventDecoder()
+        do {
+            for try await sse in stream {
+                if let event = decoder.decode(sse) { continuation.yield(event) }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
         }
     }
 
@@ -516,6 +545,40 @@ struct BRSendAttachment: Encodable {
 /// the `text`/`text-N` id it assigns matches `BRMessage.chat`'s dedup so a delta and a later
 /// full-message upsert land on the same part instead of piling new text onto the first block.
 /// Public so recorded bridge fixtures can be replayed through the real decoder in tests.
+extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
+    public func sessionListChanges() async -> AsyncStream<SessionListChange>? {
+        guard await stream.supportsStream() else { return nil }
+        let shared = stream
+        return AsyncStream { continuation in
+            let task = Task {
+                for await change in await shared.listEvents() {
+                    switch change {
+                    case .upsert(let session): continuation.yield(.upsert(session))
+                    case .remove(let id): continuation.yield(.remove(id))
+                    case .invalidated: continuation.yield(.invalidated)
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func subagentChanges(for sessionID: String) async -> AsyncStream<[SubagentSummary]>? {
+        guard await stream.supportsStream() else { return nil }
+        let shared = stream
+        return AsyncStream { continuation in
+            let task = Task {
+                for await agents in await shared.agentEvents(sessionID) {
+                    continuation.yield(agents)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
 public struct BridgeEventDecoder {
     private var textStreams: [String: TextStream] = [:]
 
