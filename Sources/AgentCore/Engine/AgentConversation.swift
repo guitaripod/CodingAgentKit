@@ -21,6 +21,7 @@ public actor AgentConversation {
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
+    private var lastStreamPersist = Date.distantPast
     private var subscribers: [UUID: AsyncStream<ConversationState>.Continuation] = [:]
     private var generation = 0
     private var resolvedPermissionIDs: Set<String> = []
@@ -377,6 +378,7 @@ public actor AgentConversation {
             reducer.apply(event)
             syncTranscriptQuestions()
             if status != .running, impliesRunning(event) { status = .running }
+            persistDuringStream()
         case .status(let value):
             status = value
             if value == .idle || value == .stable { persist() }
@@ -512,10 +514,19 @@ public actor AgentConversation {
         }
     }
 
+    /// A turn can stream for an hour; a cache written only at idle restores an hour stale. Every
+    /// few seconds of applied events reaches disk, so a relaunch mid-turn reopens on the newest
+    /// content the app ever saw rather than on the last completed turn.
+    private func persistDuringStream() {
+        guard Date().timeIntervalSince(lastStreamPersist) > 5 else { return }
+        persist()
+    }
+
     /// Chains onto the previous persist so writes reach the cache in order;
     /// a cancelled predecessor may still complete, but never after this one.
     private func persist() {
         guard let cache else { return }
+        lastStreamPersist = Date()
         let snapshot = reducer.snapshot
         let sessionID = sessionID
         persistTask = Task { [previous = persistTask] in

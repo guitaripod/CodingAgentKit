@@ -138,3 +138,44 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         #expect(pending.isEmpty)
     }
 }
+
+/// A turn can stream for a long time; the cache must not wait for idle. The stream here never
+/// reports `.idle`, so anything the cache receives was written mid-turn.
+@Suite struct StreamPersistenceTests {
+    private actor RecordingCache: SessionCache {
+        var stored: [[ChatMessage]] = []
+        func sessions(for agentType: AgentType) async -> [AgentSession] { [] }
+        func store(_ sessions: [AgentSession], for agentType: AgentType) async {}
+        func messages(for sessionID: String) async -> [ChatMessage] { [] }
+        func store(_ messages: [ChatMessage], for sessionID: String) async {
+            stored.append(messages)
+        }
+    }
+
+    @Test func aStreamingTurnReachesTheCacheWithoutIdle() async {
+        let cache = RecordingCache()
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(assistant("a", "the first words of a long answer")),
+                MockScriptStep(.status(.running)),
+            ])
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: fastPolicy, cache: cache)
+
+        for await state in await conversation.states()
+        where state.messages.first?.text.isEmpty == false {
+            break
+        }
+        var landed = false
+        for _ in 0..<100 {
+            if await !cache.stored.isEmpty {
+                landed = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(landed, "a mid-turn transcript never reached the cache")
+        _ = conversation
+    }
+}
