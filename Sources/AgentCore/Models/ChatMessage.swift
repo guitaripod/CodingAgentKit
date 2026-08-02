@@ -152,6 +152,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public var costUSD: Double?
     public var providerID: String?
     public var modelID: String?
+    public var reasoningEffort: String?
     public var totalTokens: Int?
 
     public init(
@@ -166,6 +167,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         costUSD: Double? = nil,
         providerID: String? = nil,
         modelID: String? = nil,
+        reasoningEffort: String? = nil,
         totalTokens: Int? = nil
     ) {
         self.id = id
@@ -179,6 +181,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         self.costUSD = costUSD
         self.providerID = providerID
         self.modelID = modelID
+        self.reasoningEffort = reasoningEffort
         self.totalTokens = totalTokens
     }
 

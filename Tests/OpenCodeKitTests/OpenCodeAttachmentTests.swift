@@ -12,7 +12,7 @@ import Testing
                 .file(mime: "image/png", filename: "shot.png", url: "data:image/png;base64,AAAA"),
             ],
             model: OCModelInput(providerID: "opencode", modelID: "big"),
-            agent: nil)
+            agent: nil, variant: nil)
 
         let data = try JSONEncoder().encode(request)
         let json = String(decoding: data, as: UTF8.self)

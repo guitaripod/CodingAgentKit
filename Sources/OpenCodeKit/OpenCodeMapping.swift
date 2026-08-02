@@ -75,6 +75,7 @@ enum OpenCodeMapping {
             costUSD: message.cost,
             providerID: message.providerID,
             modelID: message.modelID,
+            reasoningEffort: message.variant,
             totalTokens: totalTokens(message.tokens)
         )
     }

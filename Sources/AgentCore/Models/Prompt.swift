@@ -77,14 +77,20 @@ public struct ModelInfo: Identifiable, Sendable, Hashable, Codable {
     public var name: String
     public var providerID: String
     public var capabilities: ModelCapabilities?
+    /// Named effort/thinking variants the server accepts for this model (opencode calls them
+    /// variants: "low", "high", …), in ascending effort order. `nil` or empty means the model
+    /// takes no per-turn effort control.
+    public var variants: [String]?
 
     public init(
-        id: String, name: String, providerID: String, capabilities: ModelCapabilities? = nil
+        id: String, name: String, providerID: String, capabilities: ModelCapabilities? = nil,
+        variants: [String]? = nil
     ) {
         self.id = id
         self.name = name
         self.providerID = providerID
         self.capabilities = capabilities
+        self.variants = variants
     }
 
     public var selection: ModelSelection { ModelSelection(providerID: providerID, modelID: id) }

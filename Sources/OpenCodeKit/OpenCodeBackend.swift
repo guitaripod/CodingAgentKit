@@ -10,6 +10,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsMultipleSessions: true,
         supportsModelSelection: true,
         supportsAttachments: true,
+        supportsReasoningEffort: true,
         supportsAbort: true,
         supportsSessionUsage: false,
         supportsQuestions: true,
@@ -115,7 +116,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
             guard let url = Self.attachmentURL(attachment) else { continue }
             parts.append(.file(mime: attachment.mime, filename: attachment.filename, url: url))
         }
-        let request = OCPromptRequest(parts: parts, model: model, agent: prompt.agent)
+        let request = OCPromptRequest(
+            parts: parts, model: model, agent: prompt.agent, variant: prompt.reasoningEffort)
         try await client.promptAsync(sessionID: sessionID, request: request)
     }
 
@@ -274,6 +276,21 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         }
     }
 
+    /// The catalog reports variants as a dictionary; the menu wants ascending effort. Known
+    /// effort names sort by rank, anything else lands after them alphabetically.
+    static func orderedVariants(_ variants: [String: OCModelVariant]?) -> [String]? {
+        guard let variants, !variants.isEmpty else { return nil }
+        let rank = ["minimal": 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5]
+        return variants.keys.sorted {
+            switch (rank[$0], rank[$1]) {
+            case let (.some(a), .some(b)): return a < b
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return $0 < $1
+            }
+        }
+    }
+
     public func providers() async throws -> [Provider] {
         let response = try await client.providers()
         return response.providers.map { provider in
@@ -287,7 +304,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                                 attachment: caps.attachment ?? false,
                                 imageInput: caps.input?.image ?? false,
                                 pdfInput: caps.input?.pdf ?? false)
-                        })
+                        },
+                        variants: Self.orderedVariants($0.value.variants))
                 }
                 .sorted { $0.id < $1.id }
             return Provider(

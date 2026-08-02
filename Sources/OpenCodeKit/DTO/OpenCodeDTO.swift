@@ -34,6 +34,7 @@ struct OCMessage: Decodable, Sendable {
     let cost: Double?
     let providerID: String?
     let modelID: String?
+    let variant: String?
     let tokens: OCTokens?
 }
 
@@ -91,7 +92,10 @@ struct OCModel: Decodable, Sendable {
     let id: String?
     let name: String?
     let capabilities: OCModelCapabilities?
+    let variants: [String: OCModelVariant]?
 }
+
+struct OCModelVariant: Decodable, Sendable {}
 
 struct OCModelCapabilities: Decodable, Sendable {
     struct Input: Decodable, Sendable {
@@ -171,6 +175,7 @@ struct OCPromptRequest: Encodable, Sendable {
     let parts: [OCPartInput]
     let model: OCModelInput?
     let agent: String?
+    let variant: String?
 }
 
 struct OCCommand: Decodable, Sendable {
