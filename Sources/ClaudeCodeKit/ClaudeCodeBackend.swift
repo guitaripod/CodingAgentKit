@@ -255,26 +255,30 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
     }
 
-    /// Older bridges don't serve `/usage/grok`; treat any failure or non-live snapshot as absence.
+    /// Every other provider this machine holds an account for, one bridge route each. Older
+    /// bridges don't serve these routes; any failure or non-live snapshot reads as absence.
     public func additionalUsageQuotas() async throws -> [UsageQuota] {
-        guard let data = try? await http.send(builder.request(.get, "/usage/grok")),
-            let snapshot = try? BridgeCoding.decoder.decode(BRUsage.self, from: data),
-            snapshot.live, !snapshot.gauges.isEmpty
-        else { return [] }
-        return [
-            UsageQuota(
-                providerName: snapshot.providerName,
-                subtitle: snapshot.subtitle,
-                source: snapshot.source,
-                live: snapshot.live,
-                gauges: snapshot.gauges.map {
-                    UsageQuota.Gauge(
-                        key: $0.key, label: $0.label, fraction: $0.fraction,
-                        resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
-                    usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
-                },
-                details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
-        ]
+        var quotas: [UsageQuota] = []
+        for route in ["/usage/grok", "/usage/opencode"] {
+            guard let data = try? await http.send(builder.request(.get, route)),
+                let snapshot = try? BridgeCoding.decoder.decode(BRUsage.self, from: data),
+                snapshot.live, !snapshot.gauges.isEmpty
+            else { continue }
+            quotas.append(
+                UsageQuota(
+                    providerName: snapshot.providerName,
+                    subtitle: snapshot.subtitle,
+                    source: snapshot.source,
+                    live: snapshot.live,
+                    gauges: snapshot.gauges.map {
+                        UsageQuota.Gauge(
+                            key: $0.key, label: $0.label, fraction: $0.fraction,
+                            resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
+                            usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
+                    },
+                    details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) }))
+        }
+        return quotas
     }
 }
 
