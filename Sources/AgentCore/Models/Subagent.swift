@@ -10,10 +10,20 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
     public var updatedAt: Date
     public var isActive: Bool
     public var isCompleted: Bool
+    /// What a live agent is doing right now, when the backend can say: how far through its todo
+    /// list it is, how many tools it has run, and the one running at the moment.
+    public var startedAt: Date?
+    public var toolCount: Int?
+    public var currentTool: String?
+    public var todosDone: Int?
+    public var todosTotal: Int?
+    public var currentTodo: String?
 
     public init(
         id: String, title: String, agentType: String? = nil, toolUseID: String? = nil,
-        updatedAt: Date, isActive: Bool = false, isCompleted: Bool = false
+        updatedAt: Date, isActive: Bool = false, isCompleted: Bool = false,
+        startedAt: Date? = nil, toolCount: Int? = nil, currentTool: String? = nil,
+        todosDone: Int? = nil, todosTotal: Int? = nil, currentTodo: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -22,6 +32,12 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         self.updatedAt = updatedAt
         self.isActive = isActive
         self.isCompleted = isCompleted
+        self.startedAt = startedAt
+        self.toolCount = toolCount
+        self.currentTool = currentTool
+        self.todosDone = todosDone
+        self.todosTotal = todosTotal
+        self.currentTodo = currentTodo
     }
 
     /// Fallback display title for a subagent the backend never named.
