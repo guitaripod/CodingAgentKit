@@ -19,6 +19,7 @@ actor BridgeStream {
     private let http: HTTPClient
 
     private var proto: Int?
+    private var probedAt = Date.distantPast
     private var cursor: (epoch: String, seq: UInt64)?
     private var connectionTask: Task<Void, Never>?
     private var lastFrameAt = Date.distantPast
@@ -33,9 +34,12 @@ actor BridgeStream {
         self.http = http
     }
 
-    /// Whether the server speaks proto 2, probed once per process from `/status`.
+    /// Whether the server speaks proto 2. A yes is cached for the process; a no is re-asked
+    /// after a minute — a bridge upgraded mid-flight must reach running apps without a relaunch.
     func supportsStream() async -> Bool {
-        if let proto { return proto >= 2 }
+        if let proto, proto >= 2 { return true }
+        if proto != nil, Date().timeIntervalSince(probedAt) < 60 { return false }
+        probedAt = Date()
         guard let data = try? await http.send(builder.request(.get, "/status")),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {

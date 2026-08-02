@@ -546,17 +546,27 @@ struct BRSendAttachment: Encodable {
 /// full-message upsert land on the same part instead of piling new text onto the first block.
 /// Public so recorded bridge fixtures can be replayed through the real decoder in tests.
 extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
+    /// Never nil: a bridge that cannot push yet is waited on, not written off. The moment the
+    /// server starts speaking proto 2 — an upgrade mid-flight — subscribers get `.invalidated`
+    /// (refetch what you render) and then live changes, with no relaunch anywhere.
     public func sessionListChanges() async -> AsyncStream<SessionListChange>? {
-        guard await stream.supportsStream() else { return nil }
         let shared = stream
         return AsyncStream { continuation in
             let task = Task {
-                for await change in await shared.listEvents() {
-                    switch change {
-                    case .upsert(let session): continuation.yield(.upsert(session))
-                    case .remove(let id): continuation.yield(.remove(id))
-                    case .invalidated: continuation.yield(.invalidated)
+                while !Task.isCancelled {
+                    guard await shared.supportsStream() else {
+                        try? await Task.sleep(for: .seconds(65))
+                        continue
                     }
+                    continuation.yield(.invalidated)
+                    for await change in await shared.listEvents() {
+                        switch change {
+                        case .upsert(let session): continuation.yield(.upsert(session))
+                        case .remove(let id): continuation.yield(.remove(id))
+                        case .invalidated: continuation.yield(.invalidated)
+                        }
+                    }
+                    try? await Task.sleep(for: .seconds(1))
                 }
                 continuation.finish()
             }
@@ -565,12 +575,18 @@ extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
     }
 
     public func subagentChanges(for sessionID: String) async -> AsyncStream<[SubagentSummary]>? {
-        guard await stream.supportsStream() else { return nil }
         let shared = stream
         return AsyncStream { continuation in
             let task = Task {
-                for await agents in await shared.agentEvents(sessionID) {
-                    continuation.yield(agents)
+                while !Task.isCancelled {
+                    guard await shared.supportsStream() else {
+                        try? await Task.sleep(for: .seconds(65))
+                        continue
+                    }
+                    for await agents in await shared.agentEvents(sessionID) {
+                        continuation.yield(agents)
+                    }
+                    try? await Task.sleep(for: .seconds(1))
                 }
                 continuation.finish()
             }
