@@ -9,11 +9,11 @@ public enum SessionListChange: Sendable {
     case invalidated
 }
 
-public protocol SessionListStreaming {
+public protocol SessionListStreaming: Sendable {
     func sessionListChanges() async -> AsyncStream<SessionListChange>?
 }
 
 /// A backend that can push live subagent facts for a session.
-public protocol SubagentStreaming {
+public protocol SubagentStreaming: Sendable {
     func subagentChanges(for sessionID: String) async -> AsyncStream<[SubagentSummary]>?
 }

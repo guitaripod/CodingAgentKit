@@ -357,9 +357,18 @@ public actor AgentConversation {
     /// Builds a failure from a stream/refresh error, classifying its retryability so the reconnect
     /// loop can stop hammering a permanently-failing endpoint. Non-``AgentError`` errors default to
     /// retryable, preserving backoff for unrecognised transport faults.
+    /// The banner never shows a raw error dump. A transport error's `describing` is a paragraph
+    /// of `Error Domain=NSURLErrorDomain …` — that goes in `detail` for the log; the message a
+    /// person sees names the situation in one clause.
     private static func failure(from error: Error) -> BackendFailure {
-        let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
         let retryable = (error as? AgentError)?.isRetryable ?? true
+        var message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+        if let urlError = error as? URLError {
+            message = urlError.localizedDescription
+        }
+        if message.count > 120 || message.contains("Error Domain") || message.contains("Code=") {
+            message = AgentText.string("The server can't be reached right now.")
+        }
         return BackendFailure(
             message: message, retryable: retryable, detail: String(describing: error))
     }
