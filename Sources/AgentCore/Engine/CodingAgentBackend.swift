@@ -107,13 +107,22 @@ public struct UsageQuota: Sendable, Hashable, Codable {
         /// estimated locally. Show an exact countdown only when `true`; otherwise treat ``resetsAt``
         /// as approximate.
         public var trustedReset: Bool
+        /// For spend-based windows, the money already used and the window's ceiling, when the
+        /// provider reports them. A renderer can then say "$0.61 of $40" instead of "2%".
+        public var usedUSD: Double?
+        public var limitUSD: Double?
 
-        public init(key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool) {
+        public init(
+            key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool,
+            usedUSD: Double? = nil, limitUSD: Double? = nil
+        ) {
             self.key = key
             self.label = label
             self.fraction = fraction
             self.resetsAt = resetsAt
             self.trustedReset = trustedReset
+            self.usedUSD = usedUSD
+            self.limitUSD = limitUSD
         }
     }
 
