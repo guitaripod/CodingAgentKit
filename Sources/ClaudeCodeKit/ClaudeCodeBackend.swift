@@ -31,11 +31,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     public static let models: [ModelInfo] = [
         ModelInfo(id: "fable", name: "Fable", providerID: "anthropic", capabilities: vision),
         ModelInfo(id: "opus", name: "Opus", providerID: "anthropic", capabilities: vision),
+        ModelInfo(id: "opus[1m]", name: "Opus 1M", providerID: "anthropic", capabilities: vision),
         ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic", capabilities: vision),
         ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic", capabilities: vision),
     ]
 
-    public var reasoningEffortOptions: [String] { ["low", "medium", "high", "xhigh", "max"] }
+    /// `ultracode` is a mode more than a level — the server maps it to xhigh
+    /// effort plus standing multi-agent workflow orchestration for the session.
+    public var reasoningEffortOptions: [String] { ["low", "medium", "high", "xhigh", "max", "ultracode"] }
 
     private let builder: RequestBuilder
     private let http: HTTPClient
