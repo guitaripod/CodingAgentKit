@@ -1,8 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
+
+The release that lets more than one window watch one conversation, and one socket carry a whole
+server.
 
 ### Added
+- **Many observers on one conversation.** `states()` no longer tears down whatever came before it:
+  every caller gets its own stream over one shared connection, refcounted so the run loop starts
+  with the first observer and stops with the last. A chat window, a second window and a session
+  list can watch the same session at once. `reconnect()` re-dials underneath the observers without
+  ending anyone's stream — the forced reconnect that calling `states()` twice used to provide.
+- **`permissionResolved`.** `pendingPermissions` was the one field in `ConversationState` that
+  could not converge; an approval answered on the phone stayed live on the desktop forever.
+  Decoded from opencode's replied/rejected/updated shapes, with answered ids remembered so a late
+  re-ask cannot resurrect a settled card.
+- **`BridgeStream`: one socket per server.** Multiplexes the bridge's proto-2 `/stream` with
+  replay, gap detection and a heartbeat watchdog, instead of a connection per session.
+- **`SubagentSummary` carries live progress**, so a fan-out can be rendered while it runs.
+- **A spend gauge carries its money.** `usedUSD` / `limitUSD` pass through the bridge quota.
+- **Per-model effort on opencode.** Effort variants ride the catalog, the send, and the
+  transcript, rather than being one setting for every model.
+- **Every account the machine holds.** Extra quotas are fetched for all of them, not just the
+  first.
+- **Ultracode joins the effort menu, Opus 1M joins the catalog.** Ultracode is a mode more than a
+  level — the server reads it as xhigh plus standing multi-agent orchestration — so it belongs in
+  the same list clients already render.
 - **`AuthenticatingBackend` + `ServerAuth`.** Whether the agent behind a server is signed in, and
   the three-step browser sign-in that fixes it when it isn't: `beginSignIn()` returns the URL the
   server printed, `submitSignInCode(_:)` hands back the code it produced. `ClaudeCodeBackend`
@@ -21,6 +44,33 @@
   `appendingPathComponent`, which percent-encoded the `?` and 404'd. Lets the bridge address
   attachment bytes by file path (`/files/raw?path=…`) — the shape it uses for a picture the agent
   read — not only by stored attachment name.
+- **A bridge upgraded mid-flight reaches running apps.** The proto is re-probed and list streams
+  wait for it, instead of a live app staying on the old protocol until relaunch.
+- **A person never reads `Error Domain=NSURLErrorDomain`.** Transport failures are turned into
+  situations a banner can state.
+- **A streaming turn reaches the cache every few seconds**, not only when it goes idle.
+
+### Performance
+- **A freshly opened chat pays for its three fetches at once.** Transcript, questions and goal now
+  race rather than running in single file; the chat paints when the slowest lands.
+
+## 0.9.0
+
+Attachments, compaction, structured questions, and the sessions of every worktree.
+
+### Added
+- **Image and file attachments** for claude-bridge sessions, with `attachmentData` to fetch the
+  bytes through the backend and per-model input capabilities on `ModelInfo`.
+- **Compaction as a first-class conversation event**, so a client can render the seam instead of
+  the summary.
+- **Structured questions, server commands and goals** in the Kit.
+- **Every worktree's sessions**, not just the server's own.
+- **Semantic tool-call summaries** for presentation, and the Kit's own errors and fallbacks spoken
+  in the reader's language.
+- **A session is live when its agents are**, not only when its own turn is.
+
+### Fixed
+- Stale running status surviving a finished turn.
 
 ## 0.8.0
 
