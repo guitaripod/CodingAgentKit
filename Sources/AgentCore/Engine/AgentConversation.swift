@@ -237,9 +237,10 @@ public actor AgentConversation {
     private var capabilitiesSupportQuestions: Bool { backend.capabilities.supportsQuestions }
 
     public func refresh() async throws {
+        async let questionsFetch = fetchQuestions()
+        async let goalFetch = fetchGoal()
         let messages = try await backend.messages(for: sessionID)
-        let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
-        let goal = await fetchGoal()
+        let (questions, goal) = await (questionsFetch, goalFetch)
         reducer = MessageReducer(agentType: backend.agentType, messages: messages)
         loadedTranscript = true
         deriveStatusFromTranscript()
@@ -255,6 +256,10 @@ public actor AgentConversation {
     private func fetchGoal() async -> SessionGoal? {
         guard backend.capabilities.supportsGoals else { return nil }
         return try? await backend.goal(for: sessionID)
+    }
+
+    private func fetchQuestions() async -> [QuestionRequest] {
+        (try? await backend.pendingQuestions(for: sessionID)) ?? []
     }
 
     /// The history fetch and the event-stream connection race concurrently to overlap their
@@ -499,11 +504,15 @@ public actor AgentConversation {
         emit()
     }
 
+    /// The three initial fetches ride concurrently: on a bridge answering a heavy machine each
+    /// round trip can cost real time, and paying them in sequence is what made a freshly opened
+    /// chat sit on its placeholder.
     private func refreshQuietly(generation gen: Int) async {
         do {
+            async let questionsFetch = fetchQuestions()
+            async let goalFetch = fetchGoal()
             let messages = try await backend.messages(for: sessionID)
-            let questions = (try? await backend.pendingQuestions(for: sessionID)) ?? []
-            let goal = await fetchGoal()
+            let (questions, goal) = await (questionsFetch, goalFetch)
             guard gen == generation, !reachedTerminal else { return }
             reducer = MessageReducer(agentType: backend.agentType, messages: messages)
             loadedTranscript = true
