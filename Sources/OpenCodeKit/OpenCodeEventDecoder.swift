@@ -55,6 +55,29 @@ public enum OpenCodeEventDecoder {
         case "session.idle":
             return .status(.idle)
 
+        case "session.status":
+            guard let status = properties?["status"],
+                let type = status["type"]?.stringValue
+            else { return nil }
+            switch type {
+            case "idle":
+                return .status(.idle)
+            case "busy":
+                return .status(.running)
+            case "retry":
+                let message =
+                    status["message"]?.stringValue
+                    ?? status["action"]?["title"]?.stringValue
+                    ?? "the agent is waiting on the server"
+                return .failure(
+                    BackendFailure(
+                        message: message,
+                        code: status["action"]?["reason"]?.stringValue,
+                        retryable: true))
+            default:
+                return .unknown(type: "session.status.\(type)")
+            }
+
         case "step.started":
             return .status(.running)
 

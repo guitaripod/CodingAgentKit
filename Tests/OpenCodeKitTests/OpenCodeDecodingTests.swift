@@ -80,16 +80,49 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(failure.message == "bad key")
     }
 
+    @Test func decodesSessionStatusBusyAndIdle() {
+        guard
+            case .status(.running)? = decode(
+                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"busy"}}}"#
+            )
+        else {
+            Issue.record("expected running")
+            return
+        }
+        guard
+            case .status(.idle)? = decode(
+                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"idle"}}}"#
+            )
+        else {
+            Issue.record("expected idle")
+            return
+        }
+    }
+
+    @Test func decodesSessionStatusRetryAsQuotaWallFailure() {
+        guard
+            case .failure(let failure)? = decode(
+                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"retry","attempt":1,"message":"monthly usage limit reached. It will reset in 3 days 5 hours.","action":{"reason":"account_rate_limit","provider":"opencode-go","title":"Go limit reached"}}}}"#
+            )
+        else {
+            Issue.record("expected failure")
+            return
+        }
+        #expect(failure.message.contains("usage limit"))
+        #expect(failure.code == "account_rate_limit")
+        #expect(failure.retryable)
+    }
+
     @Test func unknownEventFallsBack() {
         guard
             case .unknown(let type)? = decode(
-                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"busy"}}}"#
+                #"{"type":"some.unknown.event","properties":{"sessionID":"ses_S"}}"#
             )
         else {
             Issue.record("expected unknown")
             return
         }
-        #expect(type == "session.status")
+        #expect(type == "some.unknown.event")
     }
 }
 
