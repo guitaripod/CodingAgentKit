@@ -47,6 +47,7 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     private let subagentOwners: [String: [SubagentSummary]]
     private let subagentScripts: [String: [MockScriptStep]]
     private let derivesQuestionsFromTranscript: Bool
+    private let commands: [AgentCommand]
     private let mutable = Mutex(Mutable())
 
     private struct Mutable {
@@ -83,7 +84,8 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         subagents: [SubagentSummary] = [],
         subagentsBySession: [String: [SubagentSummary]] = [:],
         subagentScripts: [String: [MockScriptStep]] = [:],
-        derivesQuestionsFromTranscript: Bool = false
+        derivesQuestionsFromTranscript: Bool = false,
+        commands: [AgentCommand] = MockBackend.demoCommands
     ) {
         self.agentType = agentType
         self.script = script
@@ -106,13 +108,15 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         self.subagentOwners = subagentsBySession
         self.subagentScripts = subagentScripts
         self.derivesQuestionsFromTranscript = derivesQuestionsFromTranscript
+        self.commands = commands
         self.capabilities =
             capabilities
             ?? BackendCapabilities(
                 supportsFileBrowsing: true, supportsDiffs: true, supportsPermissions: true,
                 supportsMultipleSessions: true, supportsModelSelection: true,
                 supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true,
-                supportsQuestions: true)
+                supportsQuestions: true, supportsCommands: !commands.isEmpty,
+                supportsCompaction: true)
         mutable.withLock {
             $0.sessions =
                 sessions
@@ -126,6 +130,27 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     }
 
     public var recordedPrompts: [SendPrompt] { mutable.withLock { $0.sentPrompts } }
+
+    public func availableCommands(directory: String?) async throws -> [AgentCommand] { commands }
+
+    /// A catalog shaped like a real machine's rather than a token one: the agent's own verbs, a
+    /// command the project contributes, one from a plugin, an MCP prompt and a skill — the mix a
+    /// completion list has to stay legible under, and the only commands a demo can show off.
+    public static let demoCommands: [AgentCommand] = [
+        AgentCommand(name: "compact", details: "Summarise the conversation and carry the summary forward", argumentHint: "<what the summary must keep>", source: .builtin),
+        AgentCommand(name: "context", details: "How much of the window this conversation is using", source: .builtin),
+        AgentCommand(name: "goal", details: "Keep working until a condition is met", argumentHint: "<condition> | clear", source: .builtin),
+        AgentCommand(name: "init", details: "Write an AGENTS.md for this project", source: .builtin),
+        AgentCommand(name: "review", details: "Review the working diff", argumentHint: "[path]", source: .builtin),
+        AgentCommand(name: "usage", details: "Tokens and spend for this session", source: .builtin),
+        AgentCommand(name: "test", details: "Run the suite and triage what fails", source: .project, scope: "pulse-server"),
+        AgentCommand(name: "deploy", details: "Ship the current branch to staging", argumentHint: "<environment>", source: .project, scope: "pulse-server"),
+        AgentCommand(name: "pr:open", details: "Open a pull request from this branch", argumentHint: "<title>", source: .plugin, scope: "github"),
+        AgentCommand(name: "pr:review", details: "Review an open pull request", argumentHint: "<number>", source: .plugin, scope: "github"),
+        AgentCommand(name: "linear:issue", details: "Create an issue from this conversation", argumentHint: "<title>", source: .mcp, scope: "linear"),
+        AgentCommand(name: "security-review", details: "Audit the pending changes for vulnerabilities", source: .skill),
+        AgentCommand(name: "simplify", details: "Reuse, simplify and tidy the changed code", source: .skill),
+    ]
 
     public func health() async throws -> ServerHealth { serverHealth }
     public func listSessions() async throws -> [AgentSession] { mutable.withLock { $0.sessions } }
