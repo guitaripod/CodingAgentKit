@@ -64,6 +64,14 @@ extension ToolCall {
     public var summary: ToolCallSummary {
         ToolCallSummaryBuilder.build(self)
     }
+
+    /// What kind of tool this is, from its name and nothing else.
+    ///
+    /// Building the whole summary parses the call's input JSON and strips the markup off the whole
+    /// of its output — the right price for drawing a row, and far too much for answering "is this
+    /// one a workflow?", which is a question asked of every tool call in a transcript every time a
+    /// token arrives.
+    public var summaryKind: ToolCallSummary.Kind { ToolCallSummaryBuilder.classify(name) }
 }
 
 enum ToolCallSummaryBuilder {
