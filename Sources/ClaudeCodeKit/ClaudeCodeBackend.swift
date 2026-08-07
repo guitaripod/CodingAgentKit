@@ -22,7 +22,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsCommands: true,
         supportsGoals: true,
         supportsCompaction: true,
-        reportsMessageCompletion: false
+        reportsMessageCompletion: false,
+        supportsTranscriptSearch: true
     )
 
     private static let vision = ModelCapabilities(
@@ -124,6 +125,36 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             let commands = try? BridgeCoding.decoder.decode([BRLenient<AgentCommand>].self, from: data)
         else { return [] }
         return commands.compactMap(\.value)
+    }
+
+    /// The bridge reads the CLI's own transcripts, which are already on disk and already the truth
+    /// about what happened, so search runs where the words are rather than over anything this
+    /// client had to fetch first. A bridge too old to have the route answers 404 and is reported as
+    /// a server that cannot search — never as one that found nothing.
+    public func searchTranscripts(_ query: String, limit: Int) async throws
+        -> TranscriptSearchResult
+    {
+        let data = try await http.send(
+            builder.request(
+                .get, "/search",
+                query: [
+                    URLQueryItem(name: "q", value: query),
+                    URLQueryItem(name: "limit", value: String(limit)),
+                ]))
+        let response = try BridgeCoding.decoder.decode(BRSearch.self, from: data)
+        return TranscriptSearchResult(
+            hits: response.hits.map {
+                TranscriptSearchHit(
+                    sessionID: $0.sessionID, title: $0.title, directory: $0.directory,
+                    updatedAt: $0.updatedAt,
+                    matches: $0.matches.map {
+                        TranscriptMatch(
+                            kind: $0.kind, role: $0.role == "assistant" ? .assistant : .user,
+                            text: $0.text, at: $0.at)
+                    },
+                    total: $0.total)
+            },
+            scanned: response.scanned, truncated: response.truncated)
     }
 
     public func goal(for sessionID: String) async throws -> SessionGoal? {
@@ -240,6 +271,16 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         return AgentUsage(costUSD: session.lastCostUSD, tokens: session.lastTokens)
     }
 
+    /// What the whole conversation cost, read by the bridge out of the CLI's own transcript. A
+    /// bridge too old to have the route simply has nothing to say, and the client falls back to
+    /// the last turn.
+    public func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport? {
+        guard let data = try? await http.send(
+            builder.request(.get, "/sessions/\(sessionID)/spend"))
+        else { return nil }
+        return try? BridgeCoding.decoder.decode(SessionSpendReport.self, from: data)
+    }
+
     public func usageQuota() async throws -> UsageQuota? {
         let data = try await http.send(builder.request(.get, "/usage"))
         let snapshot = try BridgeCoding.decoder.decode(BRUsage.self, from: data)
@@ -283,6 +324,28 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         return quotas
     }
+}
+
+private struct BRSearch: Decodable {
+    struct Match: Decodable {
+        let role: String
+        let kind: String
+        let text: String
+        let at: Date?
+    }
+
+    struct Hit: Decodable {
+        let sessionID: String
+        let title: String
+        let directory: String?
+        let updatedAt: Date
+        let matches: [Match]
+        let total: Int
+    }
+
+    let hits: [Hit]
+    let scanned: Int
+    let truncated: Bool
 }
 
 private struct BRUsage: Decodable {

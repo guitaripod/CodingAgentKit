@@ -34,6 +34,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// nothing about liveness, so the engine must not infer "running" from it
     /// — only explicit status events and live text deltas count.
     public var reportsMessageCompletion: Bool
+    /// Whether the backend can search inside conversations it has stored, rather than only listing
+    /// their titles. A chat list matches titles; this is what makes what was actually said — the
+    /// answer, the diff, the command that worked — findable after it scrolls off.
+    public var supportsTranscriptSearch: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -54,7 +58,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsCommands: Bool = false,
         supportsGoals: Bool = false,
         supportsCompaction: Bool = false,
-        reportsMessageCompletion: Bool = true
+        reportsMessageCompletion: Bool = true,
+        supportsTranscriptSearch: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -75,6 +80,68 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsGoals = supportsGoals
         self.supportsCompaction = supportsCompaction
         self.reportsMessageCompletion = reportsMessageCompletion
+        self.supportsTranscriptSearch = supportsTranscriptSearch
+    }
+}
+
+/// One place inside one conversation where the words were found.
+public struct TranscriptMatch: Sendable, Hashable, Codable {
+    /// Which register the words were in — prose, the model's reasoning, a tool's input (named by
+    /// the tool), or what a tool answered. Looking for a shell command and looking for a sentence
+    /// are different searches, and only the person doing it knows which one this was.
+    public var kind: String
+    public var role: MessageRole
+    /// The words, with enough either side to recognise them by.
+    public var text: String
+    public var at: Date?
+
+    public init(kind: String, role: MessageRole, text: String, at: Date? = nil) {
+        self.kind = kind
+        self.role = role
+        self.text = text
+        self.at = at
+    }
+}
+
+/// One conversation the words were found in, and where in it they were.
+public struct TranscriptSearchHit: Sendable, Hashable, Codable, Identifiable {
+    public var sessionID: String
+    public var title: String
+    public var directory: String?
+    public var updatedAt: Date
+    public var matches: [TranscriptMatch]
+    /// How many places matched in the whole conversation, which is usually more than are carried
+    /// here — a result has to be able to say "and forty more in this one".
+    public var total: Int
+
+    public var id: String { sessionID }
+
+    public init(
+        sessionID: String, title: String, directory: String? = nil, updatedAt: Date,
+        matches: [TranscriptMatch], total: Int
+    ) {
+        self.sessionID = sessionID
+        self.title = title
+        self.directory = directory
+        self.updatedAt = updatedAt
+        self.matches = matches
+        self.total = total
+    }
+}
+
+/// What one server had to say about a query.
+public struct TranscriptSearchResult: Sendable, Hashable, Codable {
+    public var hits: [TranscriptSearchHit]
+    /// Conversations actually opened.
+    public var scanned: Int
+    /// Whether the server stopped before it had looked everywhere. A search that quietly gave up is
+    /// worse than one that says so, because an absence then reads as an answer.
+    public var truncated: Bool
+
+    public init(hits: [TranscriptSearchHit], scanned: Int = 0, truncated: Bool = false) {
+        self.hits = hits
+        self.scanned = scanned
+        self.truncated = truncated
     }
 }
 
@@ -85,6 +152,99 @@ public struct AgentUsage: Sendable, Hashable, Codable {
     public init(costUSD: Double? = nil, tokens: Int? = nil) {
         self.costUSD = costUSD
         self.tokens = tokens
+    }
+}
+
+/// What a whole conversation has cost, turn by turn, as the backend can account for it.
+///
+/// A subscription bills a flat fee, so a backend that prices tokens against the metered API rates
+/// says so with ``estimated`` and every surface repeats it: this is what the conversation would
+/// have cost on the API, which is the only figure that makes two conversations comparable.
+public struct SessionSpendReport: Sendable, Hashable, Codable {
+    /// The token tiers that price differently — cache reads are an order of magnitude cheaper than
+    /// fresh input, and cache writes cost more than either, which is most of why one conversation
+    /// costs ten times another.
+    public struct Tokens: Sendable, Hashable, Codable {
+        public var input: Int
+        public var output: Int
+        public var cacheRead: Int
+        public var cacheWrite5m: Int
+        public var cacheWrite1h: Int
+
+        public init(
+            input: Int = 0, output: Int = 0, cacheRead: Int = 0, cacheWrite5m: Int = 0,
+            cacheWrite1h: Int = 0
+        ) {
+            self.input = input
+            self.output = output
+            self.cacheRead = cacheRead
+            self.cacheWrite5m = cacheWrite5m
+            self.cacheWrite1h = cacheWrite1h
+        }
+
+        public var cacheWrite: Int { cacheWrite5m + cacheWrite1h }
+        public var total: Int { input + output + cacheRead + cacheWrite }
+    }
+
+    /// One prompt and everything the agent did answering it. It begins when the person pressed
+    /// return, because the wait is part of what the turn was.
+    public struct Turn: Sendable, Hashable, Codable {
+        public var at: Date
+        public var seconds: Double?
+        public var model: String?
+        public var calls: Int
+        public var tokens: Tokens
+        public var costUSD: Double
+        public var prompt: String?
+
+        public init(
+            at: Date, seconds: Double? = nil, model: String? = nil, calls: Int = 1,
+            tokens: Tokens = Tokens(), costUSD: Double = 0, prompt: String? = nil
+        ) {
+            self.at = at
+            self.seconds = seconds
+            self.model = model
+            self.calls = calls
+            self.tokens = tokens
+            self.costUSD = costUSD
+            self.prompt = prompt
+        }
+    }
+
+    public struct ModelShare: Sendable, Hashable, Codable {
+        public var model: String
+        public var turns: Int
+        public var tokens: Tokens
+        public var costUSD: Double
+
+        public init(model: String, turns: Int, tokens: Tokens, costUSD: Double) {
+            self.model = model
+            self.turns = turns
+            self.tokens = tokens
+            self.costUSD = costUSD
+        }
+    }
+
+    public var costUSD: Double
+    public var tokens: Tokens
+    public var turns: [Turn]
+    public var byModel: [ModelShare]
+    public var startedAt: Date?
+    public var endedAt: Date?
+    /// True when the money was priced from a rate table rather than reported by the provider.
+    public var estimated: Bool
+
+    public init(
+        costUSD: Double, tokens: Tokens, turns: [Turn], byModel: [ModelShare],
+        startedAt: Date? = nil, endedAt: Date? = nil, estimated: Bool = true
+    ) {
+        self.costUSD = costUSD
+        self.tokens = tokens
+        self.turns = turns
+        self.byModel = byModel
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.estimated = estimated
     }
 }
 
@@ -285,6 +445,11 @@ public protocol CodingAgentBackend: Sendable {
 
     func health() async throws -> ServerHealth
     func listSessions() async throws -> [AgentSession]
+    /// Sessions across every worktree the server knows, not just its own — a
+    /// session list that covers one project at a time would otherwise lose
+    /// every chat that works elsewhere. `knownDirectories` are extra places
+    /// the caller has seen sessions work in. Defaults to the plain listing.
+    func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession]
     /// Worktrees this server knows about, for backends whose session list covers
     /// only one at a time. Empty when the backend has no such notion.
     func projects() async throws -> [AgentProject]
@@ -341,6 +506,10 @@ public protocol CodingAgentBackend: Sendable {
     func clearConversation(_ sessionID: String) async throws
     /// The last turn's cost/token usage for a session, if the backend reports it.
     func sessionUsage(_ sessionID: String) async throws -> AgentUsage?
+    /// Everything the backend can account for about what this conversation has cost, turn by turn.
+    /// `nil` when the backend cannot say — the client then falls back to whatever the transcript it
+    /// already holds can be made to admit.
+    func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport?
     /// Live subscription quota (rolling rate-limit gauges) for the whole account, if the backend
     /// exposes a usage API. `nil` when unsupported.
     func usageQuota() async throws -> UsageQuota?
@@ -382,6 +551,12 @@ public protocol CodingAgentBackend: Sendable {
     func subagents(for sessionID: String) async throws -> [SubagentSummary]
     /// A subagent's full transcript, rendered in the same message model as the session itself.
     func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage]
+    /// Searches inside every conversation this server has stored — what was said, what was
+    /// reasoned, what was run and what it answered — rather than only their titles. Throws
+    /// ``AgentError/unsupported(_:)`` by default; check ``BackendCapabilities/supportsTranscriptSearch``
+    /// before offering it, and treat a server that lacks it as one that cannot answer rather than
+    /// one that found nothing.
+    func searchTranscripts(_ query: String, limit: Int) async throws -> TranscriptSearchResult
 }
 
 extension CodingAgentBackend {
@@ -428,11 +603,16 @@ extension CodingAgentBackend {
     }
     public func projects() async throws -> [AgentProject] { [] }
 
+    public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
+        try await listSessions()
+    }
+
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
         try await listSessions()
     }
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
+    public func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport? { nil }
     public func usageQuota() async throws -> UsageQuota? { nil }
     public func additionalUsageQuotas() async throws -> [UsageQuota] { [] }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
@@ -461,6 +641,12 @@ extension CodingAgentBackend {
 
     public func attachmentData(_ file: FileReference) async throws -> Data {
         throw AgentError.unsupported("attachments")
+    }
+
+    public func searchTranscripts(_ query: String, limit: Int) async throws
+        -> TranscriptSearchResult
+    {
+        throw AgentError.unsupported("search")
     }
 
     public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
