@@ -44,6 +44,19 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                     }
                 }
             }
+            if let projects = try? await client.projects() {
+                for project in projects {
+                    guard let worktree = project.worktree, !worktree.isEmpty else { continue }
+                    guard let sessions = try? await client.listSessions(directory: worktree) else {
+                        continue
+                    }
+                    for session in sessions {
+                        if let directory = session.directory {
+                            directories[session.id] = directory
+                        }
+                    }
+                }
+            }
             return directories[sessionID]
         }
 
@@ -60,6 +73,38 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public func listSessions() async throws -> [AgentSession] {
         try await client.listSessions().map(OpenCodeMapping.session)
+    }
+
+    /// opencode scopes `/session` to the project the server was launched in unless a worktree is
+    /// named, so a complete history is a walk: the server's own project first — the call that
+    /// throws when the machine is unreachable — then every project the server knows, then the
+    /// places the caller has seen sessions work in that no project owns. Duplicates collapse by
+    /// session id, and the result is sorted like the plain listing.
+    public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
+        var scopes = Set(knownDirectories)
+        scopes.formUnion((try? await client.projects())?.compactMap(\.worktree) ?? [])
+        let owned = try await listSessions()
+        var merged: [String: AgentSession] = [:]
+        for session in owned { merged[session.id] = session }
+        let ordered = Array(scopes)
+        for start in stride(from: 0, to: ordered.count, by: 6) {
+            let batch = ordered[start..<min(start + 6, ordered.count)]
+            await withTaskGroup(of: (String, [AgentSession]).self) { group in
+                for directory in batch {
+                    group.addTask {
+                        let sessions =
+                            (try? await self.client.listSessions(directory: directory)) ?? []
+                        return (directory, sessions.map(OpenCodeMapping.session))
+                    }
+                }
+                for await (_, sessions) in group {
+                    for session in sessions where merged[session.id] == nil {
+                        merged[session.id] = session
+                    }
+                }
+            }
+        }
+        return merged.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public func projects() async throws -> [AgentProject] {
@@ -258,6 +303,41 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public func fileContent(path: String) async throws -> String {
         try await client.fileContent(path: path).content
+    }
+
+    /// opencode embeds attachment bytes straight into the file part's URL as a
+    /// data: URI — the server synthesizes `data:<mime>;base64,<bytes>` when a
+    /// tool result carries a file — so no bridge round-trip is needed: decode
+    /// locally. A `file://` URL (what @-mentioned text files use) is read from
+    /// local disk where the path exists, i.e. desktop clients; on iOS it fails
+    /// harmlessly and the row falls back to a plain file chip.
+    public func attachmentData(_ file: FileReference) async throws -> Data {
+        if let url = file.url {
+            if let decoded = Self.dataURLBytes(url) { return decoded }
+            if url.hasPrefix("file://") {
+                let path = String(url.dropFirst("file://".count))
+                let decoded = path.removingPercentEncoding ?? path
+                if let data = try? Data(contentsOf: URL(fileURLWithPath: decoded)) {
+                    return data
+                }
+            }
+        }
+        if let path = file.path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
+            return data
+        }
+        throw AgentError.unsupported("attachment without embedded data")
+    }
+
+    static func dataURLBytes(_ url: String) -> Data? {
+        guard url.hasPrefix("data:") else { return nil }
+        guard let comma = url.firstIndex(of: ",") else { return nil }
+        let header = url[url.index(url.startIndex, offsetBy: 5)..<comma]
+        let payload = String(url[url.index(after: comma)...])
+        if header.hasSuffix(";base64") {
+            let cleaned = (payload.removingPercentEncoding ?? payload).filter { !$0.isWhitespace }
+            return Data(base64Encoded: cleaned)
+        }
+        return Data((payload.removingPercentEncoding ?? payload).utf8)
     }
 
     public func diff(sessionID: String) async throws -> [FileDiff] {

@@ -110,11 +110,19 @@ enum OpenCodeMapping {
                 ))
         case "file":
             kind = .file(
-                FileReference(path: nil, mime: part.mime, url: part.url, filename: part.filename))
+                FileReference(
+                    path: nil, mime: part.mime, url: part.url,
+                    filename: Self.displayName(part.filename)))
         default:
             kind = .unknown(type: part.type)
         }
         return MessagePart(id: part.id, kind: kind)
+    }
+
+    /// opencode puts the full path in an assistant file part's filename; the
+    /// bubble caption wants just the last component.
+    static func displayName(_ filename: String?) -> String? {
+        filename.map { URL(fileURLWithPath: $0).lastPathComponent }
     }
 
     static func question(_ dto: OCQuestionRequestDTO) -> QuestionRequest? {
