@@ -814,6 +814,56 @@ extension ClaudeCodeBackend: FileBrowsingBackend {
     public func providers() async throws -> [Provider] { [] }
 }
 
+/// The bridge reads the repository the conversation is working in and reports it; nothing here
+/// changes it. A bridge too old for the routes answers 404, which is not an error to show anyone —
+/// it means this server cannot say, and the client stays quiet about git entirely.
+extension ClaudeCodeBackend: GitObservingBackend {
+    public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
+        try await gitRead(
+            "/git", GitSnapshot.self, directory: directory, sessionID: sessionID, extra: [])
+    }
+
+    public func gitPatch(directory: String?, sessionID: String?, path: String, staged: Bool)
+        async throws -> GitPatch?
+    {
+        try await gitRead(
+            "/git/diff", GitPatch.self, directory: directory, sessionID: sessionID,
+            extra: [
+                URLQueryItem(name: "path", value: path),
+                URLQueryItem(name: "staged", value: staged ? "true" : "false"),
+            ])
+    }
+
+    public func gitCommit(directory: String?, sessionID: String?, hash: String) async throws
+        -> GitCommitDetail?
+    {
+        try await gitRead(
+            "/git/commit", GitCommitDetail.self, directory: directory, sessionID: sessionID,
+            extra: [URLQueryItem(name: "hash", value: hash)])
+    }
+
+    private func gitRead<T: Decodable>(
+        _ path: String, _ type: T.Type, directory: String?, sessionID: String?,
+        extra: [URLQueryItem]
+    ) async throws -> T? {
+        var query = extra
+        if let directory, !directory.isEmpty {
+            query.append(URLQueryItem(name: "dir", value: directory))
+        } else if let sessionID, !sessionID.isEmpty {
+            query.append(URLQueryItem(name: "session", value: sessionID))
+        } else {
+            return nil
+        }
+        do {
+            let data = try await http.send(builder.request(.get, path, query: query))
+            return try BridgeCoding.decoder.decode(T.self, from: data)
+        } catch let error as AgentError {
+            if case .http(let status, _) = error, status == 404 || status == 400 { return nil }
+            throw error
+        }
+    }
+}
+
 struct BRStatus: Decodable {
     let agent: String?
     let model: String?

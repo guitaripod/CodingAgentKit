@@ -23,7 +23,7 @@ public struct MockScriptStep: Sendable {
 /// prompt with the next `replyTurns` script (cycled, retagged with unique message ids and fresh
 /// dates), streamed live to that session's subscribers — enough to hold a real conversation
 /// against scripted content.
-public final class MockBackend: FileBrowsingBackend, Sendable {
+public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendable {
     public let agentType: AgentType
     public let capabilities: BackendCapabilities
 
@@ -48,6 +48,8 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     private let subagentScripts: [String: [MockScriptStep]]
     private let derivesQuestionsFromTranscript: Bool
     private let commands: [AgentCommand]
+    private let git: GitSnapshot?
+    private let gitPatches: [String: String]
     private let mutable = Mutex(Mutable())
 
     private struct Mutable {
@@ -85,7 +87,9 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         subagentsBySession: [String: [SubagentSummary]] = [:],
         subagentScripts: [String: [MockScriptStep]] = [:],
         derivesQuestionsFromTranscript: Bool = false,
-        commands: [AgentCommand] = MockBackend.demoCommands
+        commands: [AgentCommand] = MockBackend.demoCommands,
+        git: GitSnapshot? = nil,
+        gitPatches: [String: String] = [:]
     ) {
         self.agentType = agentType
         self.script = script
@@ -109,6 +113,8 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
         self.subagentScripts = subagentScripts
         self.derivesQuestionsFromTranscript = derivesQuestionsFromTranscript
         self.commands = commands
+        self.git = git
+        self.gitPatches = gitPatches
         self.capabilities =
             capabilities
             ?? BackendCapabilities(
@@ -349,6 +355,27 @@ public final class MockBackend: FileBrowsingBackend, Sendable {
     }
 
     public func fileContent(path: String) async throws -> String { fileContents[path] ?? "" }
+
+    public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
+        git
+    }
+
+    public func gitPatch(directory: String?, sessionID: String?, path: String, staged: Bool)
+        async throws -> GitPatch?
+    {
+        guard let patch = gitPatches[path] else { return nil }
+        return GitPatch(path: path, staged: staged, patch: patch)
+    }
+
+    public func gitCommit(directory: String?, sessionID: String?, hash: String) async throws
+        -> GitCommitDetail?
+    {
+        guard let commit = git?.commits.first(where: { $0.hash == hash || $0.short == hash })
+        else { return nil }
+        return GitCommitDetail(
+            hash: commit.hash, short: commit.short, subject: commit.subject, author: commit.author,
+            at: commit.at, refs: commit.refs)
+    }
     public func diff(sessionID: String) async throws -> [FileDiff] { diffs }
 
     public func find(pattern: String) async throws -> [String] {
