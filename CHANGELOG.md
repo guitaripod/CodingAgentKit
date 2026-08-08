@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.11.0
+
+What a conversation cost, every session a machine holds, and streaming that stops copying the
+answer to grow it.
+
+### Added
+- **`SessionSpendReport`: a backend can account for what a conversation cost.** Not the last
+  turn's price but the whole conversation, turn by turn, with tokens split by the tier that
+  prices them — cache reads are an order of magnitude cheaper than fresh input and cache writes
+  cost more than either. The Claude backend reads it from the bridge (which reads the CLI's own
+  transcript); every other backend answers nil and the client falls back to what its transcript
+  admits. The report carries whether its money was priced or reported, because a subscription
+  bills a flat fee and an estimate presented as a bill is a lie.
+- **opencode: a complete listing.** opencode scopes `/session` to the project its server was
+  launched in, so the plain listing was one project's history presented as the machine's. The
+  listing is now a walk — the server's own project, every project it knows, and the directories
+  sessions have been seen working in — deduplicated by id, six scopes at a time.
+- **opencode: a picture arrives with its bytes**, the same `file` part + raw-bytes fetch the
+  bridge already had, instead of images being a bridge-only capability.
+- **The demo catalog is a real machine's mix of commands**, so a client's completion UI is
+  exercised by realistic namespaces rather than a toy list.
+
+### Fixed
+- **An answer is grown, not copied.** Appending a streaming delta did `value + delta` while the
+  enum case still held the original, so every arrival reallocated the whole answer — a hundred
+  thousand characters arriving in two thousand lumps copied a hundred million characters of
+  garbage. The string is taken out of the case first, leaving it uniquely referenced so the
+  append is amortized O(1). A tool call's one-line name is also no longer recomputed as if it
+  were a summary on every reconfigure.
+- **An opencode rate-limit retry is a wall the app can see, not a silence.** opencode parks a
+  turn in `session.status` `retry` when a provider quota is spent; the decoder dropped the
+  event, so the chat read as an eternal running timer. `retry` now maps to a retryable failure
+  carrying the provider's message, which lights the existing quota wall in every client.
+
 ## 0.10.0
 
 The release that lets more than one window watch one conversation, and one socket carry a whole

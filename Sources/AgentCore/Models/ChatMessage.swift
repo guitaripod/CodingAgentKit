@@ -79,10 +79,23 @@ public struct MessagePart: Identifiable, Sendable, Hashable, Codable {
         }
     }
 
+    /// Adds what just arrived to what is already here.
+    ///
+    /// `value + delta` reads well and allocates the whole answer again for every token, because
+    /// the case still holds the original while the sum is being built — an answer of a hundred
+    /// thousand characters arriving in two thousand lumps copies a hundred million characters, all
+    /// of it garbage. Taking the string out of the case first leaves it uniquely referenced, so
+    /// appending grows the buffer it already has.
     public mutating func appendText(_ delta: String) {
         switch kind {
-        case .text(let value): kind = .text(value + delta)
-        case .reasoning(let value): kind = .reasoning(value + delta)
+        case .text(var value):
+            kind = .text("")
+            value += delta
+            kind = .text(value)
+        case .reasoning(var value):
+            kind = .reasoning("")
+            value += delta
+            kind = .reasoning(value)
         default: break
         }
     }

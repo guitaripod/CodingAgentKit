@@ -16,11 +16,14 @@ public struct ConnectionProbe: Sendable {
 
     private let transportProvider: @Sendable (ConnectionPolicy) async -> Transport
 
+    /// Probes go out on the transport that can survive an answer of "who are you?" — the whole
+    /// point of a probe is to find out whether a server wants a password, and on Linux an ordinary
+    /// request against one that does never comes back at all.
     public init() {
         let pool = HTTPClientPool()
         self.transportProvider = { policy in
             let client = await pool.client(for: policy)
-            return { try await client.send($0) }
+            return { try await client.sendExpectingChallenge($0) }
         }
     }
 

@@ -38,6 +38,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let effortOptions: [String]
     private let serverHealth: ServerHealth
     private let quota: UsageQuota?
+    private let analytics: UsageAnalyticsReport?
     private let additionalQuotas: [UsageQuota]
     private let usage: AgentUsage?
     private let fileTree: [String: [FileNode]]
@@ -80,6 +81,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         quota: UsageQuota? = nil,
         additionalQuotas: [UsageQuota] = [],
         sessionUsage: AgentUsage? = nil,
+        analytics: UsageAnalyticsReport? = nil,
         fileTree: [String: [FileNode]] = [:],
         fileContents: [String: String] = [:],
         diffs: [FileDiff] = [],
@@ -105,6 +107,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         self.quota = quota
         self.additionalQuotas = additionalQuotas
         self.usage = sessionUsage
+        self.analytics = analytics
         self.fileTree = fileTree
         self.fileContents = fileContents
         self.diffs = diffs
@@ -403,6 +406,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     public func applyModelSelection(_ model: ModelSelection) async throws {}
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { usage }
+    public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? { analytics }
     public func usageQuota() async throws -> UsageQuota? { quota }
     public func additionalUsageQuotas() async throws -> [UsageQuota] { additionalQuotas }
 
