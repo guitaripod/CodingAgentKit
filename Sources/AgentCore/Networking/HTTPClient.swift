@@ -13,9 +13,13 @@ public struct HTTPClient: Sendable {
         private let streamSession: URLSession
     #endif
     private let logger: Logger
+    /// Kept so the Linux challengeable path can honour the same deadline the session was built
+    /// with — a scan asks for three seconds and must not inherit a stream client's minutes.
+    private let policy: ConnectionPolicy
 
     public init(session: URLSession = .shared, logger: Logger = AgentLog.logger("http")) {
         self.session = session
+        self.policy = .default
         #if !canImport(FoundationNetworking)
             self.streamSession = Self.makeStreamSession()
         #endif
@@ -33,6 +37,7 @@ public struct HTTPClient: Sendable {
             configuration.waitsForConnectivity = true
         #endif
         self.session = URLSession(configuration: configuration)
+        self.policy = policy
         #if !canImport(FoundationNetworking)
             self.streamSession = Self.makeStreamSession()
         #endif
@@ -67,6 +72,60 @@ public struct HTTPClient: Sendable {
     }
 
     #if canImport(FoundationNetworking)
+        /// A request whose answer may be a challenge — a probe against a server that has not been
+        /// given a password yet, or one whose password is wrong.
+        ///
+        /// swift-corelibs-foundation's `URLSession` never returns from such a request. A 401
+        /// carrying `WWW-Authenticate: Basic` puts its libcurl transport into an authentication
+        /// handshake that no disposition escapes: with no delegate it hangs past both timeouts
+        /// forever, `.performDefaultHandling` hangs the same way, and rejecting or cancelling the
+        /// challenge answers `NSURLErrorCancelled` with no response at all — so the 401 the server
+        /// really sent can never be read. Apple's Foundation simply returns it, which is why the
+        /// same probe works on the phone and hangs on the desk.
+        ///
+        /// So on Linux this one path goes through AsyncHTTPClient, which is already here for
+        /// streams and has no challenge machinery: it hands back whatever the server said, 401
+        /// included, and a password-protected server can be recognised as exactly that.
+        public func sendExpectingChallenge(_ request: URLRequest) async throws -> Data {
+            logger.debug(
+                "→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?") (challengeable)")
+            let response: HTTPClientResponse
+            do {
+                response = try await Self.streamClient.execute(
+                    try Self.makeChallengeRequest(from: request),
+                    timeout: .nanoseconds(
+                        Int64(policy.requestTimeout.timeInterval * 1_000_000_000)))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as HTTPClientError where error == .cancelled {
+                throw CancellationError()
+            } catch {
+                throw AgentError.connection(String(describing: error))
+            }
+            let status = Int(response.status.code)
+            logger.debug("← \(status) \(request.url?.path ?? "")")
+            guard (200..<300).contains(status) else {
+                throw AgentError.http(status: status, body: await Self.errorBody(response))
+            }
+            guard let buffer = try? await response.body.collect(upTo: 1 << 20) else { return Data() }
+            return Data(buffer.readableBytesView)
+        }
+
+        private static func makeChallengeRequest(from request: URLRequest) throws
+            -> HTTPClientRequest
+        {
+            guard let url = request.url?.absoluteString else {
+                throw AgentError.connection("Request has no URL")
+            }
+            var made = HTTPClientRequest(url: url)
+            made.method = .init(rawValue: request.httpMethod ?? "GET")
+            for (name, value) in request.allHTTPHeaderFields ?? [:] {
+                made.headers.replaceOrAdd(name: name, value: value)
+            }
+            if let body = request.httpBody { made.body = .bytes(body) }
+            return made
+        }
+
         /// SSE streams idle for long stretches between turns (claude-bridge sends
         /// no keepalives), so the stream transport needs generous timeouts — but a
         /// bounded inter-byte timeout is what detects half-open sockets (app
@@ -139,6 +198,12 @@ public struct HTTPClient: Sendable {
             return String(buffer: buffer)
         }
     #else
+        /// Apple's Foundation returns a 401 as an ordinary response, so a challengeable request is
+        /// just a request. Only Linux needs the other road.
+        public func sendExpectingChallenge(_ request: URLRequest) async throws -> Data {
+            try await send(request)
+        }
+
         /// SSE streams idle for long stretches between turns (claude-bridge sends
         /// no keepalives), so the stream transport needs generous timeouts — but a
         /// bounded inter-byte timeout is what detects half-open sockets (app
