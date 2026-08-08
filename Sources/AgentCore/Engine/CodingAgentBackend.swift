@@ -12,6 +12,9 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsForking: Bool
     public var supportsAbort: Bool
     public var supportsSessionUsage: Bool
+    /// Whether the backend can aggregate the whole account's ledger over a window
+    /// (``CodingAgentBackend/usageAnalytics(days:)``) rather than only one session's spend.
+    public var supportsUsageAnalytics: Bool
     public var supportsQuestions: Bool
     /// Whether answering a question is indistinguishable from sending its text as
     /// a prompt — true for an agent whose ask blocks on a tool result no client
@@ -51,6 +54,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsForking: Bool = false,
         supportsAbort: Bool = false,
         supportsSessionUsage: Bool = false,
+        supportsUsageAnalytics: Bool = false,
         supportsQuestions: Bool = false,
         answersQuestionsByMessage: Bool = false,
         supportsRenaming: Bool = false,
@@ -72,6 +76,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsForking = supportsForking
         self.supportsAbort = supportsAbort
         self.supportsSessionUsage = supportsSessionUsage
+        self.supportsUsageAnalytics = supportsUsageAnalytics
         self.supportsQuestions = supportsQuestions
         self.answersQuestionsByMessage = answersQuestionsByMessage
         self.supportsRenaming = supportsRenaming
@@ -246,6 +251,225 @@ public struct SessionSpendReport: Sendable, Hashable, Codable {
         self.endedAt = endedAt
         self.estimated = estimated
     }
+}
+
+/// The whole account's ledger over a window of days, aggregated by the machine that holds the
+/// transcripts: every session's turns bucketed by day, model, project and tool, with the records
+/// worth bragging about. Everything a server can say about how it has been used, in one report.
+///
+/// Money follows ``SessionSpendReport``'s rules — API-equivalent value, marked ``estimated``,
+/// never a bill.
+public struct UsageAnalyticsReport: Sendable, Hashable, Codable {
+    public typealias Tokens = SessionSpendReport.Tokens
+
+    public struct Totals: Sendable, Hashable, Codable {
+        public var costUSD: Double
+        public var tokens: Tokens
+        public var turns: Int
+        public var toolCalls: Int
+        public var sessions: Int
+        public var activeDays: Int
+
+        public init(
+            costUSD: Double = 0, tokens: Tokens = Tokens(), turns: Int = 0, toolCalls: Int = 0,
+            sessions: Int = 0, activeDays: Int = 0
+        ) {
+            self.costUSD = costUSD
+            self.tokens = tokens
+            self.turns = turns
+            self.toolCalls = toolCalls
+            self.sessions = sessions
+            self.activeDays = activeDays
+        }
+    }
+
+    /// One calendar day in the server's own timezone, keyed "yyyy-MM-dd" — the bucket boundary
+    /// belongs to the machine where the work happened.
+    public struct Day: Sendable, Hashable, Codable {
+        public var day: String
+        public var costUSD: Double
+        public var tokens: Tokens
+        public var turns: Int
+        public var toolCalls: Int
+        public var sessions: Int
+
+        public init(
+            day: String, costUSD: Double = 0, tokens: Tokens = Tokens(), turns: Int = 0,
+            toolCalls: Int = 0, sessions: Int = 0
+        ) {
+            self.day = day
+            self.costUSD = costUSD
+            self.tokens = tokens
+            self.turns = turns
+            self.toolCalls = toolCalls
+            self.sessions = sessions
+        }
+    }
+
+    public struct Project: Sendable, Hashable, Codable {
+        public var directory: String
+        public var name: String
+        public var sessions: Int
+        public var turns: Int
+        public var costUSD: Double
+        public var tokens: Tokens
+
+        public init(
+            directory: String, name: String, sessions: Int = 0, turns: Int = 0,
+            costUSD: Double = 0, tokens: Tokens = Tokens()
+        ) {
+            self.directory = directory
+            self.name = name
+            self.sessions = sessions
+            self.turns = turns
+            self.costUSD = costUSD
+            self.tokens = tokens
+        }
+    }
+
+    public struct Tool: Sendable, Hashable, Codable {
+        public var name: String
+        public var calls: Int
+
+        public init(name: String, calls: Int) {
+            self.name = name
+            self.calls = calls
+        }
+    }
+
+    public struct Compactions: Sendable, Hashable, Codable {
+        public var count: Int
+        public var reclaimedTokens: Int
+
+        public init(count: Int = 0, reclaimedTokens: Int = 0) {
+            self.count = count
+            self.reclaimedTokens = reclaimedTokens
+        }
+    }
+
+    public struct Subagents: Sendable, Hashable, Codable {
+        public var runs: Int
+        public var tokens: Tokens
+        public var costUSD: Double
+
+        public init(runs: Int = 0, tokens: Tokens = Tokens(), costUSD: Double = 0) {
+            self.runs = runs
+            self.tokens = tokens
+            self.costUSD = costUSD
+        }
+    }
+
+    public struct Records: Sendable, Hashable, Codable {
+        public struct BusiestDay: Sendable, Hashable, Codable {
+            public var day: String
+            public var costUSD: Double
+            public var turns: Int
+
+            public init(day: String, costUSD: Double, turns: Int) {
+                self.day = day
+                self.costUSD = costUSD
+                self.turns = turns
+            }
+        }
+
+        public struct Session: Sendable, Hashable, Codable {
+            public var id: String
+            public var title: String
+            public var costUSD: Double
+            public var turns: Int
+
+            public init(id: String, title: String, costUSD: Double, turns: Int) {
+                self.id = id
+                self.title = title
+                self.costUSD = costUSD
+                self.turns = turns
+            }
+        }
+
+        public struct Turn: Sendable, Hashable, Codable {
+            public var at: Date
+            public var costUSD: Double
+            public var seconds: Double?
+            public var model: String?
+            public var prompt: String?
+            public var sessionTitle: String?
+
+            public init(
+                at: Date, costUSD: Double, seconds: Double? = nil, model: String? = nil,
+                prompt: String? = nil, sessionTitle: String? = nil
+            ) {
+                self.at = at
+                self.costUSD = costUSD
+                self.seconds = seconds
+                self.model = model
+                self.prompt = prompt
+                self.sessionTitle = sessionTitle
+            }
+        }
+
+        public var busiestDay: BusiestDay?
+        public var priciestSession: Session?
+        public var priciestTurn: Turn?
+        public var longestTurn: Turn?
+        public var streakDays: Int
+
+        public init(
+            busiestDay: BusiestDay? = nil, priciestSession: Session? = nil,
+            priciestTurn: Turn? = nil, longestTurn: Turn? = nil, streakDays: Int = 0
+        ) {
+            self.busiestDay = busiestDay
+            self.priciestSession = priciestSession
+            self.priciestTurn = priciestTurn
+            self.longestTurn = longestTurn
+            self.streakDays = streakDays
+        }
+    }
+
+    public var since: Date
+    public var generatedAt: Date
+    public var days: Int
+    public var estimated: Bool
+    public var totals: Totals
+    public var daily: [Day]
+    public var models: [SessionSpendReport.ModelShare]
+    public var projects: [Project]
+    public var tools: [Tool]
+    /// Turns begun in each hour of the server's day, index 0–23 — the account's clock.
+    public var hourTurns: [Int]
+    public var hourCostUSD: [Double]
+    /// What the window's cache reads would have cost as fresh input, less what they cost as
+    /// reads — the money caching kept in the person's pocket.
+    public var cacheSavedUSD: Double
+    public var compactions: Compactions
+    public var subagents: Subagents
+    public var records: Records
+
+    public init(
+        since: Date, generatedAt: Date, days: Int, estimated: Bool = true,
+        totals: Totals = Totals(), daily: [Day] = [],
+        models: [SessionSpendReport.ModelShare] = [], projects: [Project] = [],
+        tools: [Tool] = [], hourTurns: [Int] = [], hourCostUSD: [Double] = [],
+        cacheSavedUSD: Double = 0, compactions: Compactions = Compactions(),
+        subagents: Subagents = Subagents(), records: Records = Records()
+    ) {
+        self.since = since
+        self.generatedAt = generatedAt
+        self.days = days
+        self.estimated = estimated
+        self.totals = totals
+        self.daily = daily
+        self.models = models
+        self.projects = projects
+        self.tools = tools
+        self.hourTurns = hourTurns
+        self.hourCostUSD = hourCostUSD
+        self.cacheSavedUSD = cacheSavedUSD
+        self.compactions = compactions
+        self.subagents = subagents
+        self.records = records
+    }
+
+    public var isEmpty: Bool { totals.turns == 0 && totals.costUSD <= 0 }
 }
 
 /// Live subscription quota for a provider (Claude Max/Pro rolling rate limits), sourced from the
@@ -510,6 +734,10 @@ public protocol CodingAgentBackend: Sendable {
     /// `nil` when the backend cannot say — the client then falls back to whatever the transcript it
     /// already holds can be made to admit.
     func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport?
+    /// The whole account's ledger over the last `days` days, aggregated across every session the
+    /// backend's machine holds. `nil` when the backend cannot say — a server too old for the
+    /// route is one that cannot answer, never one that spent nothing.
+    func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport?
     /// Live subscription quota (rolling rate-limit gauges) for the whole account, if the backend
     /// exposes a usage API. `nil` when unsupported.
     func usageQuota() async throws -> UsageQuota?
@@ -613,6 +841,7 @@ extension CodingAgentBackend {
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport? { nil }
+    public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? { nil }
     public func usageQuota() async throws -> UsageQuota? { nil }
     public func additionalUsageQuotas() async throws -> [UsageQuota] { [] }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {

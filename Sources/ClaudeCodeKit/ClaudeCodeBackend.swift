@@ -15,6 +15,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsForking: true,
         supportsAbort: true,
         supportsSessionUsage: true,
+        supportsUsageAnalytics: true,
         supportsQuestions: true,
         answersQuestionsByMessage: true,
         supportsRenaming: true,
@@ -279,6 +280,16 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             builder.request(.get, "/sessions/\(sessionID)/spend"))
         else { return nil }
         return try? BridgeCoding.decoder.decode(SessionSpendReport.self, from: data)
+    }
+
+    /// The machine's whole ledger, aggregated by the bridge from every transcript it holds. A
+    /// bridge too old for the route has nothing to say — never zero.
+    public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? {
+        guard let data = try? await http.send(
+            builder.request(
+                .get, "/analytics", query: [URLQueryItem(name: "days", value: "\(days)")]))
+        else { return nil }
+        return try? BridgeCoding.decoder.decode(UsageAnalyticsReport.self, from: data)
     }
 
     public func usageQuota() async throws -> UsageQuota? {
