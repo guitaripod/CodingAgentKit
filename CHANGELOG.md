@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.12.0
+
+A server that says what it is running, and what it could not find out.
+
+### Added
+- **`ServerUpdate` reports the running binary, not only the checkout.** `version` describes a
+  *directory* — it moves when somebody checks out a branch there, and it runs ahead of the process
+  for the whole stretch between a build and a restart, which under a machine with no service to
+  restart it is permanent. `running`, `builtAt` and `restartRequired` are facts about the program
+  that is answering, so a client can say "built, not restarted" instead of calling it current.
+- **`ServerUpdate.RemoteCheck`: whether the server consulted the project, and whether that
+  worked.** `updateAvailable: false` used to mean four different things a client could not tell
+  apart — genuinely current, asked not to check, no checkout to check with, and a fetch that
+  failed silently — and only one of them is "up to date". The block carries `checked`, `ok`, when
+  it was read, why it failed in words worth showing a person, and the `ref` it compared against,
+  so a machine deliberately on a feature branch is not counted as behind everyone else's master.
+- **`ServerUpdate.ahead`.** An update is a fast-forward, so a checkout with commits of its own
+  cannot take one however willing the rest of the status looks.
+
+### Fixed
+- **A phase this version has never heard of no longer discards the whole status.** `Phase` decodes
+  through its raw string and falls back to `.idle`, so a newer server naming a new phase degrades
+  to "nothing in flight" rather than failing the decode and blanking the surface.
+
 ## 0.11.1
 
 ### Fixed

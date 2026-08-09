@@ -17,7 +17,49 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         case failed
     }
 
+    /// What the server actually consulted about a newer build, said outright rather than inferred.
+    ///
+    /// `updateAvailable: false` used to mean four different things — genuinely current, the client
+    /// asked not to check, the machine has no checkout to check with, or the fetch failed — and a
+    /// client could not tell them apart. This is the difference, reported by the only party that
+    /// knows it.
+    public struct RemoteCheck: Sendable, Hashable, Codable {
+        /// Whether this answer consulted the remote at all.
+        public var checked: Bool
+        /// Whether consulting it worked.
+        public var ok: Bool
+        public var at: Date?
+        /// Why it did not, in words worth showing a person.
+        public var error: String?
+        /// The ref it compared against — a machine deliberately on a feature branch is not behind
+        /// the same line as the others, and folding them into one number would say it was.
+        public var ref: String?
+
+        public init(
+            checked: Bool, ok: Bool, at: Date? = nil, error: String? = nil, ref: String? = nil
+        ) {
+            self.checked = checked
+            self.ok = ok
+            self.at = at
+            self.error = error
+            self.ref = ref
+        }
+    }
+
     public var version: String
+    /// The version of the binary that is executing, stamped when it was built.
+    ///
+    /// `version` describes the *checkout* — it moves when somebody checks out a branch on that
+    /// machine, and it runs ahead of the process for the whole stretch between a build and a
+    /// restart. This one is a fact about the running program.
+    public var running: String?
+    /// A build has landed that this process is not running yet.
+    public var restartRequired: Bool
+    public var builtAt: Date?
+    public var remote: RemoteCheck?
+    /// Commits this checkout has that its upstream does not. Any at all means an update cannot
+    /// fast-forward, whatever `canUpdate` says.
+    public var ahead: Int?
     public var commit: String?
     public var latestVersion: String?
     public var latestCommit: String?
@@ -39,13 +81,20 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
     public var log: String?
 
     public init(
-        version: String, commit: String? = nil, latestVersion: String? = nil,
+        version: String, running: String? = nil, restartRequired: Bool = false,
+        builtAt: Date? = nil, remote: RemoteCheck? = nil, ahead: Int? = nil,
+        commit: String? = nil, latestVersion: String? = nil,
         latestCommit: String? = nil, updateAvailable: Bool = false, behind: Int? = nil,
         changes: [String] = [], canUpdate: Bool = false, reason: String? = nil,
         manager: String = "manual", source: String? = nil, phase: Phase = .idle,
         startedAt: Date? = nil, finishedAt: Date? = nil, log: String? = nil
     ) {
         self.version = version
+        self.running = running
+        self.restartRequired = restartRequired
+        self.builtAt = builtAt
+        self.remote = remote
+        self.ahead = ahead
         self.commit = commit
         self.latestVersion = latestVersion
         self.latestCommit = latestCommit
@@ -71,6 +120,12 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decodeIfPresent(String.self, forKey: .version) ?? "unknown"
+        running = try container.decodeIfPresent(String.self, forKey: .running)
+        restartRequired =
+            try container.decodeIfPresent(Bool.self, forKey: .restartRequired) ?? false
+        builtAt = try container.decodeIfPresent(Date.self, forKey: .builtAt)
+        remote = try container.decodeIfPresent(RemoteCheck.self, forKey: .remote)
+        ahead = try container.decodeIfPresent(Int.self, forKey: .ahead)
         commit = try container.decodeIfPresent(String.self, forKey: .commit)
         latestVersion = try container.decodeIfPresent(String.self, forKey: .latestVersion)
         latestCommit = try container.decodeIfPresent(String.self, forKey: .latestCommit)
@@ -82,7 +137,9 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         manager = try container.decodeIfPresent(String.self, forKey: .manager) ?? "manual"
         source = try container.decodeIfPresent(String.self, forKey: .source)
-        phase = try container.decodeIfPresent(Phase.self, forKey: .phase) ?? .idle
+        phase =
+            (try container.decodeIfPresent(String.self, forKey: .phase)).flatMap(Phase.init(rawValue:))
+            ?? .idle
         startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
         log = try container.decodeIfPresent(String.self, forKey: .log)
