@@ -59,6 +59,42 @@ private struct StreamErrorBackend: CodingAgentBackend {
     }
 }
 
+/// A backend whose first subscription dies with a terminal error and whose later ones stream
+/// normally — the shape of a server that rejected one dial and then came back, which is what
+/// exposes a conversation left permanently dead by its own finished run loop.
+private final class RecoveringStreamBackend: CodingAgentBackend, @unchecked Sendable {
+    let agentType: AgentType = .openCode
+    let capabilities = BackendCapabilities(
+        supportsFileBrowsing: false, supportsDiffs: false, supportsPermissions: false,
+        supportsMultipleSessions: false, supportsModelSelection: false, supportsAttachments: false)
+    private let lock = NSLock()
+    private var attempts = 0
+
+    func health() async throws -> ServerHealth { ServerHealth(healthy: true) }
+    func listSessions() async throws -> [AgentSession] { [] }
+    func createSession(title: String?, directory: String?) async throws -> AgentSession {
+        AgentSession(
+            id: "s", agentType: agentType, title: title ?? "s",
+            createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: 0))
+    }
+    func messages(for sessionID: String) async throws -> [ChatMessage] { [] }
+    func send(_ prompt: SendPrompt, to sessionID: String) async throws {}
+    func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
+        lock.lock()
+        attempts += 1
+        let attempt = attempts
+        lock.unlock()
+        return AsyncThrowingStream { continuation in
+            if attempt == 1 {
+                continuation.finish(throwing: AgentError.http(status: 401, body: ""))
+            } else {
+                continuation.yield(assistantEvent("a", "hi"))
+                continuation.yield(.status(.idle))
+            }
+        }
+    }
+}
+
 /// Races an async `ConversationState` producer against a wall-clock deadline so a regressed
 /// recovery path fails the assertion instead of hanging the suite forever.
 private func firstState(
@@ -91,6 +127,26 @@ private func firstState(
         #expect(states.count <= 100)
         #expect(states.last?.connection == .offline)
         #expect(states.contains { $0.connection == .offline && $0.lastFailure?.retryable == false })
+    }
+
+    @Test func aNewObserverAfterATerminalFailureDialsAgain() async {
+        let backend = RecoveringStreamBackend()
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: terminalPolicy)
+
+        for await state in await conversation.states() {
+            if state.connection == .offline { break }
+        }
+
+        let settled = await firstState(within: .seconds(5)) {
+            for await state in await conversation.states() {
+                if state.status == .idle, state.messages.first?.text == "hi" { return state }
+            }
+            return nil
+        }
+
+        #expect(settled != nil)
+        #expect(settled?.messages.first?.text == "hi")
     }
 
     @Test func retryableStreamErrorsExhaustBudgetThenGoOffline() async {

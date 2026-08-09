@@ -22,6 +22,7 @@ actor BridgeStream {
     private var probedAt = Date.distantPast
     private var cursor: (epoch: String, seq: UInt64)?
     private var connectionTask: Task<Void, Never>?
+    private var connectionGeneration = 0
     private var lastFrameAt = Date.distantPast
 
     private var sessionSubs: [String: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation]] = [:]
@@ -119,16 +120,31 @@ actor BridgeStream {
 
     private func stopIfUnobserved() {
         guard sessionSubs.isEmpty, listSubs.isEmpty, agentSubs.isEmpty else { return }
+        connectionGeneration += 1
         connectionTask?.cancel()
         connectionTask = nil
     }
 
     private func ensureRunning() {
         guard connectionTask == nil else { return }
-        connectionTask = Task { await self.runLoop() }
+        connectionGeneration += 1
+        let generation = connectionGeneration
+        connectionTask = Task { await self.runLoop(generation: generation) }
     }
 
-    private func runLoop() async {
+    /// A run loop that returned — every subscriber failed away and the loop's own guard saw
+    /// nothing left to serve — must not leave its finished task where `ensureRunning` guards on
+    /// nil. Kept, the stale handle makes every later subscription on this server wait on a
+    /// connection nobody dials, forever, and only an app restart recovers. A subscriber that
+    /// raced in between the loop's exit and this cleanup gets the redial immediately.
+    private func clearConnectionTask(generation: Int) {
+        guard generation == connectionGeneration else { return }
+        connectionTask = nil
+        if !sessionSubs.isEmpty || !listSubs.isEmpty || !agentSubs.isEmpty { ensureRunning() }
+    }
+
+    private func runLoop(generation: Int) async {
+        defer { clearConnectionTask(generation: generation) }
         var failures = 0
         while !Task.isCancelled {
             guard !sessionSubs.isEmpty || !listSubs.isEmpty || !agentSubs.isEmpty else { return }

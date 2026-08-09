@@ -31,8 +31,11 @@ public actor AgentConversation {
     private var recoveryRefreshInFlight = false
     private var droppedDeltaDuringRecovery = false
     private var reachedTerminal = false
+    private var lastEventAt = Date()
 
     private static let maxRecoveryRefreshPasses = 3
+    private static let staleTurnThreshold: TimeInterval = 45
+    private static let staleTurnCheckInterval: Duration = .seconds(15)
 
     public init(
         backend: any CodingAgentBackend,
@@ -100,6 +103,17 @@ public actor AgentConversation {
         streamTask = Task { [weak self] in
             await self?.runLoop(generation: currentGeneration)
         }
+    }
+
+    /// A run loop that returned must not leave its finished task looking like a live
+    /// subscription — `startStreamIfNeeded` guards on `streamTask == nil`, so a terminal failure
+    /// that kept the stale handle would make every later ``states()`` call subscribe to a stream
+    /// nothing feeds, forever. Clearing it lets the next observer dial fresh; an observer that
+    /// raced in between the finish and this cleanup gets the redial immediately.
+    private func clearStreamTask(generation gen: Int) {
+        guard gen == generation else { return }
+        streamTask = nil
+        if !subscribers.isEmpty { startStreamIfNeeded() }
     }
 
     /// Drops the current connection and dials again immediately, without disturbing any observer.
@@ -269,9 +283,18 @@ public actor AgentConversation {
     /// upsert), so applying them would double the streamed text. Live events after the snapshot
     /// apply directly.
     private func runLoop(generation gen: Int) async {
+        defer { clearStreamTask(generation: gen) }
+        let watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.staleTurnCheckInterval)
+                await self?.nudgeIfStale(generation: gen)
+            }
+        }
+        defer { watchdog.cancel() }
         recoveryRefreshInFlight = false
         droppedDeltaDuringRecovery = false
         reachedTerminal = false
+        lastEventAt = Date()
         await seedFromCache(generation: gen)
         initialRefreshInFlight = true
         bufferedInitialEvents = []
@@ -378,8 +401,23 @@ public actor AgentConversation {
             message: message, retryable: retryable, detail: String(describing: error))
     }
 
+    /// A turn that claims to be running while its events have stopped arriving is either a slow
+    /// model or a stream that died without saying so — a socket kept alive by heartbeats delivers
+    /// nothing for this session and trips no other watchdog, and the reader is left watching half
+    /// an answer forever. The transcript on the server is whole either way, so a quiet refetch is
+    /// the one move that is free when the turn is merely slow and healing when it is not.
+    private func nudgeIfStale(generation gen: Int) async {
+        guard gen == generation, status == .running, connection == .live,
+            !initialRefreshInFlight, !recoveryRefreshInFlight,
+            Date().timeIntervalSince(lastEventAt) > Self.staleTurnThreshold
+        else { return }
+        lastEventAt = Date()
+        await refreshQuietly(generation: gen)
+    }
+
     private func apply(_ event: BackendEvent, generation gen: Int) {
         guard gen == generation else { return }
+        lastEventAt = Date()
         switch event {
         case .partTextDelta(let messageID, let partID, _):
             if reducer.hasPart(messageID: messageID, partID: partID) {
