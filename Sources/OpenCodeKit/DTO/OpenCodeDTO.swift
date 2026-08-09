@@ -23,6 +23,28 @@ struct OCSession: Decodable, Sendable {
     let parentID: String?
     let directory: String?
     let time: OCTime?
+    let model: OCSessionModel?
+}
+
+/// The model a session last ran with, as the session record reports it. The server names the
+/// model `id` here where a message names it `modelID`; both spellings are read so neither
+/// version of the record loses the fact.
+struct OCSessionModel: Decodable, Sendable {
+    let id: String?
+    let providerID: String?
+    let variant: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, providerID, variant, modelID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decodeIfPresent(String.self, forKey: .modelID)
+        providerID = try container.decodeIfPresent(String.self, forKey: .providerID)
+        variant = try container.decodeIfPresent(String.self, forKey: .variant)
+    }
 }
 
 struct OCMessage: Decodable, Sendable {

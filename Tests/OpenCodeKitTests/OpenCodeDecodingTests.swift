@@ -230,3 +230,31 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(decode(json) == nil)
     }
 }
+
+@Suite struct OpenCodeSessionModelTests {
+    private func session(_ json: String) throws -> AgentSession {
+        OpenCodeMapping.session(try JSONDecoder().decode(OCSession.self, from: Data(json.utf8)))
+    }
+
+    @Test func sessionRecordModelReachesTheSession() throws {
+        let mapped = try session(
+            #"{"id":"ses_S","title":"T","model":{"id":"deepseek-v4-flash","providerID":"opencode-go","variant":"max"}}"#
+        )
+        #expect(mapped.model == "deepseek-v4-flash")
+        #expect(mapped.reasoningEffort == "max")
+    }
+
+    @Test func sessionRecordModelReadsTheModelIDSpelling() throws {
+        let mapped = try session(
+            #"{"id":"ses_S","model":{"modelID":"deepseek-v4-flash","providerID":"opencode-go"}}"#
+        )
+        #expect(mapped.model == "deepseek-v4-flash")
+        #expect(mapped.reasoningEffort == nil)
+    }
+
+    @Test func sessionRecordWithoutAModelStaysSilent() throws {
+        let mapped = try session(#"{"id":"ses_S","title":"T"}"#)
+        #expect(mapped.model == nil)
+        #expect(mapped.reasoningEffort == nil)
+    }
+}

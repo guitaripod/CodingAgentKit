@@ -40,7 +40,9 @@ enum OpenCodeMapping {
             parentID: session.parentID,
             directory: session.directory,
             createdAt: date(session.time?.created),
-            updatedAt: date(session.time?.updated ?? session.time?.created)
+            updatedAt: date(session.time?.updated ?? session.time?.created),
+            model: session.model?.id,
+            reasoningEffort: session.model?.variant
         )
     }
 
