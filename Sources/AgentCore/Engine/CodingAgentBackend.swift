@@ -669,10 +669,14 @@ public protocol CodingAgentBackend: Sendable {
 
     func health() async throws -> ServerHealth
     func listSessions() async throws -> [AgentSession]
-    /// Sessions across every worktree the server knows, not just its own — a
-    /// session list that covers one project at a time would otherwise lose
-    /// every chat that works elsewhere. `knownDirectories` are extra places
-    /// the caller has seen sessions work in. Defaults to the plain listing.
+    /// The conversations, across every worktree the server knows rather than
+    /// just its own — a session list that covers one project at a time would
+    /// otherwise lose every chat that works elsewhere. `knownDirectories` are
+    /// extra places the caller has seen sessions work in. This is what a chat
+    /// list is built from, so a session a spawned agent was handed
+    /// (``AgentSession/isSubagent``) is never in it; ``listSessions()`` stays
+    /// the server's literal listing, which is what spend has to be counted
+    /// from. Defaults to the plain listing, minus subagents.
     func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession]
     /// Worktrees this server knows about, for backends whose session list covers
     /// only one at a time. Empty when the backend has no such notion.
@@ -832,7 +836,7 @@ extension CodingAgentBackend {
     public func projects() async throws -> [AgentProject] { [] }
 
     public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
-        try await listSessions()
+        try await listSessions().filter { !$0.isSubagent }
     }
 
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {

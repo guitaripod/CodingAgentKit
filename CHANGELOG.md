@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.1
+
+### Fixed
+- **An agent a conversation spawned is not a conversation.** opencode gives a spawned agent a
+  session of its own, parented to the one that spawned it, and it was listed as a chat somebody
+  had — the same work present twice, once as the conversation that asked for it and once as a
+  chat nobody started. `listAllSessions(knownDirectories:)` is the conversation listing and now
+  drops parented sessions in every backend, and the bridge's live session stream never upserts
+  one. `listSessions()` stays the server's literal listing, so a subagent's spend is still
+  counted where usage is totalled, and `AgentSession.isSubagent` says which is which.
+
 ## 0.11.0
 
 What a conversation cost, every session a machine holds, and streaming that stops copying the

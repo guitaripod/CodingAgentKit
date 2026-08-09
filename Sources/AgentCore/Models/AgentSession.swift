@@ -42,6 +42,12 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// agents it spawned are still running.
     public var isWorking: Bool { isActive == true || (activeAgents ?? 0) > 0 }
 
+    /// A transcript a spawned agent was given, not a conversation someone had.
+    /// Servers that give a subagent a session of its own (opencode does) report
+    /// it parented to the session that spawned it; it belongs nested at that
+    /// tool call, and never in a list of chats.
+    public var isSubagent: Bool { parentID != nil }
+
     public init(
         id: String,
         agentType: AgentType,
