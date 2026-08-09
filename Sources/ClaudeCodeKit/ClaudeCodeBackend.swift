@@ -652,7 +652,9 @@ extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
                     continuation.yield(.invalidated)
                     for await change in await shared.listEvents() {
                         switch change {
-                        case .upsert(let session): continuation.yield(.upsert(session))
+                        case .upsert(let session):
+                            guard !session.isSubagent else { continue }
+                            continuation.yield(.upsert(session))
                         case .remove(let id): continuation.yield(.remove(id))
                         case .invalidated: continuation.yield(.invalidated)
                         }

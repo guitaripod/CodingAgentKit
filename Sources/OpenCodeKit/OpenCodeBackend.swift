@@ -80,6 +80,11 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// throws when the machine is unreachable — then every project the server knows, then the
     /// places the caller has seen sessions work in that no project owns. Duplicates collapse by
     /// session id, and the result is sorted like the plain listing.
+    ///
+    /// A spawned agent is given a session of its own here, parented to the one that spawned it.
+    /// That is a subagent's transcript, which the conversation renders at the tool call that
+    /// spawned it — so it is dropped rather than listed, and the chat that started the work stays
+    /// the only chat the work produced.
     public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
         var scopes = Set(knownDirectories)
         scopes.formUnion((try? await client.projects())?.compactMap(\.worktree) ?? [])
@@ -104,7 +109,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 }
             }
         }
-        return merged.values.sorted { $0.updatedAt > $1.updatedAt }
+        return merged.values.filter { !$0.isSubagent }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public func projects() async throws -> [AgentProject] {
