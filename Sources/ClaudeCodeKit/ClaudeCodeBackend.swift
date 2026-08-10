@@ -483,8 +483,8 @@ struct BRMessage: Decodable {
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
     /// get an index suffix so `messageID:partID` row identifiers stay unique. The
-    /// suffix scheme ("text", "text-1", …) mirrors `BridgeEventDecoder`'s delta
-    /// routing so streamed tokens and full-message upserts converge on the same part.
+    /// suffix scheme ("text", "text-1", …) is the same one `MessageReducer` numbers a newly
+    /// opened text block by, so streamed tokens and full-message upserts converge on the same part.
     var chat: ChatMessage {
         var counts: [String: Int] = [:]
         let uniqueParts = parts.map { raw -> MessagePart in
@@ -630,11 +630,14 @@ struct BRSendAttachment: Encodable {
     let dataBase64: String
 }
 
-/// Decodes claude-bridge SSE payloads into `BackendEvent`s. Stateful because the bridge
-/// streams each assistant text block as a run of `delta` events that carry no part id, so the
-/// decoder tracks, per message, which text part is currently streaming and routes deltas to it —
-/// the `text`/`text-N` id it assigns matches `BRMessage.chat`'s dedup so a delta and a later
-/// full-message upsert land on the same part instead of piling new text onto the first block.
+/// Decodes claude-bridge SSE payloads into `BackendEvent`s.
+///
+/// The bridge streams each assistant text block as a run of `delta` frames that name only the
+/// message, so a delta is emitted with no part id at all and the reducer holding the real
+/// transcript decides which block it lands in. Inventing the id here instead used to mean the
+/// decoder had to have watched the message from its first token: a decoder started mid-turn — a
+/// chat opened while an answer was running, or a stream gap that reset the per-session decoders —
+/// numbered from zero and wrote the live answer into the message's first paragraph.
 /// Public so recorded bridge fixtures can be replayed through the real decoder in tests.
 extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
     /// Never nil: a bridge that cannot push yet is waited on, not written off. The moment the
@@ -689,15 +692,7 @@ extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
 }
 
 public struct BridgeEventDecoder {
-    private var textStreams: [String: TextStream] = [:]
-
     public init() {}
-
-    private struct TextStream {
-        var count = 0
-        var currentPartID: String?
-        var awaitingNewPart = true
-    }
 
     public mutating func decode(_ event: SSEvent) -> BackendEvent? {
         guard let data = event.data.data(using: .utf8),
@@ -710,21 +705,17 @@ public struct BridgeEventDecoder {
                     withJSONObject: object["message"] ?? [:]),
                 let message = try? BridgeCoding.decoder.decode(BRMessage.self, from: messageData)
             else { return nil }
-            let chat = message.chat
-            syncTextStream(with: chat)
-            return .messageUpserted(chat, replaceParts: true)
+            return .messageUpserted(message.chat, replaceParts: true)
         case "delta":
             guard let messageID = object["messageID"] as? String,
                 let delta = object["delta"] as? String
             else { return nil }
-            return .partTextDelta(
-                messageID: messageID, partID: openTextPartID(in: messageID), delta: delta)
+            return .partTextDelta(messageID: messageID, partID: nil, delta: delta)
         case "tool":
             guard let messageID = object["messageID"] as? String,
                 let toolData = try? JSONSerialization.data(withJSONObject: object["tool"] ?? [:]),
                 let tool = try? BridgeCoding.decoder.decode(BRTool.self, from: toolData)
             else { return nil }
-            closeTextPart(in: messageID)
             return .partUpserted(
                 messageID: messageID, MessagePart(id: tool.id, kind: .tool(tool.toolCall)))
         case "status":
@@ -756,45 +747,6 @@ public struct BridgeEventDecoder {
         }
     }
 
-    /// The id of the text part the next delta belongs to. Opens a fresh part — using the same
-    /// `text`/`text-N` numbering as `BRMessage.chat` — when the message has no open text part yet
-    /// or a tool closed the previous one; otherwise keeps appending to the currently open part.
-    private mutating func openTextPartID(in messageID: String) -> String {
-        var stream = textStreams[messageID] ?? TextStream()
-        if stream.awaitingNewPart || stream.currentPartID == nil {
-            let id = stream.count == 0 ? "text" : "text-\(stream.count)"
-            stream.count += 1
-            stream.currentPartID = id
-            stream.awaitingNewPart = false
-        }
-        let id = stream.currentPartID ?? "text"
-        textStreams[messageID] = stream
-        return id
-    }
-
-    /// Marks the message's open text part as finished so the next delta starts a new part,
-    /// mirroring how a tool call interrupts an assistant text block.
-    private mutating func closeTextPart(in messageID: String) {
-        var stream = textStreams[messageID] ?? TextStream()
-        stream.awaitingNewPart = true
-        textStreams[messageID] = stream
-    }
-
-    /// Re-derives the open text part from a full message snapshot so deltas that follow keep
-    /// routing to the newest text part even when the tool/part structure arrived via an upsert
-    /// rather than discrete `tool`/`delta` events. A snapshot ending in a non-text part leaves
-    /// the stream awaiting a fresh part for the next delta.
-    private mutating func syncTextStream(with message: ChatMessage) {
-        let textPartIDs = message.parts.compactMap { part -> String? in
-            if case .text = part.kind { return part.id }
-            return nil
-        }
-        var stream = textStreams[message.id] ?? TextStream()
-        stream.count = textPartIDs.count
-        stream.currentPartID = textPartIDs.last
-        stream.awaitingNewPart = textPartIDs.isEmpty || message.parts.last?.id != textPartIDs.last
-        textStreams[message.id] = stream
-    }
 }
 
 /// The bridge serves the server user's home directory over `/files`, which

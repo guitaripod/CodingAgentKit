@@ -31,7 +31,7 @@ private let deltaForMessageA =
         #expect(message.text == "First blockSecond block")
     }
 
-    @Test func deltaEventRoutesTextDeltaToOpenTextPart() {
+    @Test func deltaEventNamesNoPartAndLeavesRoutingToTheTranscript() {
         var decoder = BridgeEventDecoder()
         let event = decoder.decode(sse(deltaForMessageA))
         guard case .partTextDelta(let messageID, let partID, let delta)? = event else {
@@ -39,7 +39,7 @@ private let deltaForMessageA =
             return
         }
         #expect(messageID == "msg_A")
-        #expect(partID == "text")
+        #expect(partID == nil)
         #expect(delta == "more")
     }
 
@@ -144,55 +144,96 @@ private let deltaForMessageA =
         #expect(missingToolMessageID == nil)
     }
 
-    @Test func deltaRoutesToNewestTextPartAfterMultiTextPartMessage() {
+    @Test func deltaLandsInTheNewestTextPartAfterMultiTextPartMessage() {
         var decoder = BridgeEventDecoder()
-        let upsert = decoder.decode(sse(messageWithTwoTextParts))
-        guard case .messageUpserted(let message, _)? = upsert else {
-            Issue.record("expected messageUpserted, got \(String(describing: upsert))")
-            return
+        var reducer = MessageReducer(agentType: .claudeCode)
+        for payload in [messageWithTwoTextParts, deltaForMessageA] {
+            guard let event = decoder.decode(sse(payload)) else {
+                Issue.record("expected an event for \(payload)")
+                return
+            }
+            reducer.apply(event)
         }
-        #expect(message.parts.map(\.id) == ["text", "text-1"])
 
-        let event = decoder.decode(sse(deltaForMessageA))
-        guard case .partTextDelta(let messageID, let partID, let delta)? = event else {
-            Issue.record("expected partTextDelta, got \(String(describing: event))")
-            return
-        }
-        #expect(messageID == "msg_A")
-        #expect(partID == "text-1")
-        #expect(partID != "text")
-        #expect(delta == "more")
+        let parts = reducer.snapshot.first?.parts ?? []
+        #expect(parts.map(\.id) == ["text", "text-1"])
+        #expect(parts.compactMap(\.text) == ["First block", "Second blockmore"])
     }
 
-    @Test func deltaWithoutPriorMessageOpensFirstTextPart() {
+    /// A delta names the block its message is currently being written into, so a message the
+    /// transcript has never held cannot say where it goes. Inventing a bubble for it would show an
+    /// answer starting mid-sentence, out of a transcript that has demonstrably diverged.
+    @Test func deltaWithoutItsMessageFabricatesNothing() {
         var decoder = BridgeEventDecoder()
-        let event = decoder.decode(sse(deltaForMessageA))
-        guard case .partTextDelta(_, let partID, _)? = event else {
-            Issue.record("expected partTextDelta, got \(String(describing: event))")
+        var reducer = MessageReducer(agentType: .claudeCode)
+        guard let event = decoder.decode(sse(deltaForMessageA)) else {
+            Issue.record("expected partTextDelta")
             return
         }
-        #expect(partID == "text")
+        reducer.apply(event)
+
+        #expect(reducer.snapshot.isEmpty)
     }
 
-    @Test func toolCloseMakesNextDeltaOpenAFreshTextPart() {
+    @Test func aToolCallMakesTheNextDeltaOpenAFreshTextPart() {
         var decoder = BridgeEventDecoder()
-        let first = decoder.decode(sse(#"{"type":"delta","messageID":"m","delta":"Hel"}"#))
-        let second = decoder.decode(sse(#"{"type":"delta","messageID":"m","delta":"lo"}"#))
-        _ = decoder.decode(
-            sse(
-                #"{"type":"tool","messageID":"m","tool":{"id":"t1","name":"bash","input":"{}","output":null,"status":"running"}}"#
-            ))
-        let third = decoder.decode(sse(#"{"type":"delta","messageID":"m","delta":"world"}"#))
+        var reducer = MessageReducer(
+            agentType: .claudeCode,
+            messages: [
+                ChatMessage(
+                    id: "m", role: .assistant, agentType: .claudeCode, parts: [],
+                    createdAt: Date(timeIntervalSince1970: 0))
+            ])
+        let payloads = [
+            #"{"type":"delta","messageID":"m","delta":"Hel"}"#,
+            #"{"type":"delta","messageID":"m","delta":"lo"}"#,
+            #"{"type":"tool","messageID":"m","tool":{"id":"t1","name":"bash","input":"{}","output":null,"status":"running"}}"#,
+            #"{"type":"delta","messageID":"m","delta":"world"}"#,
+        ]
+        for payload in payloads {
+            guard let event = decoder.decode(sse(payload)) else {
+                Issue.record("expected an event for \(payload)")
+                return
+            }
+            reducer.apply(event)
+        }
 
-        guard case .partTextDelta(_, let firstID, _)? = first,
-            case .partTextDelta(_, let secondID, _)? = second,
-            case .partTextDelta(_, let thirdID, _)? = third
-        else {
-            Issue.record("expected three text deltas")
+        let parts = reducer.snapshot.first?.parts ?? []
+        #expect(parts.map(\.id) == ["text", "t1", "text-1"])
+        #expect(parts.compactMap(\.text) == ["Hello", "world"])
+    }
+
+    /// The reason the decoder no longer invents part ids. A chat opened while a turn is already
+    /// running — or any stream gap, which drops the per-session decoders — meets a transcript that
+    /// already holds two text blocks with a tool call between them. A decoder counting from zero
+    /// called the live answer "text" and wrote it into the message's first paragraph, above the
+    /// tool row, until the next full message rewrote everything at once.
+    @Test func aFreshDecoderAgainstALiveTranscriptWritesIntoTheBlockStillGrowing() {
+        var reducer = MessageReducer(
+            agentType: .claudeCode,
+            messages: [
+                ChatMessage(
+                    id: "msg_A", role: .assistant, agentType: .claudeCode,
+                    parts: [
+                        MessagePart(id: "text", kind: .text("First block")),
+                        MessagePart(
+                            id: "call_1",
+                            kind: .tool(
+                                ToolCall(id: "call_1", name: "bash", status: .completed))),
+                        MessagePart(id: "text-1", kind: .text("Second block")),
+                    ],
+                    createdAt: Date(timeIntervalSince1970: 0))
+            ])
+        var decoder = BridgeEventDecoder()
+        guard let event = decoder.decode(sse(deltaForMessageA)) else {
+            Issue.record("expected partTextDelta")
             return
         }
-        #expect(firstID == "text")
-        #expect(secondID == "text")
-        #expect(thirdID == "text-1")
+        reducer.apply(event)
+
+        let parts = reducer.snapshot.first?.parts ?? []
+        #expect(parts.map(\.id) == ["text", "call_1", "text-1"])
+        #expect(parts.first?.text == "First block")
+        #expect(parts.last?.text == "Second blockmore")
     }
 }

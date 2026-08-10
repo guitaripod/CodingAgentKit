@@ -641,7 +641,11 @@ public struct QuestionRequest: Sendable, Hashable, Codable, Identifiable {
 public enum BackendEvent: Sendable {
     case messageUpserted(ChatMessage, replaceParts: Bool)
     case partUpserted(messageID: String, MessagePart)
-    case partTextDelta(messageID: String, partID: String, delta: String)
+    /// Text that belongs on the end of a part. A `nil` `partID` means the backend named only the
+    /// message — claude-bridge's `delta` frames carry no part at all — and the delta belongs to
+    /// whichever text block that message is currently being written into. Only the reducer holding
+    /// the real transcript can answer that, so no decoder may guess an id on the backend's behalf.
+    case partTextDelta(messageID: String, partID: String?, delta: String)
     case partRemoved(messageID: String, partID: String)
     case messageRemoved(messageID: String)
     case status(BackendStatus)

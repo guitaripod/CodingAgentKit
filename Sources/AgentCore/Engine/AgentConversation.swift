@@ -26,8 +26,9 @@ public actor AgentConversation {
     private var generation = 0
     private var resolvedPermissionIDs: Set<String> = []
 
-    private var initialRefreshInFlight = false
-    private var bufferedInitialEvents: [BackendEvent] = []
+    private var refreshInFlight = false
+    private var bufferedEvents: [BackendEvent] = []
+    private var refreshChain: Task<Error?, Never>?
     private var recoveryRefreshInFlight = false
     private var droppedDeltaDuringRecovery = false
     private var reachedTerminal = false
@@ -98,7 +99,7 @@ public actor AgentConversation {
 
     private func startStreamIfNeeded() {
         guard streamTask == nil else { return }
-        generation += 1
+        bumpGeneration()
         let currentGeneration = generation
         streamTask = Task { [weak self] in
             await self?.runLoop(generation: currentGeneration)
@@ -124,12 +125,26 @@ public actor AgentConversation {
     /// to be asked for.
     public func reconnect() {
         guard !subscribers.isEmpty else { return }
-        generation += 1
+        bumpGeneration()
         let currentGeneration = generation
         streamTask?.cancel()
         streamTask = Task { [weak self] in
             await self?.runLoop(generation: currentGeneration)
         }
+    }
+
+    /// Moves to a new generation and abandons the refetches queued behind the old one.
+    ///
+    /// A refetch answers a question about the stream that asked for it, and a generation bump means
+    /// that stream is gone. Left in the chain, the superseded refetch is worse than useless: the new
+    /// run loop's own initial refresh queues behind a request nobody is cancelling, which can run to
+    /// the policy's request timeout, and every event of the freshly dialled stream is held back for
+    /// that whole window — the transcript sits at the old text and then arrives in one burst, which
+    /// a client's reveal adopts whole rather than plays out.
+    private func bumpGeneration() {
+        generation += 1
+        refreshChain?.cancel()
+        refreshChain = nil
     }
 
     /// Whether anything is currently observing — a supervisor uses this to decide when a session
@@ -250,19 +265,11 @@ public actor AgentConversation {
 
     private var capabilitiesSupportQuestions: Bool { backend.capabilities.supportsQuestions }
 
+    /// Re-reads the transcript from the server and reports what went wrong if it could not. Takes
+    /// the same buffered path every other refetch does, so a refresh asked for while an answer is
+    /// streaming keeps the words that arrived during it.
     public func refresh() async throws {
-        async let questionsFetch = fetchQuestions()
-        async let goalFetch = fetchGoal()
-        let messages = try await backend.messages(for: sessionID)
-        let (questions, goal) = await (questionsFetch, goalFetch)
-        reducer = MessageReducer(agentType: backend.agentType, messages: messages)
-        loadedTranscript = true
-        deriveStatusFromTranscript()
-        if capabilitiesSupportQuestions { pendingQuestions = questions }
-        syncTranscriptQuestions()
-        if backend.capabilities.supportsGoals { self.goal = goal }
-        persist()
-        emit()
+        if let error = await refreshSerialized(generation: generation) { throw error }
     }
 
     /// A goal lookup must never fail a transcript refresh — a server too old to report goals just
@@ -277,11 +284,10 @@ public actor AgentConversation {
     }
 
     /// The history fetch and the event-stream connection race concurrently to overlap their
-    /// latencies. Events that stream in before the snapshot lands are buffered rather than applied,
-    /// then reconciled against it once it arrives: structural updates fold on top, while text deltas
-    /// are dropped — their content is already in the snapshot (or restored by the next part/message
-    /// upsert), so applying them would double the streamed text. Live events after the snapshot
-    /// apply directly.
+    /// latencies, so events start arriving before there is a transcript to fold them into. They are
+    /// buffered rather than applied and reconciled against the snapshot once it lands — the same
+    /// path every later refetch takes, because every refetch has the same race inside it. Live
+    /// events with no fetch out apply directly.
     private func runLoop(generation gen: Int) async {
         defer { clearStreamTask(generation: gen) }
         let watchdog = Task { [weak self] in
@@ -296,16 +302,12 @@ public actor AgentConversation {
         reachedTerminal = false
         lastEventAt = Date()
         await seedFromCache(generation: gen)
-        initialRefreshInFlight = true
-        bufferedInitialEvents = []
+        refreshInFlight = true
+        bufferedEvents = []
         let initialRefresh = Task { [weak self] in
-            await self?.completeInitialRefresh(generation: gen)
+            await self?.refreshQuietly(generation: gen)
         }
-        defer {
-            initialRefresh.cancel()
-            initialRefreshInFlight = false
-            bufferedInitialEvents = []
-        }
+        defer { initialRefresh.cancel() }
 
         var attempt = 0
 
@@ -314,8 +316,8 @@ public actor AgentConversation {
             do {
                 for try await event in backend.events(for: sessionID) {
                     guard gen == generation else { return }
-                    if initialRefreshInFlight {
-                        bufferedInitialEvents.append(event)
+                    if refreshInFlight {
+                        bufferedEvents.append(event)
                         continue
                     }
                     attempt = 0
@@ -335,7 +337,7 @@ public actor AgentConversation {
                 setFailure(failure, generation: gen)
             }
 
-            if initialRefreshInFlight { await initialRefresh.value }
+            await initialRefresh.value
             guard gen == generation && !Task.isCancelled else { return }
 
             attempt += 1
@@ -353,27 +355,140 @@ public actor AgentConversation {
         }
     }
 
-    /// Runs the initial history fetch, then folds in whatever streamed during it. Structural events
-    /// carry full state and are replayed on top of the snapshot; text deltas are discarded to avoid
-    /// double-applying content the snapshot already holds. Clearing the in-flight flag last lets
-    /// subsequent live events apply directly.
-    private func completeInitialRefresh(generation gen: Int) async {
-        await refreshQuietly(generation: gen)
-        guard gen == generation, !reachedTerminal else {
-            bufferedInitialEvents = []
-            initialRefreshInFlight = false
-            return
+    /// Folds everything that streamed during a refetch onto the snapshot it just installed, and
+    /// reopens the live path. Whether the fetch succeeded or failed, the events it held back are
+    /// the only copy anyone has, so every ending drains — onto the new transcript when one landed,
+    /// onto the old one when none did.
+    ///
+    /// A stream that failed for good is the exception, and takes its buffered events with it: the
+    /// transcript it left is the last thing anyone can vouch for, and folding half a turn onto it
+    /// would show a state the server never reported.
+    private func drainBufferedEvents(generation gen: Int, alreadyFolded: [String: Int] = [:]) {
+        let buffered = bufferedEvents
+        refreshInFlight = false
+        bufferedEvents = []
+        guard !buffered.isEmpty, !reachedTerminal else { return }
+        markLive(generation: gen)
+        var credit = alreadyFolded
+        for event in buffered {
+            guard let owing = unfolded(event, against: &credit) else { continue }
+            apply(owing, generation: gen)
         }
-        let buffered = bufferedInitialEvents
-        bufferedInitialEvents = []
-        if !buffered.isEmpty {
-            markLive(generation: gen)
-            for event in buffered {
-                if case .partTextDelta = event { continue }
-                apply(event, generation: gen)
+    }
+
+    /// What is left of a held-back event once the refetch is credited with the part of it that
+    /// already reached the transcript by another road.
+    ///
+    /// Only messages this device had never seen are ever credited, and for those the server's
+    /// version and the buffer overlap without either containing the other: the answer began before
+    /// the stream was dialled, so its head exists only in the snapshot, and it went on after the
+    /// server built its reply, so its tail exists only here. Text is a length, so the overlap is a
+    /// length too — the buffer pays the credit off character by character and starts landing where
+    /// the server's account stops. A message upsert stops replacing parts while a credit stands,
+    /// since the shell the stream repeats mid-turn carries none and would empty the answer.
+    private func unfolded(_ event: BackendEvent, against credit: inout [String: Int])
+        -> BackendEvent?
+    {
+        switch event {
+        case .messageUpserted(let message, true) where (credit[message.id] ?? 0) > 0:
+            return .messageUpserted(message, replaceParts: false)
+        case .partTextDelta(let messageID, let partID, let delta):
+            guard let owed = credit[messageID], owed > 0 else { return event }
+            let length = delta.count
+            credit[messageID] = max(0, owed - length)
+            guard length > owed else { return nil }
+            return .partTextDelta(
+                messageID: messageID, partID: partID, delta: String(delta.dropFirst(owed)))
+        default:
+            return event
+        }
+    }
+
+    /// Gives the messages the buffer is still writing back to the stream, over the versions of them
+    /// the refetch just installed.
+    ///
+    /// A message an answer is being typed into is a moving target, and the server's snapshot of one
+    /// is only a claim about where it had got to when it answered — claude-bridge folds every delta
+    /// it broadcasts into the partial message it serves, so its snapshot already carries text this
+    /// buffer is about to replay, and a backend that stores parts as they stream is no different.
+    /// Replaying the buffer on top of the server's version therefore writes the same sentence
+    /// twice, and dropping the buffer instead loses whatever only the stream saw. Restoring what
+    /// this device held when the fetch went out — and only for the messages the buffer actually
+    /// addresses — makes the result exactly what we had plus everything that arrived, once,
+    /// without anyone having to know what a delta means to the backend that sent it.
+    ///
+    /// A message the buffer addresses that this device never held has no version to protect, and it
+    /// is the one case where the buffer cannot simply be believed: opening a chat on a turn already
+    /// in flight dials the stream first and asks for the transcript second, so the deltas that
+    /// arrive in between are both held here and folded into the answer the server gives — and
+    /// replaying them writes that stretch twice. Where the server turned out to hold the message,
+    /// its version is the whole of it and the held text is named as already folded; where it did
+    /// not, nothing but the buffer has ever seen the message and every event lands.
+    private func restoreMessagesTheStreamIsWriting(from preRefresh: [ChatMessage]) -> [String: Int] {
+        let addressed = bufferedMessageIDs()
+        guard !addressed.isEmpty else { return [:] }
+        let held = Set(preRefresh.map(\.id))
+        for message in preRefresh where addressed.contains(message.id) {
+            reducer.apply(.messageUpserted(message, replaceParts: true))
+        }
+        var credit: [String: Int] = [:]
+        for message in reducer.snapshot
+        where addressed.contains(message.id) && !held.contains(message.id) {
+            let overlap = Self.overlap(
+                of: bufferedText(for: message.id), alreadyIn: Self.text(of: message))
+            if overlap > 0 { credit[message.id] = overlap }
+        }
+        return credit
+    }
+
+    /// How much of what the buffer is holding for a message the refetch already accounts for.
+    ///
+    /// Both sides are a prefix of the same answer, and neither contains the other: the server's
+    /// copy starts at the beginning of the turn, which happened before the stream was dialled, and
+    /// the buffer runs on past the moment the server composed its reply. What they share is where
+    /// they meet — the longest opening of the buffer that the server's text already ends with — and
+    /// that is a thing to be found rather than counted, since nothing here knows how much of the
+    /// server's account predates the buffer entirely.
+    private static func overlap(of buffered: String, alreadyIn served: String) -> Int {
+        let limit = min(buffered.count, served.count)
+        guard limit > 0 else { return 0 }
+        for length in stride(from: limit, through: 1, by: -1)
+        where served.hasSuffix(buffered.prefix(length)) {
+            return length
+        }
+        return 0
+    }
+
+    private static func text(of message: ChatMessage) -> String {
+        message.parts.reduce(into: "") { joined, part in
+            if case .text(let text) = part.kind { joined += text }
+        }
+    }
+
+    private func bufferedText(for messageID: String) -> String {
+        bufferedEvents.reduce(into: "") { joined, event in
+            if case .partTextDelta(let id, _, let delta) = event, id == messageID {
+                joined += delta
             }
         }
-        initialRefreshInFlight = false
+    }
+
+    /// The messages the held-back events name. Everything else in the snapshot is the server's to
+    /// state, and a refetch exists to be believed about it.
+    private func bufferedMessageIDs() -> Set<String> {
+        var ids: Set<String> = []
+        for event in bufferedEvents {
+            switch event {
+            case .messageUpserted(let message, _):
+                ids.insert(message.id)
+            case .partUpserted(let messageID, _), .partTextDelta(let messageID, _, _),
+                .partRemoved(let messageID, _), .messageRemoved(let messageID):
+                ids.insert(messageID)
+            default:
+                break
+            }
+        }
+        return ids
     }
 
     private func markLive(generation gen: Int) {
@@ -408,7 +523,7 @@ public actor AgentConversation {
     /// the one move that is free when the turn is merely slow and healing when it is not.
     private func nudgeIfStale(generation gen: Int) async {
         guard gen == generation, status == .running, connection == .live,
-            !initialRefreshInFlight, !recoveryRefreshInFlight,
+            !refreshInFlight, !recoveryRefreshInFlight,
             Date().timeIntervalSince(lastEventAt) > Self.staleTurnThreshold
         else { return }
         lastEventAt = Date()
@@ -420,7 +535,7 @@ public actor AgentConversation {
         lastEventAt = Date()
         switch event {
         case .partTextDelta(let messageID, let partID, _):
-            if reducer.hasPart(messageID: messageID, partID: partID) {
+            if reducer.canAddress(messageID: messageID, partID: partID) {
                 reducer.apply(event)
             } else {
                 scheduleRecoveryRefresh(generation: gen)
@@ -489,11 +604,12 @@ public actor AgentConversation {
         }
     }
 
-    /// A delta for a part we don't have means our transcript diverged from
-    /// the server's (e.g. a reconnect gap). Appending it would fabricate a
-    /// bubble that starts mid-response, so drop it and re-fetch instead. A
-    /// drop that lands while a recovery fetch is already in flight is recorded
-    /// so the fetch reruns and converges rather than silently losing the delta.
+    /// A delta the transcript cannot place means it diverged from the server's (e.g. a reconnect
+    /// gap): a delta that names a part we don't have, and equally a delta that names only a message
+    /// we don't have, since the block it belongs to is a question only that message can answer.
+    /// Applying either would fabricate a bubble that starts mid-response, so drop it and re-fetch
+    /// instead. A drop that lands while a recovery fetch is already in flight is recorded so the
+    /// fetch reruns and converges rather than silently losing the delta.
     private func scheduleRecoveryRefresh(generation gen: Int) {
         guard !recoveryRefreshInFlight else {
             droppedDeltaDuringRecovery = true
@@ -542,31 +658,85 @@ public actor AgentConversation {
         emit()
     }
 
-    /// The three initial fetches ride concurrently: on a bridge answering a heavy machine each
-    /// round trip can cost real time, and paying them in sequence is what made a freshly opened
-    /// chat sit on its placeholder.
+    /// A refetch nobody asked for, so a failure is a banner rather than a thrown error.
     private func refreshQuietly(generation gen: Int) async {
+        guard let error = await refreshSerialized(generation: gen),
+            !(error is CancellationError), gen == generation, !reachedTerminal
+        else { return }
+        lastFailure = Self.failure(from: error)
+        emit()
+    }
+
+    /// Refetches run one at a time, in the order they were asked for.
+    ///
+    /// Two overlapping fetches each rebuild the transcript from their own snapshot, so the slower
+    /// one silently undoes the newer one, and neither can say which of the buffered events the
+    /// other already folded in. Queued, the buffer belongs to exactly one fetch at a time and every
+    /// later fetch is strictly newer than everything replayed before it. The queue carries the
+    /// caller's cancellation through to the request, so closing a chat still abandons its load.
+    private func refreshSerialized(generation gen: Int) async -> Error? {
+        let previous = refreshChain
+        let task = Task { [weak self] () -> Error? in
+            _ = await previous?.value
+            return await self?.performRefresh(generation: gen) ?? nil
+        }
+        refreshChain = task
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// Re-reads the transcript and folds back whatever streamed while the read was out.
+    ///
+    /// An actor is re-entrant across `await`: the run loop keeps delivering events through the
+    /// fetch, and every one of them applied in that window would be thrown away by the rebuild that
+    /// follows — the whole reason a turn watched during a refetch used to lose the middle of its
+    /// answer. So the events are held instead and replayed on top of the snapshot; a fetch that
+    /// failed installs nothing and replays them onto the transcript that was already there.
+    ///
+    /// The three fetches ride concurrently: on a bridge answering a heavy machine each round trip
+    /// can cost real time, and paying them in sequence is what made a freshly opened chat sit on
+    /// its placeholder.
+    ///
+    /// A message the stream is actively writing belongs to the stream, so the snapshot may not
+    /// install its version of one — see ``restoreMessagesTheStreamIsWriting(from:)``.
+    ///
+    /// A generation that is no longer the current one leaves everything exactly as it found it —
+    /// the buffer and the hold on live events belong to the run loop that replaced it, which is
+    /// re-reading the transcript itself. The check is made again here, after the queue has been
+    /// waited on, so a refetch a reconnect superseded while it sat in the chain never goes out.
+    private func performRefresh(generation gen: Int) async -> Error? {
+        guard gen == generation else { return nil }
+        refreshInFlight = true
+        let preRefresh = reducer.snapshot
         do {
             async let questionsFetch = fetchQuestions()
             async let goalFetch = fetchGoal()
             let messages = try await backend.messages(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
-            guard gen == generation, !reachedTerminal else { return }
+            guard gen == generation else { return nil }
+            guard !reachedTerminal else {
+                drainBufferedEvents(generation: gen)
+                return nil
+            }
             reducer = MessageReducer(agentType: backend.agentType, messages: messages)
+            let folded = restoreMessagesTheStreamIsWriting(from: preRefresh)
             loadedTranscript = true
             deriveStatusFromTranscript()
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }
             lastFailure = nil
+            drainBufferedEvents(generation: gen, alreadyFolded: folded)
             persist()
             emit()
-        } catch is CancellationError {
-            return
+            return nil
         } catch {
-            guard gen == generation, !reachedTerminal else { return }
-            lastFailure = Self.failure(from: error)
-            emit()
+            guard gen == generation else { return error }
+            drainBufferedEvents(generation: gen)
+            return error
         }
     }
 
