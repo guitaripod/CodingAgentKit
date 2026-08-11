@@ -5,7 +5,7 @@ A cross-platform Swift package for driving coding-agent servers over HTTP + SSE.
 - **opencode** (`opencode serve`) — multi-provider, file browsing, diffs, permissions.
 - **Claude Code** via a bridge service (e.g. claude-bridge) exposing structured sessions over HTTP + SSE — a subscription-billed Claude Code session.
 
-It compiles, tests, and **runs on Linux and Apple platforms**. No `URLSession.bytes`, no Keychain, no OSLog in the core — so it works headless on a server as well as inside an iOS app.
+It compiles, tests, and **runs on Linux and Apple platforms**. No Keychain, no OSLog, no UIKit anywhere in the core — so it works headless on a server as well as inside an iOS app.
 
 ## Why
 
@@ -33,7 +33,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.11.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.13.1")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
@@ -83,10 +83,15 @@ Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — tha
 - **Transcript-derived status recovery** — status events that fired while disconnected are gone forever, so after every refresh the transcript is the source of truth: a completed or visibly-streaming last message corrects a stale status.
 - **Divergence recovery** — a text delta for a part the reducer has never seen means the local transcript diverged from the server's (a reconnect gap); instead of fabricating a bubble that starts mid-response, the delta is dropped and the transcript re-fetched.
 - **Session cache** — plug in a `SessionCache` (a pure-Foundation `FileSessionCache` ships in the core) and cold starts render instantly from disk while the live transcript loads; snapshots persist at turn boundaries.
+- **Many observers, one connection** — every `states()` caller gets its own stream over a shared refcounted connection (two panes on one chat cost one socket), and `reconnect()` re-dials underneath live observers.
+- **One socket per server** — against a protocol-2 bridge, `BridgeStream` multiplexes every conversation, the chat list and subagent activity over a single sequenced `/stream` connection with replay on reconnect, gap detection, and a heartbeat watchdog.
+- **Approvals converge** — a permission answered on another device resolves the pending card everywhere; answered ids are remembered so it never re-prompts.
 
 ## Backend capabilities
 
-Not every backend can do everything. Each backend declares a `BackendCapabilities` value; gate UI on it rather than on the concrete type. Calling an unsupported *action* method throws `AgentError.unsupported`; the optional *read* methods (`usageQuota()`, `sessionUsage(_:)`, `subagents(for:)`, `availableAgents()`) instead return `nil`/empty when unsupported.
+Not every backend can do everything. Each backend declares a `BackendCapabilities` value; gate UI on it rather than on the concrete type. Calling an unsupported *action* method throws `AgentError.unsupported`; the optional *read* methods (`usageQuota()`, `sessionUsage(_:)`, `sessionSpend(_:)`, `usageAnalytics(days:)`, `subagents(for:)`, `availableAgents()`) instead return `nil`/empty when unsupported. `searchTranscripts(_:limit:)` throws `AgentError.unsupported` — gate it on `supportsTranscriptSearch`.
+
+Beyond the flags, capability is also expressed as protocols a backend conforms to: `FileBrowsingBackend` (listing + content), `GitObservingBackend` (`gitSnapshot`/`gitPatch`/`gitCommit` — the project's repository, read but never operated), `AuthenticatingBackend` (`ServerAuth` — the split browser sign-in below), and `SelfUpdatingBackend` (`ServerUpdate` — a server that reports what it runs vs. what it could run, and updates itself through its own restart, `restartRequired` and all). Check conformance with `as?`.
 
 Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `SendPrompt.reasoningEffort`, not applied as a standing session setting.
 
@@ -99,12 +104,15 @@ Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `S
 | Multiple sessions | `supportsMultipleSessions` | ✅ | ✅ |
 | Model selection (per prompt) | `supportsModelSelection` | ✅ | ✅ |
 | Attachments (files/images in prompts) | `supportsAttachments` | ✅ | ✅ |
-| Reasoning effort (per prompt) | `supportsReasoningEffort` | — | ✅ (low/medium/high/xhigh/max) |
+| Reasoning effort (per prompt) | `supportsReasoningEffort` | ✅ (per-model) | ✅ (low/medium/high/xhigh/max/ultracode) |
 | Clear conversation in place | `supportsClearing` | — | ✅ |
 | Fork session (branch with same history) | `supportsForking` | — | ✅ (bridge `--fork-session`) |
 | Rename session | `supportsRenaming` | — | ✅ |
 | Abort current turn | `supportsAbort` | ✅ | ✅ |
 | Session usage (per-turn cost/tokens) | `supportsSessionUsage` | — | ✅ |
+| Whole-session spend report | — ⁴ | — | ✅ |
+| Account-wide usage analytics | `supportsUsageAnalytics` | — | ✅ |
+| Transcript search (whole machine) | `supportsTranscriptSearch` | — | ✅ |
 | Subagents (sidecar transcripts) | `supportsSubagents` | ✅ | ✅ |
 | Server-side slash commands | `supportsCommands` | ✅ | ✅ |
 | Goals (`/goal`, run until a condition holds) | `supportsGoals` | — | ✅ |
@@ -114,6 +122,7 @@ Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `S
 ¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
 ² The bridge's questions arrive in the transcript rather than as a protocol prompt, and `answersQuestionsByMessage` is `true`: answer by sending an ordinary message, not by calling a respond endpoint. `QuestionRequest.awaitingAnswer` derives what is still open from the transcript.
 ³ No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
+⁴ Probe by calling `sessionSpend(_:)`, which returns `nil` when the backend cannot price a conversation.
 
 ### Beyond messages
 
@@ -123,8 +132,15 @@ A transcript is more than text and tool calls, and the Kit models the rest as fi
 - **`QuestionRequest`** — structured multi-question, multi-option asks with free-text "Other", plus the transcript-derived answer state above.
 - **Subagents** — `subagents(for:)` and `subagentMessages(sessionID:agentID:)` fetch a spawned agent's own transcript, keyed back to the tool call that spawned it.
 - **`AgentCommand`** — what a turn will actually resolve on that machine: built-ins, user, project and plugin commands, with argument hints.
-- **`GoalStatus`** — a `/goal` in flight, whether it was met or failed, and what it cost.
+- **`SessionGoal`** — a `/goal` in flight, whether it was met or failed, and what it cost.
 - **Tool-call summaries** — `ToolCallSummary` turns raw tool JSON into the line a human wants to read ("Read `ReconnectScheduler.swift` · 148 lines"), so clients don't each write their own.
+- **`SessionSpendReport`** — the whole conversation priced turn by turn across the four token tiers, provenance stated, always an estimate; `UsageAnalyticsReport` widens it to the machine's month — daily buckets, models, projects, tools, what caching saved, records.
+- **Git, read** — `GitSnapshot` (branch, upstream drift, triageable status, recent commits, half-done merges), `GitPatch`, `GitCommitDetail` — via `GitObservingBackend`.
+- **`ServerAuth`** — a signed-out server as a state: `beginSignIn()` returns the status carrying the OAuth URL the machine printed, `submitSignInCode(_:)` hands over the code the browser produced and returns the signed-in status. The sign-in happens on the server; the person happens wherever they are.
+- **`ServerUpdate`** — what a server runs vs. what it could run, with the honesty baked into the type: the running binary's own stamp beside the checkout's, `restartRequired`, and a `RemoteCheck` that can say "the remote was never reached" instead of "up to date".
+- **`TurnInterruption`** — a turn the machine cut off, as data: the progress its transcript proves (tools, files, commands, partial answer), what queued behind it, whether it has been resumed.
+- **Live compaction** — `ConversationState.activeCompaction` carries a compaction as it runs (and keeps it running while a prompt queues behind it), so a client can show the seam being made, not just the seam.
+- **`listAllSessions(knownDirectories:)`** — the complete machine-wide listing, subagent sidecar sessions excluded (`AgentSession.isSubagent`), for the client that lists every chat on every server.
 
 ## Discovering servers on a tailnet
 
@@ -157,7 +173,7 @@ codeagent find <pattern>             # opencode
 codeagent providers                  # opencode
 ```
 
-Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `BRIDGE_HOST`, `BRIDGE_PASSWORD`.
+Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `BRIDGE_HOST`, `BRIDGE_PASSWORD`, with `CODEAGENT_PASSWORD` as the backend-agnostic fallback.
 
 ```bash
 export OPENCODE_SERVER_PASSWORD=secret
@@ -188,7 +204,7 @@ Credential storage is abstracted behind `SecretStore` (an `EnvironmentSecretStor
 
 ## Cross-platform notes
 
-- SSE streams over native `URLSession.bytes` with an incremental `SSEParser` on Apple platforms; on Linux (where `URLSession.bytes` does not exist) it falls back to [`mattt/EventSource`](https://github.com/mattt/EventSource) with the `AsyncHTTPClient` trait. REST uses `URLSession.data(for:)`, which exists everywhere.
+- SSE streams over native `URLSession.bytes` on Apple platforms and [`AsyncHTTPClient`](https://github.com/swift-server/async-http-client) on Linux (where `URLSession.bytes` does not exist), both feeding the package's own incremental `SSEParser`. REST uses `URLSession.data(for:)`, which exists everywhere.
 - No `UIKit`/`AVFoundation`/`Combine`/`Security`/`os` imports anywhere in `Sources/`. Logging goes through `swift-log`; an app bootstraps an OSLog backend, Linux uses stdout.
 - Every string the Kit puts in front of a person — error messages, tool-call summaries, status fallbacks — resolves through `AgentText` against `AgentCore`'s own `Localizable.xcstrings`, so a localized app doesn't get English leaking out of its engine.
 
@@ -209,7 +225,7 @@ swift package --disable-sandbox generate-documentation --target AgentCore
 
 ## Used by
 
-- [Tailscode](https://github.com/guitaripod/Tailscode) — native UIKit iOS client for remote coding agents over Tailscale, built on this Kit.
+- [Tailscode](https://github.com/guitaripod/Tailscode) — native clients for iOS (UIKit), Linux (GTK4) and macOS (AppKit), all built on this Kit.
 - [claude-bridge](https://github.com/guitaripod/claude-bridge) — the structured HTTP/SSE bridge for Claude Code that `ClaudeCodeKit` speaks to.
 
 ## License
