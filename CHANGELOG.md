@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.13.0
+
+A delta that knows which paragraph it belongs to, and a name for a turn the machine cut off.
+
+### Added
+- **`TurnInterruption`: the shape a turn killed by the machine reads in.** A backend process that
+  dies mid-turn leaves a conversation that looks finished — the prompt is there, no answer
+  follows, nothing says one was ever coming — and that is the one ending a client must never
+  render as silence. The value carries what the turn had already done before the power went
+  (tools, files touched, commands run, how far the answer had got), the prompts that queued behind
+  it and never ran, and whether the work has since been picked back up.
+
+### Fixed
+- **A delta is written into the block the message is being written into, not into one named by a
+  counter.** A claude-bridge delta carries no part id, so the client invented one from a
+  per-process counter that any stream gap resets: a fresh decoder meeting a transcript that
+  already held `["text", <tool>, "text-1"]` named `"text"`, which exists, and the answer was
+  written into the first paragraph, above the tool rows. `partID: nil` now means "the block this
+  message is being written into" and the reducer resolves it against the transcript it actually
+  holds, which is the only thing that knows.
+- **A refetch no longer forgets what arrived while it was out.** An actor is re-entrant across an
+  await, so every refresh kept applying events while suspended and then rebuilt them away — the
+  stale-turn nudge, the recovery fetch and the reconnect all did. Refreshes buffer and replay
+  through one path, a message the stream is writing keeps the version this device has, and where
+  the two accounts overlap without either containing the other the buffer is credited with the
+  longest opening the server's text already ends with.
+- **An opencode session has been naming its model all along, and nobody read it.** The session
+  record's own model is mapped through, so a row can say what answered it without a round trip.
+
 ## 0.12.0
 
 A server that says what it is running, and what it could not find out.
