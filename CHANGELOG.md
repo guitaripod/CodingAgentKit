@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.1
+
+An opencode chat that lives outside the server's launch project streams again.
+
+### Fixed
+- **Live events for sessions rooted outside every known project worktree.** A chat under
+  `$HOME` (or any directory the server did not list as a project) still accepted prompts — the
+  GPU worked — but the client's `/event` subscription used a nil directory, so the unscoped
+  stream stayed silent and the UI never moved. Directory lookup now falls back to
+  `GET /session/:id`, caches directories from `listAllSessions`, and a turn is marked running as
+  soon as `prompt_async` returns so a dead stream still trips the stale-transcript refresh.
+
 ## 0.14.0
 
 A turn that finished having said nothing is a fact the transcript can state.

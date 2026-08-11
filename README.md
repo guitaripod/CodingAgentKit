@@ -33,7 +33,7 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.14.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.14.1")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
