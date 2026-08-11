@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.13.1
+
+A compaction that is still running stays running while a message queues behind it.
 
 ### Fixed
 - **A prompt sent while a compaction runs no longer ends the compaction — on screen only.** A new
