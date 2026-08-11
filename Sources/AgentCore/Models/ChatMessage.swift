@@ -167,6 +167,9 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public var modelID: String?
     public var reasoningEffort: String?
     public var totalTokens: Int?
+    /// The backend's own word for how the turn ended, verbatim and never translated here — a
+    /// client that shows it shows what the server said.
+    public var finishReason: String?
 
     public init(
         id: String,
@@ -181,7 +184,8 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         providerID: String? = nil,
         modelID: String? = nil,
         reasoningEffort: String? = nil,
-        totalTokens: Int? = nil
+        totalTokens: Int? = nil,
+        finishReason: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -196,6 +200,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
         self.totalTokens = totalTokens
+        self.finishReason = finishReason
     }
 
     public var text: String {
@@ -204,4 +209,39 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
             return nil
         }.joined()
     }
+
+    /// Whether this message holds anything a reader would call an answer: words, a thought, a
+    /// tool call, a picture, a seam. Step markers are the turn's own bookkeeping and carry
+    /// nothing, so a message made only of them holds nothing at all.
+    public var carriesAnswer: Bool {
+        parts.contains { part in
+            switch part.kind {
+            case .text(let value), .reasoning(let value):
+                return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .tool, .file, .compaction:
+                return true
+            case .unknown:
+                return false
+            }
+        }
+    }
+
+    /// A turn that finished and said nothing — no words, no tool, and no error to explain it.
+    ///
+    /// It is a real outcome rather than a rendering accident: a provider that refuses a request
+    /// mid-stream can end a turn with a finish reason it has no word for, zero tokens and not one
+    /// content part, and everything downstream then has nothing to draw. Left unnamed the whole
+    /// turn is invisible — the sender watches a spinner disappear and the transcript sit exactly
+    /// as it was — so it is named here, once, for every client to say out loud.
+    ///
+    /// A turn somebody stopped by hand is excluded: that person already knows why it is empty.
+    public var isAnswerless: Bool {
+        guard role == .assistant, !isStreaming, completedAt != nil else { return false }
+        guard error == nil, !carriesAnswer else { return false }
+        return !Self.haltedByHand.contains(finishReason?.lowercased() ?? "")
+    }
+
+    private static let haltedByHand: Set<String> = [
+        "abort", "aborted", "cancel", "cancelled", "canceled", "interrupt", "interrupted", "stop-by-user",
+    ]
 }

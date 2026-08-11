@@ -78,7 +78,8 @@ enum OpenCodeMapping {
             providerID: message.providerID,
             modelID: message.modelID,
             reasoningEffort: message.variant,
-            totalTokens: totalTokens(message.tokens)
+            totalTokens: totalTokens(message.tokens),
+            finishReason: message.finish
         )
     }
 

@@ -122,6 +122,7 @@ public struct MessageReducer: Sendable {
         if let providerID = message.providerID { existing.providerID = providerID }
         if let modelID = message.modelID { existing.modelID = modelID }
         if let totalTokens = message.totalTokens { existing.totalTokens = totalTokens }
+        if let finishReason = message.finishReason { existing.finishReason = finishReason }
         if replaceParts { existing.parts = message.parts }
     }
 

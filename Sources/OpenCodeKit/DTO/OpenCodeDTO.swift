@@ -58,6 +58,11 @@ struct OCMessage: Decodable, Sendable {
     let modelID: String?
     let variant: String?
     let tokens: OCTokens?
+    /// The word the server puts on a finished turn — `stop`, `tool-calls`, `length`, `abort`, or
+    /// `unknown` when the model's stream ended without saying why. It is the only thing that
+    /// separates a turn that chose to say nothing from one whose provider dropped it, so it is
+    /// read even though nothing about a normal turn needs it.
+    let finish: String?
 }
 
 struct OCTokens: Decodable, Sendable {
