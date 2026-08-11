@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **A prompt sent while a compaction runs no longer ends the compaction — on screen only.** A new
+  turn cleared the standing ``CompactionActivity`` outright, so queueing a message behind a
+  minutes-long summarize took the "compacting" surface off screen while the machine was still
+  compacting, with no event coming until it finished. Only an attempt that is *over* — the failure
+  a reader has already been shown — stops being current state when a prompt goes out.
+
 ## 0.13.0
 
 A delta that knows which paragraph it belongs to, and a name for a turn the machine cut off.

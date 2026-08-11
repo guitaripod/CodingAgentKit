@@ -178,4 +178,34 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         #expect(landed, "a mid-turn transcript never reached the cache")
         _ = conversation
     }
+
+    @Test func aQueuedPromptLeavesARunningCompactionAlone() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [MockScriptStep(.compaction(CompactionActivity(startedAt: Date())))])
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        for await state in await conversation.states() where state.activeCompaction != nil { break }
+        try? await conversation.send("and while you are at it, run the tests")
+
+        #expect(
+            await conversation.state.activeCompaction != nil,
+            "queueing a prompt took the running compaction off the screen")
+    }
+
+    @Test func aNewPromptDropsTheLastCompactionsFailure() async {
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(
+                    .compaction(
+                        CompactionActivity(startedAt: Date(), failure: "Nothing to compact.")))
+            ])
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        for await state in await conversation.states() where state.compaction != nil { break }
+        try? await conversation.send("never mind, carry on")
+
+        #expect(await conversation.state.compaction == nil)
+    }
 }

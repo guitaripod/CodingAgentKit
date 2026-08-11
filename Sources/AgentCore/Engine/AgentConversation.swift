@@ -162,13 +162,24 @@ public actor AgentConversation {
         attachments: [PromptAttachment] = []
     ) async throws {
         lastFailure = nil
-        compaction = nil
+        forgetFinishedCompaction()
         try await backend.send(
             SendPrompt(
                 text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
                 attachments: attachments),
             to: sessionID)
         emit()
+    }
+
+    /// A new prompt ends the *last* compaction's standing, never a running one. Compacting is
+    /// minutes of work on the server and a prompt sent meanwhile is queued behind it rather than
+    /// replacing it, so dropping the activity wholesale took the "compacting" surface off screen
+    /// the moment someone queued a message — while the machine was still compacting, with nothing
+    /// left to say so and no event coming until it finished. Only an attempt that is over — a
+    /// failure the reader has already been shown — stops being current state here.
+    private func forgetFinishedCompaction() {
+        guard compaction?.isRunning != true else { return }
+        compaction = nil
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
@@ -187,7 +198,7 @@ public actor AgentConversation {
     /// this starts a fresh turn, so a previous failure stops being current state.
     public func run(_ command: AgentCommand, arguments: String? = nil) async throws {
         lastFailure = nil
-        compaction = nil
+        forgetFinishedCompaction()
         try await backend.runCommand(command, arguments: arguments, in: sessionID)
         emit()
     }
