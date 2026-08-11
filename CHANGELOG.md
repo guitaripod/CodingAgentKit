@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.14.0
+
+A turn that finished having said nothing is a fact the transcript can state.
+
+### Added
+- **`ChatMessage.isAnswerless`: the turn that produced nothing at all.** A provider that refuses a
+  request mid-stream can end a turn with no words, no tool call, no picture, no error and zero
+  tokens — the message carries only the turn's own step markers. Every transcript is built from
+  what a turn produced, so that outcome draws nothing anywhere: the status goes from running to
+  idle, no failure event is ever emitted, and the whole turn is invisible to a reader who watched
+  a spinner stop. The property names it from the message itself — assistant, completed, no error,
+  and not one part carrying content — and excludes a turn somebody stopped by hand, whose
+  emptiness they already understand. `carriesAnswer` is the same question about content alone.
+- **`ChatMessage.finishReason`: the backend's own word for how a turn ended**, verbatim and never
+  translated, so a client can quote it rather than guess at it. opencode reports `unknown` for a
+  stream that ended without saying why, which is exactly the ending an answerless turn has.
+
 ## 0.13.1
 
 A compaction that is still running stays running while a message queues behind it.
