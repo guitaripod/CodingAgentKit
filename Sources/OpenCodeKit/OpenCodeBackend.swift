@@ -31,7 +31,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     /// opencode scopes `/event` and `/question` by workspace directory, so
     /// per-session calls need the session's directory. Cached; refreshed from
-    /// the session list on miss.
+    /// the session list on miss — and from `GET /session/:id` when the session
+    /// lives outside every known project (home-directory chats, for example).
     private actor SessionDirectoryCache {
         private var directories: [String: String] = [:]
 
@@ -44,6 +45,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                     }
                 }
             }
+            if let cached = directories[sessionID] { return cached }
             if let projects = try? await client.projects() {
                 for project in projects {
                     guard let worktree = project.worktree, !worktree.isEmpty else { continue }
@@ -57,11 +59,18 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                     }
                 }
             }
+            if let cached = directories[sessionID] { return cached }
+            if let session = try? await client.session(sessionID),
+                let directory = session.directory, !directory.isEmpty
+            {
+                directories[sessionID] = directory
+                return directory
+            }
             return directories[sessionID]
         }
 
         func record(sessionID: String, directory: String?) {
-            guard let directory else { return }
+            guard let directory, !directory.isEmpty else { return }
             directories[sessionID] = directory
         }
     }
@@ -90,7 +99,10 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         scopes.formUnion((try? await client.projects())?.compactMap(\.worktree) ?? [])
         let owned = try await listSessions()
         var merged: [String: AgentSession] = [:]
-        for session in owned { merged[session.id] = session }
+        for session in owned {
+            merged[session.id] = session
+            await directories.record(sessionID: session.id, directory: session.directory)
+        }
         let ordered = Array(scopes)
         for start in stride(from: 0, to: ordered.count, by: 6) {
             let batch = ordered[start..<min(start + 6, ordered.count)]
@@ -105,6 +117,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 for await (_, sessions) in group {
                     for session in sessions where merged[session.id] == nil {
                         merged[session.id] = session
+                        await directories.record(
+                            sessionID: session.id, directory: session.directory)
                     }
                 }
             }
@@ -193,6 +207,9 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                // Prefer the session's own directory: an unscoped `/event` stream is silent for
+                // chats that live outside the server's launch project (e.g. directory=/Users/…),
+                // which is exactly what made Linux look frozen while the Mac GPU still worked.
                 let directory = await directories.directory(for: sessionID, client: client)
                 do {
                     for try await sse in client.eventStream(directory: directory) {

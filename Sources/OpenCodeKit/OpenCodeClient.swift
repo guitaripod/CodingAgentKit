@@ -85,6 +85,13 @@ public struct OpenCodeClient: Sendable {
         try await http.send(builder.request(.delete, "/session/\(sessionID)"))
     }
 
+    /// A single session by id. Used when the default project listing does not include it (e.g. a
+    /// chat rooted at `$HOME` while the server was launched from a repo) so the event stream can
+    /// still learn its workspace directory.
+    func session(_ sessionID: String) async throws -> OCSession {
+        try decode(await http.send(builder.request(.get, "/session/\(sessionID)")))
+    }
+
     func messages(sessionID: String) async throws -> [OCMessageEnvelope] {
         try decode(await http.send(builder.request(.get, "/session/\(sessionID)/message")))
     }

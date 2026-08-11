@@ -168,6 +168,10 @@ public actor AgentConversation {
                 text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
                 attachments: attachments),
             to: sessionID)
+        // prompt_async returns before the turn streams. Mark busy so a dead event stream still
+        // trips the stale-turn refresh (which re-reads the transcript) instead of sitting idle
+        // forever while the server works.
+        status = .running
         emit()
     }
 
