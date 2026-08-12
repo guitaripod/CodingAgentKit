@@ -18,6 +18,7 @@ public actor AgentConversation {
     private var loadedTranscript = false
     private var goal: SessionGoal?
     private var compaction: CompactionActivity?
+    private var interruption: TurnInterruption?
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -65,7 +66,8 @@ public actor AgentConversation {
             connection: connection,
             hasLoadedTranscript: loadedTranscript,
             goal: goal,
-            compaction: compaction
+            compaction: compaction,
+            interruption: interruption
         )
     }
 
@@ -292,6 +294,35 @@ public actor AgentConversation {
     private func fetchGoal() async -> SessionGoal? {
         guard backend.capabilities.supportsGoals else { return nil }
         return try? await backend.goal(for: sessionID)
+    }
+
+    /// Whether this server is holding a turn its machine cut off. Asked on every refetch, which is
+    /// also the first thing a client does on opening a conversation — the interruption is noticed
+    /// by the server while it is starting back up, so nobody is watching when it happens.
+    ///
+    /// A server that cannot answer throws, and throwing must not clear a card that is already up:
+    /// only an answer of "nothing was interrupted" does that.
+    private func fetchInterruption() async -> InterruptionReading {
+        do {
+            return .answered(try await backend.interruption(for: sessionID))
+        } catch {
+            return .cannotSay
+        }
+    }
+
+    /// Picks the interrupted turn back up. The card comes down on the server's word, not on the
+    /// press: a resume that the server refused leaves the offer exactly where it was.
+    public func resumeInterruptedTurn() async throws {
+        try await backend.resumeInterruption(sessionID: sessionID)
+        interruption = nil
+        emit()
+    }
+
+    /// Lets the interrupted turn go. The record goes; nothing in the transcript changes.
+    public func dismissInterruptedTurn() async throws {
+        try await backend.dismissInterruption(sessionID: sessionID)
+        interruption = nil
+        emit()
     }
 
     private func fetchQuestions() async -> [QuestionRequest] {
@@ -568,6 +599,8 @@ public actor AgentConversation {
             goal = value
         case .compaction(let value):
             compaction = value
+        case .interruption(let value):
+            interruption = value
         case .permission(let request):
             guard !resolvedPermissionIDs.contains(request.id) else { break }
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
@@ -731,6 +764,7 @@ public actor AgentConversation {
             async let goalFetch = fetchGoal()
             let messages = try await backend.messages(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
+            let cutOff = await fetchInterruption()
             guard gen == generation else { return nil }
             guard !reachedTerminal else {
                 drainBufferedEvents(generation: gen)
@@ -743,6 +777,7 @@ public actor AgentConversation {
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }
+            if case .answered(let cut) = cutOff { interruption = cut }
             lastFailure = nil
             drainBufferedEvents(generation: gen, alreadyFolded: folded)
             persist()

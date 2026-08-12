@@ -654,6 +654,10 @@ public enum BackendEvent: Sendable {
     /// A compaction started, finished (`nil`), or failed. Distinct from ``status`` because
     /// compaction runs *inside* a turn: the backend is still running, just not answering.
     case compaction(CompactionActivity?)
+    /// A turn the server's machine cut off, or `nil` once one has been picked back up or let go.
+    /// It arrives on the stream as well as on the fetch, because the server may notice it while a
+    /// client is already watching — a bridge that restarts reconnects the stream it just dropped.
+    case interruption(TurnInterruption?)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,
@@ -783,6 +787,15 @@ public protocol CodingAgentBackend: Sendable {
     var resolvesCommandsFromPromptText: Bool { get }
     /// The session's standing goal, if the backend tracks one.
     func goal(for sessionID: String) async throws -> SessionGoal?
+    /// A turn this server's own machine cut off, if it knows of one. `nil` means nothing was
+    /// interrupted; a backend that cannot tell throws ``AgentError/unsupported(_:)``, which is a
+    /// different answer and must not be rendered as "nothing happened".
+    func interruption(for sessionID: String) async throws -> TurnInterruption?
+    /// Picks the interrupted turn back up on the server that holds it.
+    func resumeInterruption(sessionID: String) async throws
+    /// Lets the interrupted turn go without continuing it. The record goes; the transcript keeps
+    /// whatever actually happened.
+    func dismissInterruption(sessionID: String) async throws
     /// Subagents spawned within a session (Claude Code sidecar transcripts). Empty when unsupported.
     func subagents(for sessionID: String) async throws -> [SubagentSummary]
     /// A subagent's full transcript, rendered in the same message model as the session itself.
@@ -873,6 +886,18 @@ extension CodingAgentBackend {
     public var resolvesCommandsFromPromptText: Bool { true }
 
     public func goal(for sessionID: String) async throws -> SessionGoal? { nil }
+
+    public func interruption(for sessionID: String) async throws -> TurnInterruption? {
+        throw AgentError.unsupported("interruption")
+    }
+
+    public func resumeInterruption(sessionID: String) async throws {
+        throw AgentError.unsupported("interruption")
+    }
+
+    public func dismissInterruption(sessionID: String) async throws {
+        throw AgentError.unsupported("interruption")
+    }
 
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] { [] }
 

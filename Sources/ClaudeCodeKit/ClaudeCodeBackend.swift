@@ -163,6 +163,26 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).goal?.goal
     }
 
+    /// A bridge too old for the route answers 404, which reaches here as an error rather than as
+    /// `nil` — and that is the point: it means *this server cannot say*, not that nothing was
+    /// interrupted, so the caller leaves the question unanswered instead of drawing a conclusion.
+    public func interruption(for sessionID: String) async throws -> TurnInterruption? {
+        let data = try await http.send(
+            builder.request(.get, "/sessions/\(sessionID)/interruption"))
+        return try BridgeCoding.decoder.decode(BRInterruptionEnvelope.self, from: data)
+            .interruption?.interruption
+    }
+
+    public func resumeInterruption(sessionID: String) async throws {
+        _ = try await http.send(
+            builder.request(.post, "/sessions/\(sessionID)/interruption/resume"))
+    }
+
+    public func dismissInterruption(sessionID: String) async throws {
+        _ = try await http.send(
+            builder.request(.post, "/sessions/\(sessionID)/interruption/dismiss"))
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         let attachments = prompt.attachments.compactMap { attachment -> BRSendAttachment? in
             guard let data = attachment.data, !data.isEmpty else { return nil }
@@ -457,6 +477,43 @@ struct BRSession: Decodable {
     }
 }
 
+/// The route answers `{"interruption": …}` with the key present and null when nothing was cut off,
+/// so that a server which *can* answer is distinguishable from one that cannot.
+struct BRInterruptionEnvelope: Decodable {
+    let interruption: BRInterruption?
+}
+
+struct BRInterruption: Decodable {
+    let turnID: String
+    let prompt: String
+    let startedAt: Date
+    let detectedAt: Date
+    let progress: BRInterruptionProgress?
+    let queued: [String]?
+    let resumedAt: Date?
+
+    var interruption: TurnInterruption {
+        TurnInterruption(
+            turnID: turnID, prompt: prompt, startedAt: startedAt, detectedAt: detectedAt,
+            progress: progress?.progress ?? TurnInterruption.Progress(),
+            queued: queued ?? [], resumedAt: resumedAt)
+    }
+}
+
+struct BRInterruptionProgress: Decodable {
+    let toolCount: Int?
+    let lastTool: String?
+    let filesTouched: [String]?
+    let commands: [String]?
+    let partialAnswer: String?
+
+    var progress: TurnInterruption.Progress {
+        TurnInterruption.Progress(
+            toolCount: toolCount ?? 0, lastTool: lastTool, filesTouched: filesTouched ?? [],
+            commands: commands ?? [], partialAnswer: partialAnswer)
+    }
+}
+
 struct BRGoal: Decodable {
     let condition: String
     let met: Bool?
@@ -740,6 +797,12 @@ public struct BridgeEventDecoder {
                 let goal = try? BridgeCoding.decoder.decode(BRGoal.self, from: goalData)
             else { return .goal(nil) }
             return .goal(goal.goal)
+        case "interrupted":
+            guard let raw = object["interruption"] else { return .interruption(nil) }
+            guard let data = try? JSONSerialization.data(withJSONObject: raw),
+                let cutOff = try? BridgeCoding.decoder.decode(BRInterruption.self, from: data)
+            else { return .interruption(nil) }
+            return .interruption(cutOff.interruption)
         case "error":
             return .failure(BackendFailure(message: object["error"] as? String ?? "error"))
         default:

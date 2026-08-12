@@ -1,3 +1,12 @@
+/// What a server said when asked whether it is holding a turn its machine cut off. A server that
+/// cannot answer is not a server that said no: only ``answered`` may change what a client shows,
+/// so an unsupported route leaves a standing card alone rather than clearing it into a false
+/// all-clear.
+public enum InterruptionReading: Sendable, Hashable {
+    case answered(TurnInterruption?)
+    case cannotSay
+}
+
 public enum ConnectionPhase: String, Sendable, Hashable, Codable {
     case connecting
     case live
@@ -22,6 +31,11 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// A compaction underway, or the one that just failed. `nil` whenever nothing is being
     /// summarized — which is almost always.
     public var compaction: CompactionActivity?
+    /// A turn the server's own machine cut off and has not been told what to do about. `nil` when
+    /// nothing was interrupted, when the work was picked back up or let go, and on any backend
+    /// that cannot tell the difference — a client must never render its absence as proof that a
+    /// turn finished.
+    public var interruption: TurnInterruption?
 
     public init(
         messages: [ChatMessage] = [],
@@ -32,7 +46,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         connection: ConnectionPhase = .connecting,
         hasLoadedTranscript: Bool = false,
         goal: SessionGoal? = nil,
-        compaction: CompactionActivity? = nil
+        compaction: CompactionActivity? = nil,
+        interruption: TurnInterruption? = nil
     ) {
         self.messages = messages
         self.status = status
@@ -43,6 +58,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.hasLoadedTranscript = hasLoadedTranscript
         self.goal = goal
         self.compaction = compaction
+        self.interruption = interruption
     }
 
     public var isBusy: Bool { status == .running }
