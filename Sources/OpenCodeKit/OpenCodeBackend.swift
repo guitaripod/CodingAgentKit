@@ -250,22 +250,32 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// dispatch failure has no reply channel, so it is logged rather than lost silently.
     public var resolvesCommandsFromPromptText: Bool { false }
 
-    public func runCommand(
-        _ command: AgentCommand, arguments: String?, in sessionID: String
-    ) async throws {
+    public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
         let directory = await directories.directory(for: sessionID, client: client)
-        let request = OCCommandRequest(
-            command: command.name, arguments: arguments, model: nil, agent: nil)
+        let request = Self.commandRequest(for: run)
         let client = self.client
+        let name = run.command.name
         Task.detached {
             do {
                 try await client.runCommand(
                     sessionID: sessionID, directory: directory, request: request)
             } catch {
                 AgentLog.logger("opencode").error(
-                    "command /\(command.name) failed: \(error)")
+                    "command /\(name) failed: \(error)")
             }
         }
+    }
+
+    /// The run as opencode's command route wants it. The model is one `providerID/modelID` string
+    /// rather than the prompt route's object, the effort travels under opencode's own name for it
+    /// (`variant`), and `arguments` is always written — the key is required, and a command with
+    /// nothing after it is an empty argument, not an absent one. A command that pins its own model
+    /// or agent in its frontmatter still wins on the server, which is right: that pin is the
+    /// command author's answer to what may run it, and this asks rather than orders.
+    static func commandRequest(for run: CommandRun) -> OCCommandRequest {
+        OCCommandRequest(
+            command: run.command.name, arguments: run.arguments ?? "",
+            model: run.model?.rawValue, agent: run.agent, variant: run.reasoningEffort)
     }
 
     private static func source(for command: OCCommand) -> AgentCommand.Source {

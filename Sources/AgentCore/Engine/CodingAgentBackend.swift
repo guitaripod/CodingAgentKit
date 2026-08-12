@@ -786,8 +786,9 @@ public protocol CodingAgentBackend: Sendable {
     func availableCommands(directory: String?) async throws -> [AgentCommand]
     /// Runs a slash command in a session. Backends with a dedicated command API use it; the rest
     /// fall back to sending `/name arguments` as prompt text, which is how a CLI-backed agent
-    /// resolves commands anyway.
-    func runCommand(_ command: AgentCommand, arguments: String?, in sessionID: String) async throws
+    /// resolves commands anyway. Either road carries the run's model, effort and agent: a command
+    /// is a turn, and a turn the client picked a model for must reach the server carrying it.
+    func runCommand(_ run: CommandRun, in sessionID: String) async throws
     /// Whether running a command is indistinguishable from sending its text as a prompt. When true
     /// a client can route commands through its ordinary send path — echoing the typed command into
     /// the transcript and showing the turn start — instead of firing a side-channel request whose
@@ -885,10 +886,8 @@ extension CodingAgentBackend {
 
     /// Prompt text is the universal fallback: an agent CLI resolves `/name args` from a plain
     /// prompt, so a backend only needs to override this if it has a first-class command endpoint.
-    public func runCommand(
-        _ command: AgentCommand, arguments: String?, in sessionID: String
-    ) async throws {
-        try await send(SendPrompt(text: command.invocation(arguments: arguments)), to: sessionID)
+    public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
+        try await send(run.prompt, to: sessionID)
     }
 
     public var resolvesCommandsFromPromptText: Bool { true }

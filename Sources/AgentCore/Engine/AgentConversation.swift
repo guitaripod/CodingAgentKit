@@ -203,11 +203,25 @@ public actor AgentConversation {
     }
 
     /// Runs a server-side slash command. Like ``send(_:model:reasoningEffort:agent:attachments:)``
-    /// this starts a fresh turn, so a previous failure stops being current state.
-    public func run(_ command: AgentCommand, arguments: String? = nil) async throws {
+    /// this starts a fresh turn, so a previous failure stops being current state and the run
+    /// carries the same model, effort and agent a typed message would. Unlike a send it does not
+    /// mark the conversation busy: a backend with a command endpoint dispatches without waiting
+    /// for the server to accept it, so a turn is only claimed once the server's own stream says
+    /// one started — which it does within a frame of the dispatch landing.
+    public func run(
+        _ command: AgentCommand,
+        arguments: String? = nil,
+        model: ModelSelection? = nil,
+        reasoningEffort: String? = nil,
+        agent: String? = nil
+    ) async throws {
         lastFailure = nil
         forgetFinishedCompaction()
-        try await backend.runCommand(command, arguments: arguments, in: sessionID)
+        try await backend.runCommand(
+            CommandRun(
+                command: command, arguments: arguments, model: model,
+                reasoningEffort: reasoningEffort, agent: agent),
+            in: sessionID)
         emit()
     }
 
@@ -215,24 +229,33 @@ public actor AgentConversation {
     /// `instructions` steers what the summary must keep. The transcript is untouched — only what
     /// the agent carries forward changes — and the backend reports the boundary it left behind as
     /// a ``Compaction`` part in the transcript.
-    public func compact(instructions: String? = nil) async throws {
+    public func compact(
+        instructions: String? = nil, model: ModelSelection? = nil, reasoningEffort: String? = nil
+    ) async throws {
         let trimmed = instructions?.trimmingCharacters(in: .whitespacesAndNewlines)
         try await run(
             AgentCommand(name: "compact", details: "", source: .builtin),
-            arguments: (trimmed?.isEmpty ?? true) ? nil : trimmed)
+            arguments: (trimmed?.isEmpty ?? true) ? nil : trimmed, model: model,
+            reasoningEffort: reasoningEffort)
     }
 
     /// Sets the standing goal. The agent acknowledges it and starts working immediately, so this
     /// is a turn like any other.
-    public func setGoal(_ condition: String) async throws {
+    public func setGoal(
+        _ condition: String, model: ModelSelection? = nil, reasoningEffort: String? = nil
+    ) async throws {
         try await run(
-            AgentCommand(name: "goal", details: "", source: .builtin), arguments: condition)
+            AgentCommand(name: "goal", details: "", source: .builtin), arguments: condition,
+            model: model, reasoningEffort: reasoningEffort)
     }
 
     /// Abandons the standing goal early. A goal that has been met clears itself.
-    public func clearGoal() async throws {
+    public func clearGoal(
+        model: ModelSelection? = nil, reasoningEffort: String? = nil
+    ) async throws {
         try await run(
-            AgentCommand(name: "goal", details: "", source: .builtin), arguments: "clear")
+            AgentCommand(name: "goal", details: "", source: .builtin), arguments: "clear",
+            model: model, reasoningEffort: reasoningEffort)
     }
 
     public func answer(_ question: QuestionRequest, answers: [[String]]) async throws {

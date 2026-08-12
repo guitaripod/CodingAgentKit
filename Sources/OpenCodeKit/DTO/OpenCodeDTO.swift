@@ -217,11 +217,15 @@ struct OCCommand: Decodable, Sendable {
     let hints: [String]?
 }
 
+/// The command route is not the prompt route: `arguments` is required (omitting the key is a 400,
+/// not an empty run) and the model is one `providerID/modelID` string rather than the prompt
+/// route's object. `variant` carries the reasoning effort under the name opencode gives it.
 struct OCCommandRequest: Encodable, Sendable {
     let command: String
-    let arguments: String?
-    let model: OCModelInput?
+    let arguments: String
+    let model: String?
     let agent: String?
+    let variant: String?
 }
 
 struct OCQuestionRequestDTO: Decodable {

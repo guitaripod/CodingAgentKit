@@ -34,3 +34,43 @@ import Testing
         #expect(!mapped[2].takesArguments)
     }
 }
+
+/// The command route is not the prompt route, and the differences are the kind a compiler cannot
+/// catch: opencode requires `arguments` and takes the model as one `providerID/modelID` string,
+/// where the prompt route takes an object. Both were got wrong here — the model was hardcoded nil
+/// and could not have been sent as an object anyway — so the shape is asserted rather than assumed.
+@Suite struct OpenCodeCommandRequestTests {
+    /// Read back as the server reads it — a substring assertion would be checking Foundation's
+    /// slash escaping rather than the shape opencode validates.
+    private func body(_ run: CommandRun) throws -> [String: String] {
+        let data = try JSONEncoder().encode(OpenCodeBackend.commandRequest(for: run))
+        return try JSONDecoder().decode([String: String].self, from: data)
+    }
+
+    private let command = AgentCommand(name: "hinta-best", details: "", source: .custom)
+
+    @Test func theModelIsOneSlashSeparatedString() throws {
+        let sent = try body(
+            CommandRun(
+                command: command, arguments: "rtx 6000",
+                model: ModelSelection(
+                    providerID: "ollama", modelID: "nemotron-3.5-lightning:30b-mlx"),
+                reasoningEffort: "high", agent: "build"))
+
+        #expect(sent["command"] == "hinta-best")
+        #expect(sent["model"] == "ollama/nemotron-3.5-lightning:30b-mlx")
+        #expect(sent["variant"] == "high")
+        #expect(sent["agent"] == "build")
+        #expect(sent["arguments"] == "rtx 6000")
+    }
+
+    /// `arguments` is a required key: a command with nothing after it is an empty argument, not an
+    /// absent one, and omitting it is a 400 that only ever reached a log line. Everything else is
+    /// omitted rather than sent null, so the server's own defaults still decide.
+    @Test func argumentsAreAlwaysWrittenAndNothingElseIsInvented() throws {
+        let sent = try body(CommandRun(command: command))
+
+        #expect(sent["arguments"] == "")
+        #expect(sent.keys.sorted() == ["arguments", "command"])
+    }
+}

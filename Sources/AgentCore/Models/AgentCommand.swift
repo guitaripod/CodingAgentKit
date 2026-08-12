@@ -69,6 +69,38 @@ public struct AgentCommand: Sendable, Hashable, Codable, Identifiable {
     }
 }
 
+/// A slash command as a turn: what to run, and the same three facts a typed message carries —
+/// which model runs it, at what reasoning effort, as which agent. A command is a turn like any
+/// other, so a pick that rides a send has to ride this too; a run that carries nothing is a turn
+/// the server answers on whatever it defaults to, which is how a chat ends up wearing the name of
+/// a model that never answered it.
+public struct CommandRun: Sendable, Hashable, Codable {
+    public var command: AgentCommand
+    public var arguments: String?
+    public var model: ModelSelection?
+    public var reasoningEffort: String?
+    public var agent: String?
+
+    /// The run as prompt text, which is exactly what a CLI-backed agent resolves a command from —
+    /// so the fallback path carries the pick rather than dropping it at the boundary.
+    public var prompt: SendPrompt {
+        SendPrompt(
+            text: command.invocation(arguments: arguments), model: model,
+            reasoningEffort: reasoningEffort, agent: agent)
+    }
+
+    public init(
+        command: AgentCommand, arguments: String? = nil, model: ModelSelection? = nil,
+        reasoningEffort: String? = nil, agent: String? = nil
+    ) {
+        self.command = command
+        self.arguments = arguments
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.agent = agent
+    }
+}
+
 /// A standing objective the agent keeps working toward, checked before it is allowed to stop
 /// (Claude Code's `/goal`). Survives the server respawning the agent process, so it outlives any
 /// single turn — the one piece of agent state a phone can set and then walk away from.
