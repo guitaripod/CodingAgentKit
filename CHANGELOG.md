@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.15.0
+
+Being connected is something the socket says, and a turn the machine cut off is a state a client can read.
+
+### Added
+- **`TurnInterruption` reaches the client.** `ConversationState.interruption` carries a turn the
+  server's own machine cut off — fetched on every refetch and delivered live as a `BackendEvent`,
+  so a client that was not connected when the server noticed still finds out.
+  `ClaudeCodeBackend` reads `/sessions/:id/interruption` and posts resume/dismiss;
+  `AgentConversation.resumeInterruptedTurn()` / `dismissInterruptedTurn()` drop the record only on
+  the server's answer. `InterruptionReading` keeps "nothing was interrupted" and "this server
+  cannot say" apart, and only the former may clear a standing card.
+- **`BackendEvent.attached`: the transport states that it is open.** Emitted on the bridge's hello,
+  on every heartbeat, and to a session subscribing onto a socket somebody else opened.
+- **`ConversationState.connectionChangedAt`**, so a surface can say how long a phase has been true.
+
+### Fixed
+- **A healthy idle conversation reported "connecting" forever.** `markLive` was reachable only
+  from inside the event loop on a non-buffered event, and the bridge's hello and heartbeat frames
+  were swallowed by `BridgeStream.handle` before any session subscriber saw them — so a chat
+  nobody was talking in heard nothing at all off a perfectly good socket. A chat opened during its
+  own first transcript fetch had the same fate for a different reason: the buffer's `continue` sat
+  above the `markLive` it needed. Anything off the transport now marks live before the buffer
+  decides what to do with it, and a transcript fetch that succeeds upgrades `connecting` to
+  `live` — only ever out of `connecting`, so a dropped stream keeps saying `reconnecting`.
+
 ## 0.14.1
 
 An opencode chat that lives outside the server's launch project streams again.
