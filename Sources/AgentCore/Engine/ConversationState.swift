@@ -1,3 +1,5 @@
+import Foundation
+
 /// What a server said when asked whether it is holding a turn its machine cut off. A server that
 /// cannot answer is not a server that said no: only ``answered`` may change what a client shows,
 /// so an unsupported route leaves a standing card alone rather than clearing it into a false
@@ -36,6 +38,10 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// that cannot tell the difference — a client must never render its absence as proof that a
     /// turn finished.
     public var interruption: TurnInterruption?
+    /// When the connection last became what it is. A phase with no clock on it cannot be told
+    /// apart from a phase that is stuck, so every surface that reports one reports how long it has
+    /// been true.
+    public var connectionChangedAt: Date = .distantPast
 
     public init(
         messages: [ChatMessage] = [],
@@ -47,7 +53,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         hasLoadedTranscript: Bool = false,
         goal: SessionGoal? = nil,
         compaction: CompactionActivity? = nil,
-        interruption: TurnInterruption? = nil
+        interruption: TurnInterruption? = nil,
+        connectionChangedAt: Date = .distantPast
     ) {
         self.messages = messages
         self.status = status
@@ -59,6 +66,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.goal = goal
         self.compaction = compaction
         self.interruption = interruption
+        self.connectionChangedAt = connectionChangedAt
     }
 
     public var isBusy: Bool { status == .running }

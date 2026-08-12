@@ -15,6 +15,7 @@ public actor AgentConversation {
     private var resolvedQuestionIDs: Set<String> = []
     private var lastFailure: BackendFailure?
     private var connection: ConnectionPhase = .connecting
+    private var connectionChangedAt = Date()
     private var loadedTranscript = false
     private var goal: SessionGoal?
     private var compaction: CompactionActivity?
@@ -67,7 +68,8 @@ public actor AgentConversation {
             hasLoadedTranscript: loadedTranscript,
             goal: goal,
             compaction: compaction,
-            interruption: interruption
+            interruption: interruption,
+            connectionChangedAt: connectionChangedAt
         )
     }
 
@@ -362,12 +364,17 @@ public actor AgentConversation {
             do {
                 for try await event in backend.events(for: sessionID) {
                     guard gen == generation else { return }
+                    // Anything arriving off the transport proves the transport, whether or not
+                    // there is a transcript to fold it into yet. Marking live only on the far
+                    // side of the buffer meant a chat opened during its own first fetch stayed
+                    // "connecting" until something was said in it.
+                    attempt = 0
+                    markLive(generation: gen)
+                    if case .attached = event { continue }
                     if refreshInFlight {
                         bufferedEvents.append(event)
                         continue
                     }
-                    attempt = 0
-                    markLive(generation: gen)
                     apply(event, generation: gen)
                 }
             } catch {
@@ -543,6 +550,19 @@ public actor AgentConversation {
         setConnection(.live, generation: gen)
     }
 
+    /// The server answered a request, which is proof it is reachable even though it may not have
+    /// said anything on the socket yet.
+    ///
+    /// Only ever an upgrade out of ``ConnectionPhase/connecting``: a stream that has dropped is
+    /// genuinely reconnecting and must keep saying so, and nothing here may talk a terminal
+    /// failure back into looking healthy. What it fixes is the opening moment — a transcript that
+    /// loaded, priced and drew its branch off a server that is plainly answering, under a label
+    /// still claiming to be dialling it.
+    private func markAnswered(generation gen: Int) {
+        guard connection == .connecting else { return }
+        setConnection(.live, generation: gen)
+    }
+
     /// Builds a failure from a stream/refresh error, classifying its retryability so the reconnect
     /// loop can stop hammering a permanently-failing endpoint. Non-``AgentError`` errors default to
     /// retryable, preserving backoff for unrecognised transport faults.
@@ -601,6 +621,8 @@ public actor AgentConversation {
             compaction = value
         case .interruption(let value):
             interruption = value
+        case .attached:
+            markLive(generation: gen)
         case .permission(let request):
             guard !resolvedPermissionIDs.contains(request.id) else { break }
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
@@ -779,6 +801,7 @@ public actor AgentConversation {
             if backend.capabilities.supportsGoals { self.goal = goal }
             if case .answered(let cut) = cutOff { interruption = cut }
             lastFailure = nil
+            markAnswered(generation: gen)
             drainBufferedEvents(generation: gen, alreadyFolded: folded)
             persist()
             emit()
@@ -814,7 +837,9 @@ public actor AgentConversation {
 
     private func setConnection(_ phase: ConnectionPhase, generation gen: Int) {
         guard gen == generation else { return }
+        guard phase != connection else { return }
         connection = phase
+        connectionChangedAt = Date()
         emit()
     }
 

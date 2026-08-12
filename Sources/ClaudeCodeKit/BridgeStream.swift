@@ -86,6 +86,11 @@ actor BridgeStream {
         continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation
     ) {
         sessionSubs[sessionID, default: [:]][id] = continuation
+        // A conversation opened onto a socket that is already up hears no hello of its own — the
+        // hello was somebody else's. Without this it would wait for the next heartbeat to learn
+        // it is connected, which on a quiet server is the difference between "ready" and
+        // "connecting" for a minute.
+        if cursor != nil { continuation.yield(.attached) }
         ensureRunning()
     }
 
@@ -206,6 +211,7 @@ actor BridgeStream {
             let head = (object["seq"] as? NSNumber)?.uint64Value ?? 0
             let reset = object["reset"] as? Bool ?? false
             if let cursor, cursor.epoch == epoch, !reset {
+                notifyAttached()
                 break
             }
             let hadCursor = cursor != nil
@@ -213,9 +219,13 @@ actor BridgeStream {
             if hadCursor || reset {
                 failSessionSubs(AgentError.connection("stream replay window lost"))
                 invalidateListSubs()
+                break
             }
+            notifyAttached()
         case "heartbeat":
-            break
+            // The socket proving itself is the only thing an idle conversation ever hears. It is
+            // what tells a client it is connected rather than still connecting.
+            notifyAttached()
         default:
             if let id = sse.id {
                 let parts = id.split(separator: ":", maxSplits: 1)
@@ -268,6 +278,16 @@ actor BridgeStream {
             for continuation in subs.values { continuation.yield(summaries) }
         default:
             break
+        }
+    }
+
+    /// Tells every session watching this server that the socket is open and current. Cheap and
+    /// idempotent by design — a consumer that is already live ignores it — because the honest
+    /// signal is "the transport proved itself just now", and that is worth repeating on every
+    /// heartbeat rather than being inferred from the last thing anyone said.
+    private func notifyAttached() {
+        for subs in sessionSubs.values {
+            for continuation in subs.values { continuation.yield(.attached) }
         }
     }
 

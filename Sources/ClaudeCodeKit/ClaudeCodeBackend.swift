@@ -262,7 +262,11 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         var decoder = BridgeEventDecoder()
         do {
+            // Every frame off this socket, whatever it decodes to, is the socket proving itself —
+            // an old bridge sends no hello, and an idle conversation would otherwise never say it
+            // is connected.
             for try await sse in stream {
+                continuation.yield(.attached)
                 if let event = decoder.decode(sse) { continuation.yield(event) }
             }
             continuation.finish()

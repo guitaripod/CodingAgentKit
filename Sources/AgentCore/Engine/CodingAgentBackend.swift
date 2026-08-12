@@ -649,6 +649,14 @@ public enum BackendEvent: Sendable {
     case partRemoved(messageID: String, partID: String)
     case messageRemoved(messageID: String)
     case status(BackendStatus)
+    /// The event transport for this session is open and current.
+    ///
+    /// Without it a client can only infer that it is connected from traffic, and an idle
+    /// conversation produces none — so a perfectly healthy chat that nobody is talking in reads as
+    /// "connecting" forever. A backend that keeps a socket open announces it here when the socket
+    /// opens and whenever it proves itself (a heartbeat), which is what makes "live" a fact rather
+    /// than a guess about how recently something happened to be said.
+    case attached
     /// The session's standing goal changed; `nil` once nothing is being pursued.
     case goal(SessionGoal?)
     /// A compaction started, finished (`nil`), or failed. Distinct from ``status`` because
