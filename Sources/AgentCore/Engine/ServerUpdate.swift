@@ -12,9 +12,67 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         case idle
         case running
         case building
+        /// Built, and holding until the machine has nothing running that a restart would destroy.
+        /// The wait is a state rather than a silence, because it can outlast the build.
+        case waiting
         case restarting
         case succeeded
         case failed
+    }
+
+    /// What stands between a machine and a one-press update, in a shape that can be listed.
+    ///
+    /// The sentence alone was never actionable — "the checkout has uncommitted changes" does not
+    /// say which — and a raw `git status` is thousands of lines that three clients would persist.
+    /// So the kind and the sentence are what a person acknowledges, and the items are what they act
+    /// on.
+    public struct Obstacle: Sendable, Hashable, Codable {
+        public var kind: String
+        public var summary: String
+        public var items: [String]
+        public var more: Int
+
+        public init(kind: String, summary: String, items: [String] = [], more: Int = 0) {
+            self.kind = kind
+            self.summary = summary
+            self.items = items
+            self.more = more
+        }
+    }
+
+    /// Whether anything a restart would destroy is happening on that machine right now.
+    public struct Busy: Sendable, Hashable, Codable {
+        public var quiet: Bool
+        public var turns: Int
+        public var reason: String?
+
+        public init(quiet: Bool, turns: Int = 0, reason: String? = nil) {
+            self.quiet = quiet
+            self.turns = turns
+            self.reason = reason
+        }
+    }
+
+    /// What the machine does about updates when nobody is asking. The setting belongs to the
+    /// machine, so every client reads back the same answer rather than its own last request.
+    public struct Automation: Sendable, Hashable, Codable {
+        public var enabled: Bool
+        public var lastTakenAt: Date?
+        public var lastTarget: String?
+        public var nextLookAt: Date?
+        /// Why nothing is being taken right now, when something otherwise could be.
+        public var holdingOff: String?
+
+        public init(
+            enabled: Bool, lastTakenAt: Date? = nil, lastTarget: String? = nil,
+            nextLookAt: Date? = nil, holdingOff: String? = nil
+        ) {
+            self.enabled = enabled
+            self.lastTakenAt = lastTakenAt
+            self.lastTarget = lastTarget
+            self.nextLookAt = nextLookAt
+            self.holdingOff = holdingOff
+        }
     }
 
     /// What the server actually consulted about a newer build, said outright rather than inferred.
@@ -79,6 +137,18 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
     public var finishedAt: Date?
     /// Tail of the update's own log, for when it fails.
     public var log: String?
+    public var obstacle: Obstacle?
+    public var busy: Busy?
+    /// When the machine started waiting for itself to go quiet before loading a build it has
+    /// already made.
+    public var waitingSince: Date?
+    /// Whether one press can put that process onto a build already sitting on its disk. False
+    /// without a supervisor, because a bridge that exits with nothing to start it again is a
+    /// machine no client can reach.
+    public var canRestart: Bool
+    public var automation: Automation?
+    /// Which Swift would do the building there, so a module-format failure is readable.
+    public var toolchain: String?
 
     public init(
         version: String, running: String? = nil, restartRequired: Bool = false,
@@ -87,8 +157,16 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         latestCommit: String? = nil, updateAvailable: Bool = false, behind: Int? = nil,
         changes: [String] = [], canUpdate: Bool = false, reason: String? = nil,
         manager: String = "manual", source: String? = nil, phase: Phase = .idle,
-        startedAt: Date? = nil, finishedAt: Date? = nil, log: String? = nil
+        startedAt: Date? = nil, finishedAt: Date? = nil, log: String? = nil,
+        obstacle: Obstacle? = nil, busy: Busy? = nil, waitingSince: Date? = nil,
+        canRestart: Bool = false, automation: Automation? = nil, toolchain: String? = nil
     ) {
+        self.obstacle = obstacle
+        self.busy = busy
+        self.waitingSince = waitingSince
+        self.canRestart = canRestart
+        self.automation = automation
+        self.toolchain = toolchain
         self.version = version
         self.running = running
         self.restartRequired = restartRequired
@@ -114,7 +192,7 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
     /// True while the server is working through an update it accepted — including the stretch where
     /// it is restarting and answering nothing at all.
     public var isRunning: Bool {
-        phase == .running || phase == .building || phase == .restarting
+        phase == .running || phase == .building || phase == .waiting || phase == .restarting
     }
 
     public init(from decoder: any Decoder) throws {
@@ -143,6 +221,12 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
         finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
         log = try container.decodeIfPresent(String.self, forKey: .log)
+        obstacle = try container.decodeIfPresent(Obstacle.self, forKey: .obstacle)
+        busy = try container.decodeIfPresent(Busy.self, forKey: .busy)
+        waitingSince = try container.decodeIfPresent(Date.self, forKey: .waitingSince)
+        canRestart = try container.decodeIfPresent(Bool.self, forKey: .canRestart) ?? false
+        automation = try container.decodeIfPresent(Automation.self, forKey: .automation)
+        toolchain = try container.decodeIfPresent(String.self, forKey: .toolchain)
     }
 }
 
@@ -159,4 +243,20 @@ public protocol SelfUpdatingBackend: CodingAgentBackend {
     /// Asks the server to update itself. Returns as soon as the work has been handed off; the
     /// server will stop answering for a moment when it restarts.
     func startUpdate() async throws -> ServerUpdate
+    /// Asks the server to load a build already sitting on its disk. No fetch and no rebuild — the
+    /// machine waits until nothing is running on it and then hands itself to its supervisor.
+    func restartServer() async throws -> ServerUpdate
+    /// Turns unattended updating on or off *on the server*, which is where it belongs: a device-
+    /// local flag would mean the machine only stays current while that device keeps asking.
+    func setAutoUpdate(_ enabled: Bool) async throws -> ServerUpdate
+}
+
+extension SelfUpdatingBackend {
+    public func restartServer() async throws -> ServerUpdate {
+        throw AgentError.unsupported("This server cannot restart itself.")
+    }
+
+    public func setAutoUpdate(_ enabled: Bool) async throws -> ServerUpdate {
+        throw AgentError.unsupported("This server has no update policy to set.")
+    }
 }

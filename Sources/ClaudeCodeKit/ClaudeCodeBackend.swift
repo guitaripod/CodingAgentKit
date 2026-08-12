@@ -948,6 +948,10 @@ struct BRAuthCode: Encodable {
     let code: String
 }
 
+struct BRAutoUpdate: Encodable {
+    let enabled: Bool
+}
+
 /// The bridge is installed from source and can pull, rebuild and restart itself, so a client can
 /// keep a server current without anyone opening a terminal on the machine it runs on.
 extension ClaudeCodeBackend: SelfUpdatingBackend {
@@ -960,13 +964,29 @@ extension ClaudeCodeBackend: SelfUpdatingBackend {
     }
 
     public func startUpdate() async throws -> ServerUpdate {
+        try await accepted("/update", refusal: "update itself")
+    }
+
+    public func restartServer() async throws -> ServerUpdate {
+        try await accepted("/update/restart", refusal: "restart itself")
+    }
+
+    public func setAutoUpdate(_ enabled: Bool) async throws -> ServerUpdate {
+        let body = try BridgeCoding.encoder.encode(BRAutoUpdate(enabled: enabled))
+        let data = try await http.send(builder.request(.post, "/update/auto", body: body))
+        return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+    }
+
+    /// A refusal carries the status that explains it, so the reason a press did nothing is the
+    /// machine's own words rather than an HTTP code.
+    private func accepted(_ path: String, refusal: String) async throws -> ServerUpdate {
         do {
-            let data = try await http.send(builder.request(.post, "/update"))
-            return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+            return try BridgeCoding.decoder.decode(
+                ServerUpdate.self, from: try await http.send(builder.request(.post, path)))
         } catch AgentError.http(let status, let body) where status == 409 {
             guard let data = body.data(using: .utf8),
                 let refused = try? BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
-            else { throw AgentError.unsupported("The server refused to update itself.") }
+            else { throw AgentError.unsupported("The server refused to \(refusal).") }
             return refused
         }
     }

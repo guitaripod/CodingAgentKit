@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.16.0
+
+A server can be trusted to keep itself current, and a restart never takes a turn with it.
+
+### Added
+- **`SelfUpdatingBackend.restartServer()`.** A build that landed and was never started used to be a
+  dead end wearing the words "restart the bridge there" — a terminal instruction for the one thing
+  the machine can do to itself. It loads a binary already on disk, with no fetch and no rebuild.
+- **`SelfUpdatingBackend.setAutoUpdate(_:)`.** Unattended updating is a setting on the *machine*
+  rather than on whichever device asked, so two clients can never disagree about it and a phone
+  nobody opens again does not stop a server updating. Both new methods have protocol-extension
+  defaults that throw `unsupported`, so a backend that cannot do either says so rather than
+  pretending.
+- **`ServerUpdate` says what it could only summarise before.** `obstacle` names the thing in the
+  way file by file rather than only describing it, `busy` reports what a restart would destroy
+  right now, `automation` carries the machine's own policy and what it is holding off for,
+  `canRestart` answers whether one press can finish the job, `waitingSince` and the new `waiting`
+  phase make a build held behind a running turn a state rather than a silence, and `toolchain`
+  names the Swift that would do the building.
+
 ## 0.15.1
 
 A slash command is a turn, and it now carries the turn's model.
