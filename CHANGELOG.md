@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.1
+
+A slash command is a turn, and it now carries the turn's model.
+
+### Fixed
+- **A command went out with no model.** `runCommand` took only a command and its arguments, so a
+  turn a client had picked a model for reached the server carrying nothing and opencode answered
+  on its own config default — then wrote that model into the session record, renaming the chat
+  after a model nobody chose. `CommandRun` carries the model, the reasoning effort and the agent;
+  `AgentConversation.run(_:arguments:model:reasoningEffort:agent:)` and `compact`/`setGoal`/
+  `clearGoal` forward them, and the prompt-text fallback builds its `SendPrompt` from the run, so
+  a CLI-backed agent stops losing the pick at that boundary too.
+- **opencode's command route is not its prompt route, and both differences were wrong.** The model
+  is one `providerID/modelID` string there rather than the prompt route's object, so the field
+  could never have been populated as it was typed; and `arguments` is required, so every command
+  that took none was answered with a 400 that only ever reached a log line. Both shapes are now
+  asserted against the body the server validates.
+
 ## 0.15.0
 
 Being connected is something the socket says, and a turn the machine cut off is a state a client can read.
