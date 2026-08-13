@@ -498,7 +498,7 @@ public struct UsageQuota: Sendable, Hashable, Codable {
 
         public init(
             key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool,
-            usedUSD: Double? = nil, limitUSD: Double? = nil
+            usedUSD: Double? = nil, limitUSD: Double? = nil, currency: String? = nil
         ) {
             self.key = key
             self.label = label
@@ -507,7 +507,13 @@ public struct UsageQuota: Sendable, Hashable, Codable {
             self.trustedReset = trustedReset
             self.usedUSD = usedUSD
             self.limitUSD = limitUSD
+            self.currency = currency
         }
+
+        /// The ISO code of the money `usedUSD`/`limitUSD` carry, when it is not USD — a prepaid
+        /// provider balance may report CNY. A renderer that shows the money uses this for its
+        /// symbol; nil means USD.
+        public var currency: String?
     }
 
     public struct Detail: Sendable, Hashable, Codable {
