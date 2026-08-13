@@ -27,6 +27,15 @@ public enum OpenCodeEventDecoder {
             guard let info = properties?["info"], let message = message(from: info) else {
                 return nil
             }
+            /// A completed compaction-mode message ends the compaction it belongs to. Its streamed
+            /// parts have already drawn the summary as it was written; the conversation re-reads
+            /// the authoritative transcript now, and the mapping there folds the prose into the
+            /// seam.
+            if message.role == .assistant, message.completedAt != nil,
+                properties?["info"]?["mode"]?.stringValue == "compaction"
+            {
+                return .compaction(nil)
+            }
             return .messageUpserted(message, replaceParts: false)
 
         case "message.removed":
@@ -35,6 +44,12 @@ public enum OpenCodeEventDecoder {
 
         case "message.part.updated":
             guard let value = properties?["part"], let part = part(from: value) else { return nil }
+            if part.type == "compaction" {
+                /// The marker part is the server's bookkeeping, never transcript content: while it
+                /// stands alone it means a compaction is running, so it becomes the activity and
+                /// nothing else. Its summary arrives on the assistant message that follows it.
+                return .compaction(CompactionActivity(startedAt: Date()))
+            }
             return .partUpserted(messageID: part.messageID, OpenCodeMapping.part(part))
 
         case "message.part.removed":

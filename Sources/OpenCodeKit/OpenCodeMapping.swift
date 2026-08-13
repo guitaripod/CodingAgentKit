@@ -42,6 +42,7 @@ enum OpenCodeMapping {
             createdAt: date(session.time?.created),
             updatedAt: date(session.time?.updated ?? session.time?.created),
             model: session.model?.id,
+            modelProviderID: session.model?.providerID,
             reasoningEffort: session.model?.variant
         )
     }
@@ -116,6 +117,9 @@ enum OpenCodeMapping {
                 FileReference(
                     path: nil, mime: part.mime, url: part.url,
                     filename: Self.displayName(part.filename)))
+        case "compaction":
+            kind = .compaction(
+                Compaction(trigger: part.auto.map { $0 ? .auto : .manual }, summary: nil))
         default:
             kind = .unknown(type: part.type)
         }
@@ -149,5 +153,48 @@ enum OpenCodeMapping {
         var message = shell(envelope.info)
         message.parts = envelope.parts.map(part)
         return message
+    }
+
+    /// The whole message list read as a transcript. opencode writes a compaction as pieces no
+    /// transcript wants as-is: a marker part on an otherwise empty user message, then an assistant
+    /// message whose text is the summary and whose `mode` says `compaction`. Read together the two
+    /// are one seam — a system message carrying a single compaction part with the summary inside —
+    /// and read separately they are noise: the marker is dropped, and the summary's prose lives
+    /// behind the seam card rather than as an answer bubble.
+    static func transcript(_ envelopes: [OCMessageEnvelope]) -> [ChatMessage] {
+        var pendingAuto: Bool?
+        var result: [ChatMessage] = []
+        for envelope in envelopes {
+            let marker = envelope.parts.first { $0.type == "compaction" }
+            if let marker {
+                pendingAuto = marker.auto
+                let rest = envelope.parts.filter { $0.type != "compaction" }
+                if rest.isEmpty { continue }
+                var message = shell(envelope.info)
+                message.parts = rest.map(part)
+                result.append(message)
+                continue
+            }
+            if envelope.info.role == "assistant", envelope.info.mode == "compaction" {
+                let prose = envelope.parts
+                    .compactMap { $0.type == "text" ? $0.text : nil }
+                    .joined(separator: "\n\n")
+                var seam = shell(envelope.info)
+                seam.role = .system
+                seam.parts = [
+                    MessagePart(
+                        id: envelope.info.id + "/compaction",
+                        kind: .compaction(
+                            Compaction(
+                                trigger: pendingAuto.map { $0 ? .auto : .manual } ?? .manual,
+                                summary: prose.isEmpty ? nil : prose)))
+                ]
+                result.append(seam)
+                pendingAuto = nil
+                continue
+            }
+            result.append(message(envelope))
+        }
+        return result
     }
 }

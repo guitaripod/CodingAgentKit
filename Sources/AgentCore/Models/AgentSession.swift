@@ -29,6 +29,11 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// like "sonnet" or a full id like "claude-fable-5"); nil when the
     /// backend's session list doesn't carry one.
     public var model: String?
+    /// The door the session's model runs through, when the backend reports one
+    /// separately from the model's name. Two gateways offering the same model id
+    /// bill it differently, so the door is the difference between "this session
+    /// spends from the plan" and "this session spends from its own key".
+    public var modelProviderID: String?
     public var reasoningEffort: String?
     /// Agents working for this session right now. A session that has handed its
     /// turn to subagents is live while its own transcript stays silent, so this
@@ -58,6 +63,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         updatedAt: Date,
         isActive: Bool? = nil,
         model: String? = nil,
+        modelProviderID: String? = nil,
         reasoningEffort: String? = nil,
         activeAgents: Int? = nil,
         agentTask: String? = nil
@@ -71,6 +77,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.updatedAt = updatedAt
         self.isActive = isActive
         self.model = model
+        self.modelProviderID = modelProviderID
         self.reasoningEffort = reasoningEffort
         self.activeAgents = activeAgents
         self.agentTask = agentTask

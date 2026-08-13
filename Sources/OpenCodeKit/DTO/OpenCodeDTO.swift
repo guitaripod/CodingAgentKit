@@ -58,6 +58,10 @@ struct OCMessage: Decodable, Sendable {
     let modelID: String?
     let variant: String?
     let tokens: OCTokens?
+    /// The mode the message ran in — `build`, `plan`, and `compaction` for the assistant message
+    /// whose text is a summary rather than an answer. The summary prose is real, but it is the
+    /// seam's payload, not a turn the reader needs on its own.
+    let mode: String?
     /// The word the server puts on a finished turn — `stop`, `tool-calls`, `length`, `abort`, or
     /// `unknown` when the model's stream ended without saying why. It is the only thing that
     /// separates a turn that chose to say nothing from one whose provider dropped it, so it is
@@ -97,6 +101,18 @@ struct OCPart: Decodable, Sendable {
     let mime: String?
     let url: String?
     let filename: String?
+    /// opencode's compaction marker: `auto` says whether the machine compacted on its own, and
+    /// `tail_start_id` appears once the summary's start point has been chosen. The marker carries
+    /// no summary — that is written into the assistant message that follows it.
+    let auto: Bool?
+    let overflow: Bool?
+    let tailStartID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, messageID, sessionID, type, text, callID, tool, state, mime, url, filename, auto,
+            overflow
+        case tailStartID = "tail_start_id"
+    }
 }
 
 struct OCMessageEnvelope: Decodable, Sendable {

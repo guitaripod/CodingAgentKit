@@ -15,7 +15,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         supportsSessionUsage: false,
         supportsQuestions: true,
         supportsSubagents: true,
-        supportsCommands: true
+        supportsCommands: true,
+        supportsCompaction: true
     )
 
     let client: OpenCodeClient
@@ -147,7 +148,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
-        try await client.messages(sessionID: sessionID).map(OpenCodeMapping.message)
+        try await OpenCodeMapping.transcript(client.messages(sessionID: sessionID))
     }
 
     /// opencode gives a spawned agent a session of its own, parented to the one
@@ -168,7 +169,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
-        try await client.messages(sessionID: agentID).map(OpenCodeMapping.message)
+        try await OpenCodeMapping.transcript(client.messages(sessionID: agentID))
     }
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
@@ -251,6 +252,10 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     public var resolvesCommandsFromPromptText: Bool { false }
 
     public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
+        if run.command.name == "compact" {
+            try await dispatchCompaction(run, sessionID: sessionID)
+            return
+        }
         let directory = await directories.directory(for: sessionID, client: client)
         let request = Self.commandRequest(for: run)
         let client = self.client
@@ -262,6 +267,42 @@ public struct OpenCodeBackend: FileBrowsingBackend {
             } catch {
                 AgentLog.logger("opencode").error(
                     "command /\(name) failed: \(error)")
+            }
+        }
+    }
+
+    /// opencode's compaction lives on `/session/:id/summarize`, which blocks until the whole
+    /// summarize has finished — so like every command it is dispatched rather than awaited, and the
+    /// event stream reports the marker, the summary and the seam. The route needs a model for its
+    /// payload: the one the run names when it names one, else the session record's own. opencode's
+    /// summarize takes no instructions, so any the preflight collected stay out of the wire; the
+    /// server decides what the summary keeps.
+    private func dispatchCompaction(_ run: CommandRun, sessionID: String) async throws {
+        let payload: (providerID: String, modelID: String)?
+        if let model = run.model {
+            payload = (model.providerID, model.modelID)
+        } else if let session = try? await client.session(sessionID),
+            let model = session.model,
+            let providerID = model.providerID,
+            let modelID = model.id
+        {
+            payload = (providerID, modelID)
+        } else {
+            payload = nil
+        }
+        guard let payload else {
+            throw AgentError.unsupported(
+                "the server reported no model for this session to summarize with")
+        }
+        let client = self.client
+        Task.detached {
+            do {
+                try await client.summarize(
+                    sessionID: sessionID, providerID: payload.providerID,
+                    modelID: payload.modelID)
+            } catch {
+                AgentLog.logger("opencode").error(
+                    "compaction of \(sessionID) failed: \(error)")
             }
         }
     }

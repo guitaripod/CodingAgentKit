@@ -641,7 +641,13 @@ public actor AgentConversation {
         case .goal(let value):
             goal = value
         case .compaction(let value):
+            let wasRunning = compaction?.isRunning == true
             compaction = value
+            /// A compaction that just ended rewrote the transcript on the server: the summary
+            /// message the stream delivered is not the seam the transcript wants, so re-read the
+            /// authoritative messages once the dust settles rather than leaving the raw summary
+            /// where the seam belongs.
+            if wasRunning, value == nil { scheduleRecoveryRefresh(generation: gen) }
         case .interruption(let value):
             interruption = value
         case .attached:

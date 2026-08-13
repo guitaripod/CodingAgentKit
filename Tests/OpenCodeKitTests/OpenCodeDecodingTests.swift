@@ -162,6 +162,72 @@ private func decode(_ json: String) -> BackendEvent? {
         let envelope = try JSONCoding.decoder.decode(OCMessageEnvelope.self, from: Data(json.utf8))
         #expect(OpenCodeMapping.message(envelope).isStreaming == true)
     }
+
+    @Test func aCompactionFoldsMarkerAndSummaryIntoOneSeam() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]},
+             {"info":{"id":"msg_S","role":"assistant","sessionID":"ses_S","mode":"compaction","time":{"created":2,"completed":3}},"parts":[{"id":"prt_t","messageID":"msg_S","sessionID":"ses_S","type":"text","text":"Summary of everything."}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        let transcript = OpenCodeMapping.transcript(envelopes)
+        #expect(transcript.count == 1, "the marker message is dropped, the summary is the seam")
+        guard let seam = transcript.first else { return }
+        #expect(seam.role == .system)
+        #expect(seam.parts.count == 1)
+        guard case .compaction(let compaction) = seam.parts[0].kind else {
+            Issue.record("expected a compaction part")
+            return
+        }
+        #expect(compaction.trigger == .manual)
+        #expect(compaction.summary == "Summary of everything.")
+    }
+
+    @Test func anAutoCompactionRemembersWhoAsked() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":true}]},
+             {"info":{"id":"msg_S","role":"assistant","sessionID":"ses_S","mode":"compaction","time":{"created":2,"completed":3}},"parts":[{"id":"prt_t","messageID":"msg_S","sessionID":"ses_S","type":"text","text":"S"}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        guard case .compaction(let compaction)? = OpenCodeMapping.transcript(envelopes).first?.parts.first?.kind
+        else {
+            Issue.record("expected a compaction part")
+            return
+        }
+        #expect(compaction.trigger == .auto)
+    }
+
+    @Test func aRunningMarkerLeavesTheTranscriptUntouched() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        #expect(OpenCodeMapping.transcript(envelopes).isEmpty)
+    }
+
+    @Test func aMarkerPartEventIsTheRunningActivityNotATranscriptRow() {
+        let event = decode(
+            #"{"type":"message.part.updated","properties":{"sessionID":"ses_S","part":{"type":"compaction","auto":false,"messageID":"msg_U","sessionID":"ses_S","id":"prt_c"}}}"#
+        )
+        guard case .compaction(.some(let activity))? = event else {
+            Issue.record("expected a compaction activity, got \(String(describing: event))")
+            return
+        }
+        #expect(activity.isRunning)
+    }
+
+    @Test func aCompletedCompactionModeMessageEndsTheActivity() {
+        let event = decode(
+            #"{"type":"message.updated","properties":{"sessionID":"ses_S","info":{"id":"msg_S","role":"assistant","sessionID":"ses_S","mode":"compaction","time":{"created":2,"completed":3}}}}"#
+        )
+        guard case .compaction(let activity)? = event else {
+            Issue.record("expected a compaction activity, got \(String(describing: event))")
+            return
+        }
+        #expect(activity == nil)
+    }
 }
 
 @Suite struct OpenCodeReducerIntegrationTests {
@@ -241,6 +307,7 @@ private func decode(_ json: String) -> BackendEvent? {
             #"{"id":"ses_S","title":"T","model":{"id":"deepseek-v4-flash","providerID":"opencode-go","variant":"max"}}"#
         )
         #expect(mapped.model == "deepseek-v4-flash")
+        #expect(mapped.modelProviderID == "opencode-go")
         #expect(mapped.reasoningEffort == "max")
     }
 
@@ -249,12 +316,14 @@ private func decode(_ json: String) -> BackendEvent? {
             #"{"id":"ses_S","model":{"modelID":"deepseek-v4-flash","providerID":"opencode-go"}}"#
         )
         #expect(mapped.model == "deepseek-v4-flash")
+        #expect(mapped.modelProviderID == "opencode-go")
         #expect(mapped.reasoningEffort == nil)
     }
 
     @Test func sessionRecordWithoutAModelStaysSilent() throws {
         let mapped = try session(#"{"id":"ses_S","title":"T"}"#)
         #expect(mapped.model == nil)
+        #expect(mapped.modelProviderID == nil)
         #expect(mapped.reasoningEffort == nil)
     }
 }

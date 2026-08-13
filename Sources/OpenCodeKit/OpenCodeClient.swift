@@ -121,6 +121,19 @@ public struct OpenCodeClient: Sendable {
             builder.request(.post, "/session/\(sessionID)/abort", body: Data("{}".utf8)))
     }
 
+    /// Compacts a session: the server summarizes the conversation and carries the summary forward.
+    /// The route blocks until the whole compaction turn has ended, so it is dispatched rather than
+    /// awaited by callers that must not sit behind minutes of summarizing.
+    func summarize(sessionID: String, providerID: String, modelID: String) async throws {
+        struct Body: Encodable {
+            let providerID: String
+            let modelID: String
+        }
+        let body = try JSONCoding.encoder.encode(Body(providerID: providerID, modelID: modelID))
+        try await http.send(
+            builder.request(.post, "/session/\(sessionID)/summarize", body: body))
+    }
+
     func respondPermission(sessionID: String, permissionID: String, response: String) async throws {
         let body = try JSONCoding.encoder.encode(["response": response])
         try await http.send(

@@ -125,7 +125,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsMultipleSessions: true, supportsModelSelection: true,
                 supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true,
                 supportsQuestions: true, supportsCommands: !commands.isEmpty,
-                supportsCompaction: true)
+                supportsCompaction: true, supportsCompactionInstructions: true)
         mutable.withLock {
             $0.sessions =
                 sessions

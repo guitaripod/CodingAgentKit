@@ -32,6 +32,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// (``AgentConversation/compact(instructions:)``) and reports the boundary it left behind as a
     /// ``Compaction`` part in the transcript.
     public var supportsCompaction: Bool
+    /// Whether the compaction the backend runs accepts an instruction steering what the summary
+    /// must keep. A server whose summarize takes none (opencode's) still compacts; the preflight
+    /// just has no field for a sentence the server would drop.
+    public var supportsCompactionInstructions: Bool
     /// Whether this backend stamps `completedAt` on finished assistant
     /// messages. When false, a message upsert with a nil `completedAt` says
     /// nothing about liveness, so the engine must not infer "running" from it
@@ -62,6 +66,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsCommands: Bool = false,
         supportsGoals: Bool = false,
         supportsCompaction: Bool = false,
+        supportsCompactionInstructions: Bool = false,
         reportsMessageCompletion: Bool = true,
         supportsTranscriptSearch: Bool = false
     ) {
@@ -84,6 +89,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsCommands = supportsCommands
         self.supportsGoals = supportsGoals
         self.supportsCompaction = supportsCompaction
+        self.supportsCompactionInstructions = supportsCompactionInstructions
         self.reportsMessageCompletion = reportsMessageCompletion
         self.supportsTranscriptSearch = supportsTranscriptSearch
     }
