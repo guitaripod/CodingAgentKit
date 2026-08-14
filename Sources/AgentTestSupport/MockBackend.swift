@@ -34,6 +34,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let failAfter: Int?
     private let failure: BackendFailure
     private let models: [ModelInfo]
+    private let modelsFailures: Int
     private let defaultModelID: String?
     private let effortOptions: [String]
     private let serverHealth: ServerHealth
@@ -62,6 +63,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var continuations: [String: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation]] = [:]
         var replyIndex = 0
         var mintCounter = 0
+        var modelsFailures = 0
     }
 
     public init(
@@ -74,6 +76,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         failure: BackendFailure = BackendFailure(message: "mock failure", retryable: true),
         sessions: [AgentSession]? = nil,
         models: [ModelInfo] = [],
+        modelsFailures: Int = 0,
         defaultModelID: String? = nil,
         reasoningEffortOptions: [String] = [],
         health: ServerHealth = ServerHealth(healthy: true, version: "mock"),
@@ -101,6 +104,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         self.failAfter = failAfter
         self.failure = failure
         self.models = models
+        self.modelsFailures = modelsFailures
         self.defaultModelID = defaultModelID
         self.effortOptions = reasoningEffortOptions
         self.serverHealth = health
@@ -127,6 +131,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsQuestions: true, supportsCommands: !commands.isEmpty,
                 supportsCompaction: true, supportsCompactionInstructions: true)
         mutable.withLock {
+            $0.modelsFailures = modelsFailures
             $0.sessions =
                 sessions
                 ?? [
@@ -392,7 +397,15 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         [Provider(id: "mock", name: "Mock", models: models, defaultModelID: models.first?.id)]
     }
 
-    public func availableModels() async throws -> [ModelInfo] { models }
+    public func availableModels() async throws -> [ModelInfo] {
+        let failures = mutable.withLock { mutable in
+            let owed = mutable.modelsFailures
+            mutable.modelsFailures = max(0, owed - 1)
+            return owed
+        }
+        if failures > 0 { throw BackendFailure(message: "mock failure", retryable: true) }
+        return models
+    }
 
     public func defaultModel() async throws -> ModelSelection? {
         if let defaultModelID, let match = models.first(where: { $0.id == defaultModelID }) {
