@@ -488,19 +488,54 @@ extension OpenCodeBackend: RestartableBackend {
     /// when that process has gone. A machine with no such command keeps its pty and is told so in
     /// a sentence that says what to do about it.
     public func restart() async throws {
-        let pty = try await client.spawn(
-            command: "sh", args: ["-lc", Self.restartInvocation], title: "restart")
-        for _ in 0..<Self.restartChecks {
-            try? await Task.sleep(for: Self.restartCheckInterval)
-            guard let ptys = try? await client.ptyIDs() else { return }
-            guard ptys.contains(pty) else { return }
+        guard try await Self.restartWorks(client: client) else {
+            throw AgentError.unsupported(
+                "This server was not set up for restarts. Re-run the opencode setup command on that machine."
+            )
         }
-        throw AgentError.unsupported(
-            "This server was not set up for restarts. Re-run the opencode setup command on that machine."
-        )
     }
 
     static var restartInvocation: String { #"exec "$HOME/.local/bin/\#(restartCommand)""# }
     private static let restartChecks = 10
     private static let restartCheckInterval: Duration = .seconds(1)
+
+    /// Spawns the restart and watches for this process's ptys to go with it. A `nil` answer is a
+    /// server that just restarted — the ask provably took.
+    private static func restartWorks(client: OpenCodeClient) async throws -> Bool {
+        let pty = try await client.spawn(
+            command: "sh", args: ["-lc", restartInvocation], title: "restart")
+        for _ in 0..<restartChecks {
+            try? await Task.sleep(for: restartCheckInterval)
+            guard let ptys = try? await client.ptyIDs() else { return true }
+            guard ptys.contains(pty) else { return true }
+        }
+        return false
+    }
+}
+
+extension OpenCodeBackend: ServeManagerBackend {
+    /// The whole setup, run on the machine by the machine: opencode if it is missing, the
+    /// supervisor that survives a reboot, the restart command, and the check that restarts the
+    /// server when its model list changes. The installer may replace the very process answering
+    /// this ask — a machine whose own supervisor takes the port boots the hand-run server out — so
+    /// the answer is read from the machine after, not awaited in flight: once it answers and
+    /// provably restarts, the setup has taken.
+    public func installServeManager() async throws {
+        _ = try await client.spawn(
+            command: "sh", args: ["-lc", Self.installInvocation], title: "set up server")
+        for _ in 0..<Self.installChecks {
+            try? await Task.sleep(for: Self.installCheckInterval)
+            guard (try? await client.ptyIDs()) != nil else { continue }
+            if try await Self.restartWorks(client: client) { return }
+            break
+        }
+        throw AgentError.unsupported(
+            "The setup did not take. Run the opencode setup command on that machine by hand.")
+    }
+
+    static var installInvocation: String {
+        #"curl -fsSL https://raw.githubusercontent.com/guitaripod/Tailscode/master/scripts/opencode-serve-install.sh | bash"#
+    }
+    private static let installChecks = 60
+    private static let installCheckInterval: Duration = .seconds(2)
 }
