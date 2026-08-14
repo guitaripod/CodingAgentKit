@@ -198,6 +198,10 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await providers().flatMap(\.models)
     }
 
+    /// The command the setup script leaves on the machine for exactly this, named once so the
+    /// client and the installer cannot drift apart on it.
+    public static let restartCommand = "opencode-serve-restart"
+
     public func defaultModel() async throws -> ModelSelection? {
         for provider in try await providers() where provider.defaultModelID != nil {
             return ModelSelection(providerID: provider.id, modelID: provider.defaultModelID!)
@@ -469,4 +473,34 @@ public struct OpenCodeBackend: FileBrowsingBackend {
             )
         }
     }
+}
+
+extension OpenCodeBackend: RestartableBackend {
+    /// opencode has no restart route — a process cannot be asked to replace itself over its own
+    /// API. What it does have is a pty, and the machine has a supervisor, so the restart is run on
+    /// the server by the server: one command, the one the setup script leaves behind for exactly
+    /// this, reached through the login shell so it does not depend on what PATH a service happened
+    /// to inherit.
+    ///
+    /// Then it is checked, because a restart that quietly did nothing is the one outcome nobody
+    /// can act on. A pty outlives the command it ran, so the pty this spawned is still listed by
+    /// the process that spawned it — and stops being listed, or stops answering at all, exactly
+    /// when that process has gone. A machine with no such command keeps its pty and is told so in
+    /// a sentence that says what to do about it.
+    public func restart() async throws {
+        let pty = try await client.spawn(
+            command: "sh", args: ["-lc", Self.restartInvocation], title: "restart")
+        for _ in 0..<Self.restartChecks {
+            try? await Task.sleep(for: Self.restartCheckInterval)
+            guard let ptys = try? await client.ptyIDs() else { return }
+            guard ptys.contains(pty) else { return }
+        }
+        throw AgentError.unsupported(
+            "This server was not set up for restarts. Re-run the opencode setup command on that machine."
+        )
+    }
+
+    static var restartInvocation: String { #"exec "$HOME/.local/bin/\#(restartCommand)""# }
+    private static let restartChecks = 10
+    private static let restartCheckInterval: Duration = .seconds(1)
 }

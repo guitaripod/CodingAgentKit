@@ -337,15 +337,32 @@ public actor AgentConversation {
 
     /// Picks the interrupted turn back up. The card comes down on the server's word, not on the
     /// press: a resume that the server refused leaves the offer exactly where it was.
+    ///
+    /// A server with no route for it still has the words: the prompt is in the transcript, so the
+    /// turn is asked again rather than refused. That is the whole of what "picking it up" can mean
+    /// on a machine that kept no memory of the work — and it is what a person would otherwise do
+    /// by hand, from the same evidence, with more steps.
     public func resumeInterruptedTurn() async throws {
-        try await backend.resumeInterruption(sessionID: sessionID)
+        let cutOff = interruption
+        do {
+            try await backend.resumeInterruption(sessionID: sessionID)
+        } catch AgentError.unsupported {
+            guard let prompt = cutOff?.prompt, !prompt.isEmpty else { throw AgentError.unsupported("interruption") }
+            try await send(prompt)
+        }
         interruption = nil
         emit()
     }
 
     /// Lets the interrupted turn go. The record goes; nothing in the transcript changes.
+    ///
+    /// A server that never held the record has nothing to forget, and a card this client put up
+    /// on its own is this client's to take down — so its refusal is not an error to show anyone.
     public func dismissInterruptedTurn() async throws {
-        try await backend.dismissInterruption(sessionID: sessionID)
+        do {
+            try await backend.dismissInterruption(sessionID: sessionID)
+        } catch AgentError.unsupported {
+        }
         interruption = nil
         emit()
     }
@@ -615,8 +632,27 @@ public actor AgentConversation {
             !refreshInFlight, !recoveryRefreshInFlight,
             Date().timeIntervalSince(lastEventAt) > Self.staleTurnThreshold
         else { return }
+        let before = CutOffTurn.fingerprint(reducer.snapshot)
         lastEventAt = Date()
         await refreshQuietly(generation: gen)
+        noticeCutOffTurn(matching: before, generation: gen)
+    }
+
+    /// A turn that did not move by a character across a whole quiet stretch, on a server that
+    /// cannot report its own interruptions, is a turn whose machine went — and the nudge that just
+    /// re-read it has already paid for the evidence, so noticing costs nothing extra.
+    ///
+    /// A server that reports its own is left alone: it knows what this can only infer, and two
+    /// answers to one question is how a card ends up contradicting itself.
+    private func noticeCutOffTurn(matching before: CutOffTurn.Fingerprint?, generation gen: Int) {
+        guard gen == generation, !backend.capabilities.reportsInterruptions, interruption == nil,
+            status == .running, connection == .live, !refreshInFlight, let before,
+            CutOffTurn.fingerprint(reducer.snapshot) == before,
+            let cutOff = CutOffTurn.read(reducer.snapshot, detectedAt: Date())
+        else { return }
+        interruption = cutOff
+        status = .idle
+        emit()
     }
 
     private func apply(_ event: BackendEvent, generation gen: Int) {
@@ -742,7 +778,7 @@ public actor AgentConversation {
         guard let last = reducer.snapshot.last, last.role == .assistant else { return }
         if last.completedAt != nil {
             if status == .running { status = .idle }
-        } else if last.isStreaming {
+        } else if last.isStreaming, interruption?.turnID != last.id {
             if status != .running { status = .running }
         }
     }

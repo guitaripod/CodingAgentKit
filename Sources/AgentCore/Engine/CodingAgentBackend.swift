@@ -41,6 +41,11 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// nothing about liveness, so the engine must not infer "running" from it
     /// — only explicit status events and live text deltas count.
     public var reportsMessageCompletion: Bool
+    /// Whether the server itself notices a turn its machine cut off and reports it
+    /// (``CodingAgentBackend/interruption(for:)``). A server that does knows what a client can only
+    /// infer, so the client must not infer it as well — two answers to one question is how a card
+    /// ends up contradicting the machine it describes.
+    public var reportsInterruptions: Bool
     /// Whether the backend can search inside conversations it has stored, rather than only listing
     /// their titles. A chat list matches titles; this is what makes what was actually said — the
     /// answer, the diff, the command that worked — findable after it scrolls off.
@@ -68,6 +73,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsCompaction: Bool = false,
         supportsCompactionInstructions: Bool = false,
         reportsMessageCompletion: Bool = true,
+        reportsInterruptions: Bool = false,
         supportsTranscriptSearch: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
@@ -91,6 +97,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsCompaction = supportsCompaction
         self.supportsCompactionInstructions = supportsCompactionInstructions
         self.reportsMessageCompletion = reportsMessageCompletion
+        self.reportsInterruptions = reportsInterruptions
         self.supportsTranscriptSearch = supportsTranscriptSearch
     }
 }

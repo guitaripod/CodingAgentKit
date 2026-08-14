@@ -214,6 +214,20 @@ struct OCSessionCreateRequest: Encodable, Sendable {
     let title: String?
 }
 
+struct OCPtyRequest: Encodable, Sendable {
+    let command: String
+    let args: [String]
+    let title: String
+}
+
+struct OCPty: Decodable, Sendable {
+    let id: String
+}
+
+struct OCPtyEnvelope<Payload: Decodable & Sendable>: Decodable, Sendable {
+    let data: Payload
+}
+
 struct OCPromptRequest: Encodable, Sendable {
     let parts: [OCPartInput]
     let model: OCModelInput?

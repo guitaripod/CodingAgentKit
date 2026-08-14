@@ -168,6 +168,25 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/config/providers")))
     }
 
+    /// Runs one command on the server's own machine, in a pty the server owns, and answers with
+    /// the pty's id. The pty outlives the command — a process that exited is still listed — which
+    /// is what lets a caller tell a command that ran from a server that is no longer there.
+    func spawn(command: String, args: [String] = [], title: String) async throws -> String {
+        let body = try JSONCoding.encoder.encode(
+            OCPtyRequest(command: command, args: args, title: title))
+        let envelope: OCPtyEnvelope<OCPty> = try decode(
+            await http.send(builder.request(.post, "/api/pty", body: body)))
+        return envelope.data.id
+    }
+
+    /// The ptys this process is holding. They belong to the process rather than to the machine, so
+    /// an empty answer — or no answer at all — is what a server that has just restarted looks like.
+    func ptyIDs() async throws -> [String] {
+        let envelope: OCPtyEnvelope<[OCPty]> = try decode(
+            await http.send(builder.request(.get, "/api/pty")))
+        return envelope.data.map(\.id)
+    }
+
     /// `/event` is directory-scoped: a session created in another workspace
     /// emits nothing on the unscoped stream, so subscribers must pass the
     /// session's directory.

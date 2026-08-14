@@ -25,6 +25,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsCompaction: true,
         supportsCompactionInstructions: true,
         reportsMessageCompletion: false,
+        reportsInterruptions: true,
         supportsTranscriptSearch: true
     )
 
