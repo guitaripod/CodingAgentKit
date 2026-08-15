@@ -33,6 +33,46 @@ import Testing
         #expect(mapped[2].argumentHint == nil)
         #expect(!mapped[2].takesArguments)
     }
+
+    /// `GET /command` answers with prompt templates only — its schema requires a `template` — so
+    /// the words opencode's own client offers for its built-in actions are structurally absent.
+    /// A command nobody can see is a command nobody has.
+    @Test func builtinsAreOfferedBesideTheServersOwnCatalog() throws {
+        let published = try decode(
+            """
+            [{"name":"init","description":"guided setup","source":"command",
+              "template":"...","hints":[]}]
+            """
+        ).map { OpenCodeBackend.command(for: $0) }
+        let claimed = Set(published.map(\.name))
+        let offered = published + OpenCodeBackend.builtins.filter { !claimed.contains($0.name) }
+
+        #expect(offered.map(\.name) == ["init", "compact"])
+        #expect(offered[1].source == .builtin)
+        #expect(!offered[1].takesArguments)
+    }
+
+    /// A machine that wrote its own `compact.md` has answered what the word means there, and the
+    /// Kit does not argue with it.
+    @Test func theServerWinsWhenItClaimsABuiltinsName() throws {
+        let published = try decode(
+            """
+            [{"name":"compact","description":"mine","source":"command",
+              "template":"...","hints":[]}]
+            """
+        ).map { OpenCodeBackend.command(for: $0) }
+        let claimed = Set(published.map(\.name))
+        let offered = published + OpenCodeBackend.builtins.filter { !claimed.contains($0.name) }
+
+        #expect(offered.count == 1)
+        #expect(offered[0].details == "mine")
+    }
+
+    @Test func opencodesOwnAliasReachesTheSameRoute() {
+        #expect(OpenCodeBackend.isCompaction("compact"))
+        #expect(OpenCodeBackend.isCompaction("summarize"))
+        #expect(!OpenCodeBackend.isCompaction("context"))
+    }
 }
 
 /// The command route is not the prompt route, and the differences are the kind a compiler cannot

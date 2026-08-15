@@ -42,6 +42,16 @@ public struct OpenCodeClient: Sendable {
         try decode(await http.send(builder.request(.get, "/project")))
     }
 
+    /// Which of this workspace's sessions have a turn open. Scoped to one directory exactly the
+    /// way `/session` is — an unscoped ask answers for the server's own launch directory and is
+    /// silent about every chat that lives anywhere else — and it lists only what is running, so an
+    /// id that is absent from a map that answered is a session with nothing in flight.
+    func sessionStatuses(directory: String?) async throws -> [String: OCSessionStatus] {
+        try decode(
+            await http.send(
+                builder.request(.get, "/session/status", query: directoryQuery(directory))))
+    }
+
     /// The working directory is a QUERY parameter on opencode's session
     /// routes — a `directory` body field is silently ignored and the session
     /// lands in the server's own cwd. The title, by contrast, is a BODY field
@@ -102,8 +112,13 @@ public struct OpenCodeClient: Sendable {
             builder.request(.post, "/session/\(sessionID)/prompt_async", body: body))
     }
 
-    func commands() async throws -> [OCCommand] {
-        try decode(await http.send(builder.request(.get, "/command")))
+    /// The catalog is scoped like every other session route: a command file under the project's
+    /// own `.opencode/command` exists only for a request that names that directory, so a catalog
+    /// asked for without one is the server's launch directory rather than the chat's.
+    func commands(directory: String?) async throws -> [OCCommand] {
+        try decode(
+            await http.send(
+                builder.request(.get, "/command", query: directoryQuery(directory))))
     }
 
     /// Unlike `prompt_async`, opencode has no non-blocking command route: this returns only once
@@ -124,14 +139,18 @@ public struct OpenCodeClient: Sendable {
     /// Compacts a session: the server summarizes the conversation and carries the summary forward.
     /// The route blocks until the whole compaction turn has ended, so it is dispatched rather than
     /// awaited by callers that must not sit behind minutes of summarizing.
-    func summarize(sessionID: String, providerID: String, modelID: String) async throws {
+    func summarize(
+        sessionID: String, directory: String?, providerID: String, modelID: String
+    ) async throws {
         struct Body: Encodable {
             let providerID: String
             let modelID: String
         }
         let body = try JSONCoding.encoder.encode(Body(providerID: providerID, modelID: modelID))
         try await http.send(
-            builder.request(.post, "/session/\(sessionID)/summarize", body: body))
+            builder.request(
+                .post, "/session/\(sessionID)/summarize", query: directoryQuery(directory),
+                body: body))
     }
 
     func respondPermission(sessionID: String, permissionID: String, response: String) async throws {
@@ -194,6 +213,17 @@ public struct OpenCodeClient: Sendable {
         do {
             return http.serverSentEvents(
                 try builder.eventStreamRequest("/event", query: directoryQuery(directory)))
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
+    }
+
+    /// Every workspace's events on one connection. `/event` is scoped to a single directory, so a
+    /// chat list that spans projects has to read this instead — the frames carry the workspace they
+    /// came from beside the payload.
+    func globalEventStream() -> AsyncThrowingStream<SSEvent, Error> {
+        do {
+            return http.serverSentEvents(try builder.eventStreamRequest("/global/event"))
         } catch {
             return AsyncThrowingStream { $0.finish(throwing: error) }
         }

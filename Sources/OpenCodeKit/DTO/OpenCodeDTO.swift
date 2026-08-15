@@ -47,6 +47,13 @@ struct OCSessionModel: Decodable, Sendable {
     }
 }
 
+/// What a session is doing right now, as opencode's own status routes report it. Only sessions
+/// with something in flight are listed — the server deletes the key when a turn settles — so an
+/// id that is absent is a session with nothing running.
+struct OCSessionStatus: Decodable, Sendable {
+    let type: String
+}
+
 struct OCMessage: Decodable, Sendable {
     let id: String
     let sessionID: String

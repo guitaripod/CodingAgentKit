@@ -32,7 +32,11 @@ enum OpenCodeMapping {
             updatedAt: project.time?.updated.map { date($0) })
     }
 
-    static func session(_ session: OCSession) -> AgentSession {
+    /// The session record says nothing about a turn being open — opencode keeps that in its own
+    /// status routes — so liveness arrives beside the record rather than inside it. A caller with
+    /// no status to hand leaves `isActive` nil, which is *unknown* and never *idle*: a listing
+    /// that cannot see a turn must not report there is none.
+    static func session(_ session: OCSession, status: OCSessionStatus? = nil) -> AgentSession {
         AgentSession(
             id: session.id,
             agentType: .openCode,
@@ -41,20 +45,30 @@ enum OpenCodeMapping {
             directory: session.directory,
             createdAt: date(session.time?.created),
             updatedAt: date(session.time?.updated ?? session.time?.created),
+            isActive: status.map(isRunning),
             model: session.model?.id,
             modelProviderID: session.model?.providerID,
             reasoningEffort: session.model?.variant
         )
     }
 
-    /// A child session read as a subagent. opencode records no completion flag
-    /// on a session, so liveness is read from how recently it was written —
-    /// the same signal the session list uses to say a conversation is running.
+    /// opencode calls a turn it is running `busy` on the workspace route and `running` on the
+    /// process-wide one; `retry` is a turn waiting on the provider between attempts, which is a
+    /// turn in flight rather than a conversation that has settled.
+    static func isRunning(_ status: OCSessionStatus) -> Bool {
+        status.type == "busy" || status.type == "running" || status.type == "retry"
+    }
+
+    /// How recently a child was written to, for a server too old to answer either status route.
+    /// The guess is only ever made about a subagent, whose whole life is one turn: a chat is never
+    /// called live on a timestamp.
     static let subagentActivityWindow: TimeInterval = 45
 
-    static func subagent(_ session: OCSession) -> SubagentSummary {
+    static func subagent(_ session: OCSession, running: Set<String>? = nil) -> SubagentSummary {
         let updatedAt = date(session.time?.updated ?? session.time?.created)
-        let active = updatedAt.timeIntervalSinceNow > -subagentActivityWindow
+        let active =
+            running.map { $0.contains(session.id) }
+            ?? (updatedAt.timeIntervalSinceNow > -subagentActivityWindow)
         return SubagentSummary(
             id: session.id,
             title: session.title ?? SubagentSummary.untitled,

@@ -20,7 +20,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     )
 
     let client: OpenCodeClient
-    private let directories = SessionDirectoryCache()
+    let directories = SessionDirectoryCache()
 
     public init(config: ServerConfig) {
         self.client = OpenCodeClient(config: config)
@@ -34,7 +34,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// per-session calls need the session's directory. Cached; refreshed from
     /// the session list on miss — and from `GET /session/:id` when the session
     /// lives outside every known project (home-directory chats, for example).
-    private actor SessionDirectoryCache {
+    actor SessionDirectoryCache {
         private var directories: [String: String] = [:]
 
         func directory(for sessionID: String, client: OpenCodeClient) async -> String? {
@@ -76,13 +76,126 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         }
     }
 
+    /// The events this Kit raises itself, put on the session's own stream so a client reads them
+    /// exactly like the server's.
+    ///
+    /// opencode answers a command only once the turn it started has ended, so a command is
+    /// dispatched rather than awaited — and a dispatch that fails then has no reply channel at all.
+    /// A compaction that never started used to be a line in a log file: the preflight closed, the
+    /// spinner stopped and the transcript sat exactly as it was, which reads as the app ignoring
+    /// the request. It says so here instead.
+    actor LocalEvents {
+        private var listeners:
+            [String: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation]] = [:]
+
+        func listen(
+            _ sessionID: String,
+            _ continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation
+        ) -> UUID {
+            let token = UUID()
+            listeners[sessionID, default: [:]][token] = continuation
+            return token
+        }
+
+        func drop(_ sessionID: String, _ token: UUID) {
+            listeners[sessionID]?.removeValue(forKey: token)
+            if listeners[sessionID]?.isEmpty == true { listeners[sessionID] = nil }
+        }
+
+        func send(_ event: BackendEvent, to sessionID: String) {
+            guard let slots = listeners[sessionID] else { return }
+            for continuation in slots.values { continuation.yield(event) }
+        }
+    }
+
+    let local = LocalEvents()
+
     public func health() async throws -> ServerHealth {
         let health = try await client.health()
         return ServerHealth(healthy: health.healthy, version: health.version)
     }
 
+    /// What the server said about turns in flight, and — just as importantly — which workspaces it
+    /// was actually asked about.
+    ///
+    /// `/session/status` is scoped to one directory, so a chat's answer only exists in the map its
+    /// own directory returned. A scope that was never asked, or that failed, leaves its sessions
+    /// *unknown* rather than idle: a listing that cannot see a turn must not report there is none.
+    struct LivenessReading: Sendable {
+        var running: Set<String> = []
+        var scopes: Set<String> = []
+
+        var isEmpty: Bool { scopes.isEmpty }
+
+        mutating func absorb(_ statuses: [String: OCSessionStatus], scope: String) {
+            scopes.insert(scope)
+            for (id, status) in statuses where OpenCodeMapping.isRunning(status) {
+                running.insert(id)
+            }
+        }
+
+        /// The workspace a session's liveness would be reported under. The server's own launch
+        /// directory answers the unscoped ask, which is what a session with no directory rides.
+        static func scope(of directory: String?) -> String { directory ?? "" }
+    }
+
+    /// One `/session/status` per distinct workspace, asked together. A scope that throws is simply
+    /// left out of the reading, so its sessions keep saying nothing rather than saying idle.
+    func liveness(scopes: Set<String>) async -> LivenessReading {
+        var reading = LivenessReading()
+        guard !scopes.isEmpty else { return reading }
+        let client = self.client
+        let answers = await withTaskGroup(
+            of: (String, [String: OCSessionStatus]?).self
+        ) { group -> [(String, [String: OCSessionStatus]?)] in
+            for scope in scopes {
+                group.addTask {
+                    let statuses = try? await client.sessionStatuses(
+                        directory: scope.isEmpty ? nil : scope)
+                    return (scope, statuses)
+                }
+            }
+            var collected: [(String, [String: OCSessionStatus]?)] = []
+            for await answer in group { collected.append(answer) }
+            return collected
+        }
+        for (scope, statuses) in answers {
+            guard let statuses else { continue }
+            reading.absorb(statuses, scope: scope)
+        }
+        return reading
+    }
+
+    /// The listing's own answer about which conversations have a turn open, written onto the
+    /// sessions it describes. A parent whose own turn is closed while the agents it spawned still
+    /// run is working, so the busy children are counted onto it rather than lost with them.
+    static func applying(
+        _ reading: LivenessReading, to sessions: [AgentSession]
+    ) -> [AgentSession] {
+        guard !reading.isEmpty else { return sessions }
+        var agents: [String: Int] = [:]
+        for session in sessions where reading.running.contains(session.id) {
+            guard let parent = session.parentID else { continue }
+            agents[parent, default: 0] += 1
+        }
+        return sessions.map { session in
+            var session = session
+            let scope = LivenessReading.scope(of: session.directory)
+            if reading.scopes.contains(scope) {
+                session.isActive = reading.running.contains(session.id)
+            }
+            session.activeAgents = agents[session.id]
+            return session
+        }
+    }
+
+    private static func scopes(of sessions: [AgentSession]) -> Set<String> {
+        Set(sessions.map { LivenessReading.scope(of: $0.directory) })
+    }
+
     public func listSessions() async throws -> [AgentSession] {
-        try await client.listSessions().map(OpenCodeMapping.session)
+        let sessions = try await client.listSessions().map { OpenCodeMapping.session($0) }
+        return Self.applying(await liveness(scopes: Self.scopes(of: sessions)), to: sessions)
     }
 
     /// opencode scopes `/session` to the project the server was launched in unless a worktree is
@@ -94,11 +207,12 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// A spawned agent is given a session of its own here, parented to the one that spawned it.
     /// That is a subagent's transcript, which the conversation renders at the tool call that
     /// spawned it — so it is dropped rather than listed, and the chat that started the work stays
-    /// the only chat the work produced.
+    /// the only chat the work produced. The turns in flight are written on before that drop, so a
+    /// parent still collects the agents working for it rather than losing the count with them.
     public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
         var scopes = Set(knownDirectories)
         scopes.formUnion((try? await client.projects())?.compactMap(\.worktree) ?? [])
-        let owned = try await listSessions()
+        let owned = try await client.listSessions().map { OpenCodeMapping.session($0) }
         var merged: [String: AgentSession] = [:]
         for session in owned {
             merged[session.id] = session
@@ -112,7 +226,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                     group.addTask {
                         let sessions =
                             (try? await self.client.listSessions(directory: directory)) ?? []
-                        return (directory, sessions.map(OpenCodeMapping.session))
+                        return (directory, sessions.map { OpenCodeMapping.session($0) })
                     }
                 }
                 for await (_, sessions) in group {
@@ -124,7 +238,11 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 }
             }
         }
-        return merged.values.filter { !$0.isSubagent }.sorted { $0.updatedAt > $1.updatedAt }
+        let sessions = Array(merged.values)
+        let reading = await liveness(scopes: Self.scopes(of: sessions).union(scopes))
+        return Self.applying(reading, to: sessions)
+            .filter { !$0.isSubagent }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public func projects() async throws -> [AgentProject] {
@@ -133,7 +251,11 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
         guard let worktree else { return try await listSessions() }
-        return try await client.listSessions(directory: worktree).map(OpenCodeMapping.session)
+        let sessions = try await client.listSessions(directory: worktree)
+            .map { OpenCodeMapping.session($0) }
+        let reading = await liveness(
+            scopes: Self.scopes(of: sessions).union([worktree]))
+        return Self.applying(reading, to: sessions)
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
@@ -157,14 +279,18 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// than list them as chats in their own right.
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
         let sessions: [OCSession]
-        if let directory = await directories.directory(for: sessionID, client: client) {
+        let directory = await directories.directory(for: sessionID, client: client)
+        if let directory {
             sessions = (try? await client.listSessions(directory: directory)) ?? []
         } else {
             sessions = (try? await client.listSessions()) ?? []
         }
+        let scope = LivenessReading.scope(of: directory)
+        let reading = await liveness(scopes: [scope])
+        let running = reading.scopes.contains(scope) ? reading.running : nil
         return sessions
             .filter { $0.parentID == sessionID }
-            .map(OpenCodeMapping.subagent)
+            .map { OpenCodeMapping.subagent($0, running: running) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -216,6 +342,8 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 // chats that live outside the server's launch project (e.g. directory=/Users/…),
                 // which is exactly what made Linux look frozen while the Mac GPU still worked.
                 let directory = await directories.directory(for: sessionID, client: client)
+                let token = await local.listen(sessionID, continuation)
+                defer { Task { await self.local.drop(sessionID, token) } }
                 do {
                     for try await sse in client.eventStream(directory: directory) {
                         if let event = OpenCodeEventDecoder.decode(sse, sessionID: sessionID) {
@@ -235,10 +363,36 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await client.abort(sessionID: sessionID)
     }
 
-    /// opencode's catalog is whatever the server resolves for its own workspace — user and project
-    /// command files, MCP prompts, and skills — so `directory` is ignored here.
+    /// What this session can be told to do: the server's own catalog for the chat's directory —
+    /// user and project command files, MCP prompts, and skills, and the project half of that only
+    /// exists for a request that names the directory — plus the built-ins the Kit runs itself.
+    ///
+    /// `GET /command` answers with prompt templates only; its schema requires a `template`, so the
+    /// slash words opencode's own client offers for its built-in actions are structurally absent
+    /// from it. A command nobody can see is a command nobody has, so the ones this Kit can carry
+    /// out are published beside the server's. The server wins any collision: a `compact.md` written
+    /// by hand is that machine's answer to what the word means.
     public func availableCommands(directory: String?) async throws -> [AgentCommand] {
-        try await client.commands().map(Self.command)
+        let published = try await client.commands(directory: directory).map(Self.command)
+        let claimed = Set(published.map(\.name))
+        return published + Self.builtins.filter { !claimed.contains($0.name) }
+    }
+
+    /// The built-in slash words this Kit can execute for an opencode server. `compact` carries no
+    /// argument hint because `supportsCompactionInstructions` is false here — the server decides
+    /// what its summary keeps, and promising a place to say otherwise would be a lie.
+    static let builtins: [AgentCommand] = [
+        AgentCommand(
+            name: "compact",
+            details: "Summarize the conversation so far to free up context",
+            argumentHint: nil,
+            source: .builtin)
+    ]
+
+    /// opencode publishes `summarize` as `compact`'s own alias, so both spellings reach the same
+    /// route rather than one of them going out to the model as the word it was typed as.
+    static func isCompaction(_ name: String) -> Bool {
+        name == "compact" || name == "summarize"
     }
 
     static func command(for command: OCCommand) -> AgentCommand {
@@ -256,7 +410,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     public var resolvesCommandsFromPromptText: Bool { false }
 
     public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
-        if run.command.name == "compact" {
+        if Self.isCompaction(run.command.name) {
             try await dispatchCompaction(run, sessionID: sessionID)
             return
         }
@@ -264,6 +418,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         let request = Self.commandRequest(for: run)
         let client = self.client
         let name = run.command.name
+        let local = self.local
         Task.detached {
             do {
                 try await client.runCommand(
@@ -271,6 +426,12 @@ public struct OpenCodeBackend: FileBrowsingBackend {
             } catch {
                 AgentLog.logger("opencode").error(
                     "command /\(name) failed: \(error)")
+                await local.send(
+                    .failure(
+                        BackendFailure(
+                            message: "/\(name) didn't run.",
+                            retryable: true, detail: "\(error)")),
+                    to: sessionID)
             }
         }
     }
@@ -299,14 +460,21 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                 "the server reported no model for this session to summarize with")
         }
         let client = self.client
+        let local = self.local
+        let directory = await directories.directory(for: sessionID, client: client)
         Task.detached {
             do {
                 try await client.summarize(
-                    sessionID: sessionID, providerID: payload.providerID,
+                    sessionID: sessionID, directory: directory, providerID: payload.providerID,
                     modelID: payload.modelID)
             } catch {
                 AgentLog.logger("opencode").error(
                     "compaction of \(sessionID) failed: \(error)")
+                await local.send(
+                    .compaction(
+                        CompactionActivity(
+                            startedAt: Date(), failure: CompactionActivity.unexplainedFailure)),
+                    to: sessionID)
             }
         }
     }
