@@ -21,6 +21,7 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     let client: OpenCodeClient
     let directories = SessionDirectoryCache()
+    let compactions = CompactionWatch()
 
     public init(config: ServerConfig) {
         self.client = OpenCodeClient(config: config)
@@ -28,6 +29,16 @@ public struct OpenCodeBackend: FileBrowsingBackend {
 
     public init(client: OpenCodeClient) {
         self.client = client
+    }
+
+    /// What each session's last transcript read said about a compaction in flight, so the answer
+    /// is free at the moment the conversation asks for it.
+    actor CompactionWatch {
+        private var startedAt: [String: Date] = [:]
+
+        func record(_ moment: Date?, for sessionID: String) { startedAt[sessionID] = moment }
+
+        func value(for sessionID: String) -> Date? { startedAt[sessionID] }
     }
 
     /// opencode scopes `/event` and `/question` by workspace directory, so
@@ -276,7 +287,19 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     }
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
-        try await OpenCodeMapping.transcript(client.messages(sessionID: sessionID))
+        let envelopes = try await client.messages(sessionID: sessionID)
+        await compactions.record(
+            OpenCodeMapping.compactionInFlight(envelopes), for: sessionID)
+        return OpenCodeMapping.transcript(envelopes)
+    }
+
+    /// What the last read of this session's transcript said about a compaction still running. The
+    /// transcript is the authority — a dangling marker is `summarize` in flight — and it is read
+    /// here rather than fetched again, because the caller asks this immediately after a transcript
+    /// load and a second pass over a long conversation's messages is a round trip for a fact we
+    /// just had in hand.
+    public func runningCompaction(for sessionID: String) async throws -> CompactionActivity? {
+        await compactions.value(for: sessionID).map { CompactionActivity(startedAt: $0) }
     }
 
     /// opencode gives a spawned agent a session of its own, parented to the one

@@ -175,6 +175,34 @@ enum OpenCodeMapping {
     /// are one seam — a system message carrying a single compaction part with the summary inside —
     /// and read separately they are noise: the marker is dropped, and the summary's prose lives
     /// behind the seam card rather than as an answer bubble.
+    /// When the transcript itself says a compaction is still running, and since when.
+    ///
+    /// opencode writes the marker part the moment `summarize` begins and the summary only when it
+    /// ends, so a marker with no compaction-mode assistant message after it *is* the running
+    /// compaction — the one authority that outlives whichever process started it. Only the last
+    /// marker can be the live one; an earlier unmatched marker belongs to an attempt that is over.
+    ///
+    /// A marker older than ``staleMarker`` is not reported. Summarizing takes minutes, not hours,
+    /// and a failed one can leave its marker behind for good: without a clock on it, one dead
+    /// marker would pin "Compacting…" over a conversation for the rest of its life.
+    static func compactionInFlight(_ envelopes: [OCMessageEnvelope], now: Date = Date()) -> Date? {
+        var startedAt: Date?
+        for envelope in envelopes {
+            if envelope.parts.contains(where: { $0.type == "compaction" }) {
+                startedAt = envelope.info.time?.created.map(date) ?? now
+                continue
+            }
+            if envelope.info.role == "assistant", envelope.info.mode == "compaction" {
+                startedAt = nil
+            }
+        }
+        guard let startedAt, now.timeIntervalSince(startedAt) < staleMarker else { return nil }
+        return startedAt
+    }
+
+    /// How long an unanswered compaction marker is believed for.
+    static let staleMarker: TimeInterval = 30 * 60
+
     static func transcript(_ envelopes: [OCMessageEnvelope]) -> [ChatMessage] {
         var pendingAuto: Bool?
         var result: [ChatMessage] = []

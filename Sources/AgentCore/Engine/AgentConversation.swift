@@ -190,6 +190,23 @@ public actor AgentConversation {
         compaction = nil
     }
 
+    /// Takes the server's word for a compaction still running, so opening the conversation again —
+    /// on this device or another — brings the card back with it. A compaction is minutes of work
+    /// that no client's memory outlives, and on a backend where summarizing is not a turn nothing
+    /// else on screen says the transcript is being rewritten.
+    ///
+    /// Only an answer is adopted. A nil is not news: it is what every backend that cannot tell
+    /// says, so treating it as "nothing is happening" would take the card off screen at the first
+    /// refresh of a compaction the stream had just reported. What ends a compaction here is the
+    /// finish event, exactly as before. A failure already shown is not overwritten either — that
+    /// attempt is over, and the marker it left behind is not a second one starting.
+    private func adoptRunningCompaction(_ activity: CompactionActivity?) {
+        guard let activity else { return }
+        guard compaction?.isRunning != false else { return }
+        guard compaction?.startedAt != activity.startedAt else { return }
+        compaction = activity
+    }
+
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     {
         try await backend.respond(to: permission, decision: decision)
@@ -861,6 +878,7 @@ public actor AgentConversation {
             let messages = try await backend.messages(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
             let cutOff = await fetchInterruption()
+            let compacting = try? await backend.runningCompaction(for: sessionID)
             guard gen == generation else { return nil }
             guard !reachedTerminal else {
                 drainBufferedEvents(generation: gen)
@@ -874,6 +892,7 @@ public actor AgentConversation {
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }
             if case .answered(let cut) = cutOff { interruption = cut }
+            adoptRunningCompaction(compacting)
             lastFailure = nil
             markAnswered(generation: gen)
             drainBufferedEvents(generation: gen, alreadyFolded: folded)

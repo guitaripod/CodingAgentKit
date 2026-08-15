@@ -207,6 +207,32 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(OpenCodeMapping.transcript(envelopes).isEmpty)
     }
 
+    @Test func aDanglingMarkerIsTheRunningCompactionTheTranscriptRemembers() throws {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        let json = """
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":\(Int(started.timeIntervalSince1970 * 1000))}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]}]
+            """
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        #expect(
+            OpenCodeMapping.compactionInFlight(envelopes, now: started.addingTimeInterval(90))
+                == started)
+        #expect(
+            OpenCodeMapping.compactionInFlight(
+                envelopes, now: started.addingTimeInterval(OpenCodeMapping.staleMarker + 1)) == nil,
+            "a marker nothing ever answered stops speaking rather than pinning the card forever")
+    }
+
+    @Test func aMarkerItsSummaryAnsweredIsNoLongerRunning() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]},
+             {"info":{"id":"msg_S","role":"assistant","sessionID":"ses_S","mode":"compaction","time":{"created":2,"completed":3}},"parts":[{"id":"prt_t","messageID":"msg_S","sessionID":"ses_S","type":"text","text":"S"}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        #expect(OpenCodeMapping.compactionInFlight(envelopes, now: Date()) == nil)
+    }
+
     @Test func aMarkerPartEventIsTheRunningActivityNotATranscriptRow() {
         let event = decode(
             #"{"type":"message.part.updated","properties":{"sessionID":"ses_S","part":{"type":"compaction","auto":false,"messageID":"msg_U","sessionID":"ses_S","id":"prt_c"}}}"#

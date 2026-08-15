@@ -819,6 +819,19 @@ public protocol CodingAgentBackend: Sendable {
     /// interrupted; a backend that cannot tell throws ``AgentError/unsupported(_:)``, which is a
     /// different answer and must not be rendered as "nothing happened".
     func interruption(for sessionID: String) async throws -> TurnInterruption?
+    /// A compaction this server is running right now, as the server itself reports it rather than
+    /// as this process remembers it.
+    ///
+    /// Compacting is minutes of work that on some backends is not a turn at all, so the only thing
+    /// saying it is happening is an activity held in memory by whoever started it. Leave the
+    /// conversation and come back — a fresh screen, a second device, a relaunch — and that memory
+    /// is gone while the machine is still rewriting the transcript, which leaves a conversation
+    /// being replaced looking like an idle one. Read at every transcript load, so the card comes
+    /// back with the conversation.
+    ///
+    /// `nil` means nothing is being summarized *or* that this backend cannot tell; a caller must
+    /// therefore adopt an answer, never clear a running compaction because of a nil.
+    func runningCompaction(for sessionID: String) async throws -> CompactionActivity?
     /// Picks the interrupted turn back up on the server that holds it.
     func resumeInterruption(sessionID: String) async throws
     /// Lets the interrupted turn go without continuing it. The record goes; the transcript keeps
@@ -915,6 +928,10 @@ extension CodingAgentBackend {
 
     public func interruption(for sessionID: String) async throws -> TurnInterruption? {
         throw AgentError.unsupported("interruption")
+    }
+
+    public func runningCompaction(for sessionID: String) async throws -> CompactionActivity? {
+        nil
     }
 
     public func resumeInterruption(sessionID: String) async throws {
