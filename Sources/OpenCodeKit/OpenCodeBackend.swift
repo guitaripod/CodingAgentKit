@@ -139,29 +139,35 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         static func scope(of directory: String?) -> String { directory ?? "" }
     }
 
-    /// One `/session/status` per distinct workspace, asked together. A scope that throws is simply
-    /// left out of the reading, so its sessions keep saying nothing rather than saying idle.
+    /// One `/session/status` per distinct workspace, asked in the same small batches the directory
+    /// walk uses so a machine with thirty projects does not open thirty sockets at once. A scope
+    /// that throws is simply left out of the reading, so its sessions keep saying nothing rather
+    /// than saying idle.
     func liveness(scopes: Set<String>) async -> LivenessReading {
         var reading = LivenessReading()
         guard !scopes.isEmpty else { return reading }
         let client = self.client
-        let answers = await withTaskGroup(
-            of: (String, [String: OCSessionStatus]?).self
-        ) { group -> [(String, [String: OCSessionStatus]?)] in
-            for scope in scopes {
-                group.addTask {
-                    let statuses = try? await client.sessionStatuses(
-                        directory: scope.isEmpty ? nil : scope)
-                    return (scope, statuses)
+        let ordered = Array(scopes)
+        for start in stride(from: 0, to: ordered.count, by: 6) {
+            let batch = ordered[start..<min(start + 6, ordered.count)]
+            let answers = await withTaskGroup(
+                of: (String, [String: OCSessionStatus]?).self
+            ) { group -> [(String, [String: OCSessionStatus]?)] in
+                for scope in batch {
+                    group.addTask {
+                        let statuses = try? await client.sessionStatuses(
+                            directory: scope.isEmpty ? nil : scope)
+                        return (scope, statuses)
+                    }
                 }
+                var collected: [(String, [String: OCSessionStatus]?)] = []
+                for await answer in group { collected.append(answer) }
+                return collected
             }
-            var collected: [(String, [String: OCSessionStatus]?)] = []
-            for await answer in group { collected.append(answer) }
-            return collected
-        }
-        for (scope, statuses) in answers {
-            guard let statuses else { continue }
-            reading.absorb(statuses, scope: scope)
+            for (scope, statuses) in answers {
+                guard let statuses else { continue }
+                reading.absorb(statuses, scope: scope)
+            }
         }
         return reading
     }
