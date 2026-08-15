@@ -774,7 +774,16 @@ public actor AgentConversation {
     /// The transcript is the source of truth after a refresh: status events
     /// that fired while we were disconnected are gone forever, so a completed
     /// or visibly-streaming last message must correct a stale status.
+    ///
+    /// It also spends `.unknown`. That word means one thing — nobody has told this conversation
+    /// anything yet — and a successful read of the server's own transcript is being told, even
+    /// when what it says is that nothing is running. Leaving it standing made a watcher that had
+    /// heard the whole story indistinguishable from one that had just subscribed, and a listing
+    /// that cannot report a turn of its own then had nothing left to fall back on. The one case
+    /// this decides rather than reads is a transcript ending at the user's message: a turn adopted
+    /// mid-flight from another machine settles as idle until its first assistant line lands.
     private func deriveStatusFromTranscript() {
+        defer { if status == .unknown { status = .idle } }
         guard let last = reducer.snapshot.last, last.role == .assistant else { return }
         if last.completedAt != nil {
             if status == .running { status = .idle }
