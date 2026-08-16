@@ -153,6 +153,46 @@ extension MessagePart.Kind: Codable {
     }
 }
 
+/// What one turn actually consumed, split into the tiers that price and behave differently.
+///
+/// The split is the whole point of carrying it: a total says a turn was large, where the tiers say
+/// what made it large — a long answer, a context read back out of cache for a tenth of the price,
+/// or a cache written at a premium so the next turn is cheap. Only ``output`` is produced at the
+/// model's own speed, so it is also the only tier a rate may be computed from; dividing a total by
+/// a duration prices the wait for a prompt the model never wrote.
+///
+/// Absent means the server did not say. Zero means it said nothing was spent, which is a different
+/// fact and belongs to answerless turns.
+public struct MessageUsage: Sendable, Hashable, Codable {
+    public var input: Int
+    public var output: Int
+    /// Thinking, where the server counts it apart from the answer. Providers that fold it into
+    /// `output` leave this at zero rather than double-counting it.
+    public var reasoning: Int
+    public var cacheRead: Int
+    public var cacheWrite: Int
+
+    public init(
+        input: Int = 0, output: Int = 0, reasoning: Int = 0, cacheRead: Int = 0, cacheWrite: Int = 0
+    ) {
+        self.input = input
+        self.output = output
+        self.reasoning = reasoning
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
+    }
+
+    public var total: Int { input + output + reasoning + cacheRead + cacheWrite }
+
+    /// Everything the model wrote, which is what a speed is measured against.
+    public var written: Int { output + reasoning }
+
+    /// Everything it was handed, however it was paid for.
+    public var read: Int { input + cacheRead + cacheWrite }
+
+    public var isEmpty: Bool { total == 0 }
+}
+
 public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var role: MessageRole
@@ -167,6 +207,15 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public var modelID: String?
     public var reasoningEffort: String?
     public var totalTokens: Int?
+    /// The same tokens split by tier, where the server reports them that way. `totalTokens` stays
+    /// the one number every existing surface reads; this is what a turn's own account is drawn
+    /// from, and what a speed can honestly be computed against.
+    public var usage: MessageUsage?
+    /// How long the turn took, where the server measured it itself — from the moment the person
+    /// pressed return to the last thing the turn wrote, which is the wait a person actually had.
+    /// Nil where the server does not say and the stamps are all there is; never a substitute for
+    /// ``completedAt``, which some backends do not stamp and whose absence means "still open".
+    public var duration: TimeInterval?
     /// The backend's own word for how the turn ended, verbatim and never translated here — a
     /// client that shows it shows what the server said.
     public var finishReason: String?
@@ -185,6 +234,8 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         modelID: String? = nil,
         reasoningEffort: String? = nil,
         totalTokens: Int? = nil,
+        usage: MessageUsage? = nil,
+        duration: TimeInterval? = nil,
         finishReason: String? = nil
     ) {
         self.id = id
@@ -200,6 +251,8 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
         self.totalTokens = totalTokens
+        self.usage = usage
+        self.duration = duration
         self.finishReason = finishReason
     }
 

@@ -93,20 +93,19 @@ enum OpenCodeMapping {
             providerID: message.providerID,
             modelID: message.modelID,
             reasoningEffort: message.variant,
-            totalTokens: totalTokens(message.tokens),
+            totalTokens: usage(message.tokens).map(\.total),
+            usage: usage(message.tokens),
             finishReason: message.finish
         )
     }
 
-    private static func totalTokens(_ tokens: OCTokens?) -> Int? {
+    private static func usage(_ tokens: OCTokens?) -> MessageUsage? {
         guard let tokens else { return nil }
-        let input: Double = tokens.input ?? 0
-        let output: Double = tokens.output ?? 0
-        let reasoning: Double = tokens.reasoning ?? 0
-        let cacheRead: Double = tokens.cache?.read ?? 0
-        let cacheWrite: Double = tokens.cache?.write ?? 0
-        let total = input + output + reasoning + cacheRead + cacheWrite
-        return total > 0 ? Int(total) : nil
+        let usage = MessageUsage(
+            input: Int(tokens.input ?? 0), output: Int(tokens.output ?? 0),
+            reasoning: Int(tokens.reasoning ?? 0), cacheRead: Int(tokens.cache?.read ?? 0),
+            cacheWrite: Int(tokens.cache?.write ?? 0))
+        return usage.isEmpty ? nil : usage
     }
 
     static func part(_ part: OCPart) -> MessagePart {

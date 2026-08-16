@@ -538,11 +538,32 @@ struct BRGoal: Decodable {
     }
 }
 
+/// The token tiers as the bridge splits them, which is one field finer than ``MessageUsage``: it
+/// keeps the two cache-write lifetimes apart because they are priced apart. Nothing above the Kit
+/// prices anything, so they are added back together on the way in.
+struct BRTokens: Decodable {
+    let input: Int?
+    let output: Int?
+    let cacheRead: Int?
+    let cacheWrite5m: Int?
+    let cacheWrite1h: Int?
+
+    var usage: MessageUsage {
+        MessageUsage(
+            input: input ?? 0, output: output ?? 0, reasoning: 0, cacheRead: cacheRead ?? 0,
+            cacheWrite: (cacheWrite5m ?? 0) + (cacheWrite1h ?? 0))
+    }
+}
+
 struct BRMessage: Decodable {
     let id: String
     let role: String
     let parts: [BRPart]
     let createdAt: Date
+    let seconds: Double?
+    let model: String?
+    let usage: BRTokens?
+    let costUSD: Double?
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
     /// get an index suffix so `messageID:partID` row identifiers stay unique. The
@@ -556,9 +577,11 @@ struct BRMessage: Decodable {
             counts[part.id] = seen + 1
             return seen == 0 ? part : MessagePart(id: "\(part.id)-\(seen)", kind: part.kind)
         }
+        let tiers = usage?.usage
         return ChatMessage(
             id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: .claudeCode,
-            parts: uniqueParts, createdAt: createdAt)
+            parts: uniqueParts, createdAt: createdAt, costUSD: costUSD, modelID: model,
+            totalTokens: tiers.map(\.total), usage: tiers, duration: seconds)
     }
 }
 
