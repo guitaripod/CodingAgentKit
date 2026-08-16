@@ -35,6 +35,7 @@ public actor AgentConversation {
     private var droppedDeltaDuringRecovery = false
     private var reachedTerminal = false
     private var lastEventAt = Date()
+    private var lastRecordSeen: Date?
 
     private static let maxRecoveryRefreshPasses = 3
     private static let staleTurnThreshold: TimeInterval = 45
@@ -402,10 +403,20 @@ public actor AgentConversation {
             }
         }
         defer { watchdog.cancel() }
+        let recordInterval = policy.sessionRecordInterval
+        let record = Task { [weak self] in
+            await self?.baselineServerRecord(generation: gen)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: recordInterval)
+                await self?.followServerRecord(generation: gen)
+            }
+        }
+        defer { record.cancel() }
         recoveryRefreshInFlight = false
         droppedDeltaDuringRecovery = false
         reachedTerminal = false
         lastEventAt = Date()
+        lastRecordSeen = nil
         await seedFromCache(generation: gen)
         refreshInFlight = true
         bufferedEvents = []
@@ -653,6 +664,51 @@ public actor AgentConversation {
         lastEventAt = Date()
         await refreshQuietly(generation: gen)
         noticeCutOffTurn(matching: before, generation: gen)
+    }
+
+    /// Where the server's record stood when this connection opened, so the first advance after it
+    /// is an advance rather than a first sighting. Taken beside the opening transcript fetch rather
+    /// than after it: a write that lands between the two readings is one this notices next tick,
+    /// where a baseline taken a whole interval later would have swallowed it.
+    private func baselineServerRecord(generation gen: Int) async {
+        guard gen == generation, lastRecordSeen == nil else { return }
+        let reading: SessionRevision?
+        do { reading = try await backend.revision(for: sessionID) } catch { return }
+        guard gen == generation, lastRecordSeen == nil else { return }
+        lastRecordSeen = reading?.updatedAt
+    }
+
+    /// A stream is silent for two reasons and only one of them is nothing happening.
+    ///
+    /// An event stream carries the turns the server ran for the process holding it: opencode's bus
+    /// is per-process, so a session another process on that machine is writing — `opencode run`
+    /// under a benchmark script, a second serve, an agent somebody left working in a terminal —
+    /// grows in the same storage this server reads and puts nothing at all on this wire. Nothing
+    /// says the turn is running, so no watchdog for a running turn fires either, and the transcript
+    /// sits exactly where the last event left it until a person leaves the chat and comes back,
+    /// which is a refetch by another name.
+    ///
+    /// So a conversation follows the server's own record rather than the events it happened to be
+    /// told: once the stream has been quiet for a whole interval, the record says when the session
+    /// was last written to, and an advance is re-read. A conversation streaming normally never asks
+    /// — every event pushes the quiet window out — and a backend that cannot answer leaves the
+    /// question where it was rather than concluding that nothing changed.
+    private func followServerRecord(generation gen: Int) async {
+        let quiet = policy.sessionRecordInterval.timeInterval
+        guard gen == generation, connection == .live, !reachedTerminal,
+            !refreshInFlight, !recoveryRefreshInFlight,
+            Date().timeIntervalSince(lastEventAt) >= quiet
+        else { return }
+        let reading: SessionRevision?
+        do { reading = try await backend.revision(for: sessionID) } catch { return }
+        guard gen == generation, let updatedAt = reading?.updatedAt else { return }
+        guard let seen = lastRecordSeen else {
+            lastRecordSeen = updatedAt
+            return
+        }
+        guard updatedAt > seen else { return }
+        lastRecordSeen = updatedAt
+        await refreshQuietly(generation: gen)
     }
 
     /// A turn that did not move by a character across a whole quiet stretch, on a server that

@@ -722,6 +722,15 @@ public protocol CodingAgentBackend: Sendable {
     func createSession(title: String?, directory: String?) async throws -> AgentSession
     func deleteSession(_ sessionID: String) async throws
     func messages(for sessionID: String) async throws -> [ChatMessage]
+    /// Where the server's own record of this session stands right now, asked on a clock while the
+    /// event stream is silent. It exists because silence on a stream is not evidence that nothing
+    /// happened: opencode's bus is per-process, so a turn another process on that machine is
+    /// running writes the same transcript with nothing on the wire, and a client that believed the
+    /// stream would leave the answer unread until somebody reopened the chat.
+    ///
+    /// Must be cheap — one small request, not the transcript. `nil` from a backend that cannot say,
+    /// which leaves the conversation on its other defences rather than asserting nothing changed.
+    func revision(for sessionID: String) async throws -> SessionRevision?
     func send(_ prompt: SendPrompt, to sessionID: String) async throws
     func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error>
     func abort(sessionID: String) async throws
@@ -900,6 +909,8 @@ extension CodingAgentBackend {
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
         try await listSessions()
     }
+
+    public func revision(for sessionID: String) async throws -> SessionRevision? { nil }
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport? { nil }

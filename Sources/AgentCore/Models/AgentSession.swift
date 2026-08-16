@@ -14,6 +14,24 @@ public struct AgentProject: Identifiable, Sendable, Hashable, Codable {
     }
 }
 
+/// Where the server's own record of one conversation stands, cheap enough to ask on a clock.
+///
+/// An event stream carries the turns the server ran for the process holding it, which is not the
+/// same set as the turns that happened in the session: a machine can be writing the same transcript
+/// from another process entirely — `opencode run` under a script, a second serve, an agent somebody
+/// started in a terminal — and none of it reaches a bus this connection is not on. The record is
+/// what sees that work, so a client that must not miss it reads this rather than trusting silence.
+public struct SessionRevision: Sendable, Hashable {
+    /// When the server last wrote to this conversation, by the server's own clock. Only ever
+    /// compared against another reading of the same clock. `nil` from a server that keeps the
+    /// session but stamps nothing, which is *cannot say* rather than *has not changed*.
+    public var updatedAt: Date?
+
+    public init(updatedAt: Date?) {
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public let agentType: AgentType

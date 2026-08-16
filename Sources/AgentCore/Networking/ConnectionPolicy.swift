@@ -8,6 +8,10 @@ public struct ConnectionPolicy: Sendable, Hashable {
     public var reconnectMaxDelay: Duration
     public var reconnectJitter: Double
     public var maxReconnectAttempts: Int?
+    /// How often an open conversation consults the server's own record of the session
+    /// (``CodingAgentBackend/revision(for:)``), and how long the stream must have been silent
+    /// before it bothers: a conversation whose events are arriving never asks at all.
+    public var sessionRecordInterval: Duration
 
     public init(
         requestTimeout: Duration = .seconds(30),
@@ -15,7 +19,8 @@ public struct ConnectionPolicy: Sendable, Hashable {
         reconnectBaseDelay: Duration = .seconds(1),
         reconnectMaxDelay: Duration = .seconds(30),
         reconnectJitter: Double = 0.2,
-        maxReconnectAttempts: Int? = nil
+        maxReconnectAttempts: Int? = nil,
+        sessionRecordInterval: Duration = .seconds(10)
     ) {
         self.requestTimeout = requestTimeout
         self.resourceTimeout = resourceTimeout
@@ -23,6 +28,7 @@ public struct ConnectionPolicy: Sendable, Hashable {
         self.reconnectMaxDelay = reconnectMaxDelay
         self.reconnectJitter = reconnectJitter
         self.maxReconnectAttempts = maxReconnectAttempts
+        self.sessionRecordInterval = sessionRecordInterval
     }
 
     public static let `default` = ConnectionPolicy()

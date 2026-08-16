@@ -293,6 +293,18 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         return OpenCodeMapping.transcript(envelopes)
     }
 
+    /// opencode's event bus belongs to one process. A session another process on the same machine
+    /// is writing — `opencode run` under a script, a second serve, a CLI somebody left working —
+    /// lands in the same storage the server reads, and emits nothing at all on this connection's
+    /// `/event`. The session record is where that work is visible: it carries when the store was
+    /// last written to, in one small request, so a conversation can follow a turn it was never told
+    /// about.
+    public func revision(for sessionID: String) async throws -> SessionRevision? {
+        let session = try await client.session(sessionID)
+        guard let time = session.time else { return SessionRevision(updatedAt: nil) }
+        return SessionRevision(updatedAt: OpenCodeMapping.date(time.updated ?? time.created))
+    }
+
     /// What the last read of this session's transcript said about a compaction still running. The
     /// transcript is the authority — a dangling marker is `summarize` in flight — and it is read
     /// here rather than fetched again, because the caller asks this immediately after a transcript
