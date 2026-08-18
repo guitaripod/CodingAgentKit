@@ -722,6 +722,53 @@ extension OpenCodeBackend: RestartableBackend {
     }
 }
 
+/// opencode has no `/git` routes. When the conversation's directory is a path this process can
+/// open — the desktop client sitting next to the checkout — the repository is read locally. A
+/// remote phone talking to a remote opencode has no path here, so the band stays quiet about git
+/// rather than inventing a failure.
+extension OpenCodeBackend: GitObservingBackend {
+    public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        return await Task.detached(priority: .utility) {
+            LocalGit.snapshot(directory: directory)
+        }.value
+    }
+
+    public func gitPatch(directory: String?, sessionID: String?, path: String, staged: Bool)
+        async throws -> GitPatch?
+    {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        return await Task.detached(priority: .utility) {
+            LocalGit.patch(directory: directory, path: path, staged: staged)
+        }.value
+    }
+
+    public func gitCommit(directory: String?, sessionID: String?, hash: String) async throws
+        -> GitCommitDetail?
+    {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        return await Task.detached(priority: .utility) {
+            LocalGit.commit(directory: directory, hash: hash)
+        }.value
+    }
+
+    private func resolveGitDirectory(_ directory: String?, sessionID: String?) async -> String? {
+        if let directory, !directory.isEmpty,
+            FileManager.default.fileExists(atPath: directory)
+        {
+            return directory
+        }
+        guard let sessionID, !sessionID.isEmpty,
+            let resolved = await directories.directory(for: sessionID, client: client),
+            FileManager.default.fileExists(atPath: resolved)
+        else { return nil }
+        return resolved
+    }
+}
+
 extension OpenCodeBackend: ServeManagerBackend {
     /// The whole setup, run on the machine by the machine: opencode if it is missing, the
     /// supervisor that survives a reboot, the restart command, and the check that restarts the
