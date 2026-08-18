@@ -730,9 +730,13 @@ extension OpenCodeBackend: GitObservingBackend {
     public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
         guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
         else { return nil }
+        #if os(macOS) || os(Linux)
         return await Task.detached(priority: .utility) {
             LocalGit.snapshot(directory: directory)
         }.value
+        #else
+        return nil
+        #endif
     }
 
     public func gitPatch(directory: String?, sessionID: String?, path: String, staged: Bool)
@@ -740,9 +744,13 @@ extension OpenCodeBackend: GitObservingBackend {
     {
         guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
         else { return nil }
+        #if os(macOS) || os(Linux)
         return await Task.detached(priority: .utility) {
             LocalGit.patch(directory: directory, path: path, staged: staged)
         }.value
+        #else
+        return nil
+        #endif
     }
 
     public func gitCommit(directory: String?, sessionID: String?, hash: String) async throws
@@ -750,9 +758,13 @@ extension OpenCodeBackend: GitObservingBackend {
     {
         guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
         else { return nil }
+        #if os(macOS) || os(Linux)
         return await Task.detached(priority: .utility) {
             LocalGit.commit(directory: directory, hash: hash)
         }.value
+        #else
+        return nil
+        #endif
     }
 
     private func resolveGitDirectory(_ directory: String?, sessionID: String?) async -> String? {

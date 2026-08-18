@@ -1,5 +1,6 @@
 import Foundation
 
+#if os(macOS) || os(Linux)
 /// Reads a repository through git's own plumbing on this machine. Used when the agent server has
 /// no `/git` routes (opencode) but the conversation's directory is a path this process can open —
 /// the desktop client sitting next to the checkout. A path that is not here returns nil, which is
@@ -463,3 +464,4 @@ extension String {
         return trimmed.isEmpty ? nil : trimmed
     }
 }
+#endif
