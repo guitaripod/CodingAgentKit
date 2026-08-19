@@ -39,7 +39,9 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
 
         var observed: ConversationState?
-        for await state in await conversation.states() where state.status == .idle {
+        for await state in await conversation.states()
+        where state.status == .idle, !state.pendingPermissions.isEmpty
+        {
             observed = state
             break
         }
