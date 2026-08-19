@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.18.0
+
+A conversation hears the machine's own record, and a turn carries what it took.
+
+### Added
+- **A turn carries what it consumed, split by the tiers that price apart.** A total says a turn was
+  large; the tiers say what made it large. `MessageUsage` carries input, output, thinking, cache
+  read and cache write per assistant turn, and `ChatMessage.duration` carries the wait where the
+  server measured it itself — never a second completion stamp, which everything that tells a live
+  turn from a settled one reads as an ending.
+- **A silent stream follows the server's own record.** opencode's event bus belongs to one process;
+  a session another process on that machine is writing grows in the same storage the server reads
+  and puts nothing on this connection's wire. The conversation now reads the session record once
+  the stream has been quiet for a whole interval, and re-reads the transcript when the record
+  moves — a conversation streaming normally never asks, and a backend that cannot answer leaves
+  the question unanswered rather than being taken to mean nothing changed.
+- **`LocalGit` reads git from the local checkout when the path is here.** opencode has no /git
+  routes; a client sitting beside the worktree wears the branch chip by running porcelain locally.
+  A remote path answers nil the same way an old bridge does.
+- **A listing can say a turn is open, and a catalog can say what it knows.** opencode keeps
+  liveness in memory rather than in the session record, so every chat read as settled until it was
+  opened. `/session/status` answers it per workspace, `/global/event` carries the transitions so
+  the list follows the machine instead of the refresh button, and the command catalog forwards the
+  session's directory and publishes `compact` beside the server's own.
+- **A server set up by hand is one press from being managed.** A restart that fails because the
+  machine was never set up is the offer, not the refusal: `ServeManagerBackend` runs the installer
+  on the server through its own pty, waits out the supervisor handover, and proves the machine
+  restarts before reporting success.
+
+### Fixed
+- **A summarize that outlives the screen is still reported.** A compaction underway was a fact one
+  process happened to remember; leave the conversation and the memory was gone while the machine
+  was still rewriting the transcript. The server is asked instead: `runningCompaction(for:)` joins
+  the backend protocol, and opencode reads it out of the transcript it already fetched — a marker
+  with no summarizing message after it *is* the summarize in flight, with a clock so a failed
+  attempt cannot pin "Compacting…" forever.
+- **A successful read of the transcript spends unknown.** `.unknown` means nobody has told this
+  conversation anything yet — and a successful read of the server's own transcript is being told,
+  even when what it says is that nothing is running.
+
+### Changed
+- **The status asks go out in the same batches the directory walk uses.** A machine with thirty
+  projects would otherwise open thirty sockets at once every time the chat list refreshed.
+
+## 0.17.0
+
+A server can be started over, and a turn its machine killed says so.
+
+### Added
+- **`RestartableBackend.restartServer()`.** A long-lived `opencode serve` resolves its providers,
+  config and plugins once at startup and never again, and the machine it runs on is one nobody
+  present can open a terminal on. opencode has no restart route, so the ask runs the command the
+  setup script leaves on the machine, through the login shell, in a pty the server owns; then it
+  checks, because a restart that quietly did nothing is the one outcome nobody can act on.
+- **A turn whose machine died is a state, not a silence.** opencode records nothing to tell a
+  killed turn from a running one, so the transcript alone cannot say. What can is the client that
+  watched both sides: a turn that has not moved by a single character across a whole stretch with
+  the transport up is a turn whose machine went, and any part arriving at all disqualifies the
+  reading, so a slow model is never called dead. The card, the account of how far the work got and
+  "pick it back up" are the ones the bridge already had; a server with no resume route is asked
+  the prompt again.
+
 ## 0.16.0
 
 A server can be trusted to keep itself current, and a restart never takes a turn with it.
