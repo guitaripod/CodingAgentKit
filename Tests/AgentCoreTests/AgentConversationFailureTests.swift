@@ -218,9 +218,11 @@ private func firstState(
         let firstStream = await conversation.states()
         let secondStream = await conversation.states()
 
-        async let first = settledState(of: firstStream)
-        async let second = settledState(of: secondStream)
-        let (a, b) = await (first, second)
+        // Settled one after the other: concurrent async-let teardown aborts the Linux task
+        // allocator ("freed pointer was not the last allocation", swiftlang/swift#81771). Both
+        // streams are still live observers on the one shared run loop.
+        let a = await settledState(of: firstStream)
+        let b = await settledState(of: secondStream)
 
         #expect(a?.messages.filter { $0.role == .assistant }.count == 1)
         #expect(a?.messages.first?.text == "hi")
