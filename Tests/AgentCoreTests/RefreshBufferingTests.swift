@@ -162,6 +162,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
     }
 
     await waitUntil { await conversation.state.status == .idle }
+    await waitUntil { await conversation.state.messages.last?.text == "Hello world.Then more." }
     let messages = await conversation.state.messages
     _ = states
     return messages
@@ -218,6 +219,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
         server.release()
 
         await waitUntil { await conversation.state.status == .idle }
+        await waitUntil { await conversation.state.messages.last?.text == "Hello world.Then more." }
         let messages = await conversation.state.messages
         #expect(messages.last?.text == "Hello world.Then more.")
         #expect(messages.last?.parts.map(\.id) == ["text", "t1", "text-1"])
