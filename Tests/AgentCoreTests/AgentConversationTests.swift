@@ -40,8 +40,7 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
 
         var observed: ConversationState?
         for await state in await conversation.states()
-        where state.status == .idle, !state.pendingPermissions.isEmpty
-        {
+        where state.status == .idle && !state.pendingPermissions.isEmpty {
             observed = state
             break
         }
