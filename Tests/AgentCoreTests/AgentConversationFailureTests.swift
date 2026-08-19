@@ -254,7 +254,7 @@ private func firstState(
             agentType: .openCode,
             script: [
                 MockScriptStep(.permission(request)),
-                MockScriptStep(.permissionResolved(requestID: "p1")),
+                MockScriptStep(.permissionResolved(requestID: "p1"), delay: .milliseconds(200)),
                 MockScriptStep(.permission(request)),
                 MockScriptStep(.status(.idle)),
             ])
@@ -267,7 +267,7 @@ private func firstState(
         for await state in await conversation.states() {
             seen += 1
             if !state.pendingPermissions.isEmpty { sawTheRequest = true }
-            if state.status == .idle {
+            if sawTheRequest, state.status == .idle, state.pendingPermissions.isEmpty {
                 settled = state
                 break
             }

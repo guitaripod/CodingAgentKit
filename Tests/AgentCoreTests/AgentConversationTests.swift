@@ -10,6 +10,12 @@ private let fastPolicy = ConnectionPolicy(
     reconnectJitter: 0
 )
 
+private let slowReconnectPolicy = ConnectionPolicy(
+    reconnectBaseDelay: .milliseconds(300),
+    reconnectMaxDelay: .milliseconds(300),
+    reconnectJitter: 0
+)
+
 private func assistant(_ id: String, _ text: String) -> BackendEvent {
     .messageUpserted(
         ChatMessage(
@@ -46,15 +52,19 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
     @Test func reconnectsAfterMidStreamDrop() async {
         let backend = MockBackend(
             agentType: .openCode,
-            script: [MockScriptStep(assistant("a", "hi")), MockScriptStep(.status(.idle))],
+            script: [
+                MockScriptStep(.status(.running)),
+                MockScriptStep(assistant("a", "hi")),
+                MockScriptStep(.status(.idle)),
+            ],
             failAfter: 1)
-        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: slowReconnectPolicy)
 
         var sawReconnecting = false
         var recovered: ConversationState?
         for await state in await conversation.states() {
             if state.connection == .reconnecting { sawReconnecting = true }
-            if state.status == .idle {
+            if sawReconnecting, state.status == .idle {
                 recovered = state
                 break
             }
