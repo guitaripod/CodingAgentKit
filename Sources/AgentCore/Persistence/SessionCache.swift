@@ -8,6 +8,7 @@ public protocol SessionCache: Sendable {
 public actor InMemorySessionCache: SessionCache {
     private var sessionsByAgent: [AgentType: [AgentSession]] = [:]
     private var messagesBySession: [String: [ChatMessage]] = [:]
+    var sessionsByHost: [String: [AgentSession]] = [:]
 
     public init() {}
 

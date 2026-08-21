@@ -61,6 +61,16 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// working, or none.
     public var agentTask: String?
 
+    /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
+    /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
+    /// session read straight from one leaves this nil, where there is only one machine and the
+    /// question does not arise.
+    public var hostID: String?
+
+    /// Host-scoped identity, once ``hostID`` has been stamped. Nil means the session was never
+    /// merged across hosts, so the caller already knows which machine it asked.
+    public var ref: SessionRef? { hostID.map { SessionRef(hostID: $0, sessionID: id) } }
+
     /// Live work is happening for this session — its own turn is in flight, or
     /// agents it spawned are still running.
     public var isWorking: Bool { isActive == true || (activeAgents ?? 0) > 0 }
@@ -84,7 +94,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         modelProviderID: String? = nil,
         reasoningEffort: String? = nil,
         activeAgents: Int? = nil,
-        agentTask: String? = nil
+        agentTask: String? = nil,
+        hostID: String? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -99,5 +110,6 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.reasoningEffort = reasoningEffort
         self.activeAgents = activeAgents
         self.agentTask = agentTask
+        self.hostID = hostID
     }
 }
