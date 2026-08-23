@@ -175,9 +175,12 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             .interruption?.interruption
     }
 
+    /// The route the bridge has served since the record existed. Posting anywhere else answers 404
+    /// on every bridge ever shipped, and a 404 is read here as a server too old for the route — so
+    /// a wrong path turns every press into the re-send fallback and the conflict the server meant
+    /// to report is never seen by anyone.
     public func resumeInterruption(sessionID: String) async throws {
-        _ = try await http.send(
-            builder.request(.post, "/sessions/\(sessionID)/interruption/resume"))
+        _ = try await http.send(builder.request(.post, "/sessions/\(sessionID)/resume"))
     }
 
     public func dismissInterruption(sessionID: String) async throws {

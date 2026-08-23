@@ -45,8 +45,8 @@ extension AgentError: LocalizedError {
         switch self {
         case .http(let status, let body):
             if let data = body.data(using: .utf8),
-                let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-                let message = object["error"], !message.isEmpty
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let message = object["error"] as? String, !message.isEmpty
             {
                 return message
             }

@@ -360,29 +360,130 @@ public actor AgentConversation {
     /// turn is asked again rather than refused. That is the whole of what "picking it up" can mean
     /// on a machine that kept no memory of the work — and it is what a person would otherwise do
     /// by hand, from the same evidence, with more steps.
+    ///
+    /// A conflict is the one answer that proves this device's card is stale, and it must never be
+    /// a dead end: the record is re-read from the server before the refusal is rethrown, so the
+    /// card the person is looking at corrects itself or comes down in the same breath as the
+    /// sentence explaining why their press was refused. The error carries the server's own body,
+    /// which is where that sentence comes from — this side never substitutes one.
     public func resumeInterruptedTurn() async throws {
         let cutOff = interruption
         do {
             try await backend.resumeInterruption(sessionID: sessionID)
-        } catch AgentError.unsupported {
-            guard let prompt = cutOff?.prompt, !prompt.isEmpty else { throw AgentError.unsupported("interruption") }
-            try await send(prompt)
+        } catch let error as AgentError {
+            switch Self.refusal(error) {
+            case .routeMissing:
+                try await resendInterruptedPrompt(cutOff)
+                interruption = nil
+                emit()
+                return
+            case .conflict:
+                await adoptServersInterruption()
+                throw error
+            case .other:
+                throw error
+            }
         }
-        interruption = nil
-        emit()
+        await adoptAcceptedResume(cutOff)
     }
 
     /// Lets the interrupted turn go. The record goes; nothing in the transcript changes.
     ///
     /// A server that never held the record has nothing to forget, and a card this client put up
     /// on its own is this client's to take down — so its refusal is not an error to show anyone.
+    /// A conflict here says the record is already gone, which is what the press asked for: the
+    /// server's own state is adopted and the card comes down, rather than a failure being reported
+    /// for having got what was wanted.
     public func dismissInterruptedTurn() async throws {
         do {
             try await backend.dismissInterruption(sessionID: sessionID)
-        } catch AgentError.unsupported {
+        } catch let error as AgentError {
+            switch Self.refusal(error) {
+            case .routeMissing:
+                break
+            case .conflict:
+                await adoptServersInterruption()
+                return
+            case .other:
+                throw error
+            }
         }
         interruption = nil
         emit()
+    }
+
+    /// What a refused press means for the card.
+    ///
+    /// Three answers, and only one of them is a failure to report. A route the server does not have
+    /// is an old bridge, which the prompt in the transcript can stand in for. A conflict is proof
+    /// this device is out of date, which is a thing to correct. Everything else — a machine that
+    /// went away, a server that broke — is the person's to see.
+    private enum PressRefusal {
+        case routeMissing
+        case conflict
+        case other
+    }
+
+    /// A 404 is two answers wearing one status: a bridge too old to have the route at all, and this
+    /// bridge saying it no longer knows the session. They are told apart by whether the body names
+    /// a reason, because only the second is written by code that knows what was asked.
+    private static func refusal(_ error: AgentError) -> PressRefusal {
+        switch error {
+        case .unsupported:
+            return .routeMissing
+        case .http(status: 404, let body):
+            return reasonCode(in: body) == nil ? .routeMissing : .conflict
+        case .http(status: 409, _):
+            return .conflict
+        default:
+            return .other
+        }
+    }
+
+    private static func reasonCode(in body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let code = object["reason"] as? String, !code.isEmpty
+        else { return nil }
+        return code
+    }
+
+    /// Replaces the card with whatever the server actually holds, which is the whole of what a
+    /// conflict is worth: the record comes back corrected — already being picked up — or gone. A
+    /// server that cannot answer leaves the card standing, on the same rule every other read of it
+    /// follows: only an answer clears a card, never a failure to get one.
+    private func adoptServersInterruption() async {
+        guard case .answered(let cut) = await fetchInterruption() else { return }
+        interruption = cut
+        emit()
+    }
+
+    /// What an accepted press leaves on screen.
+    ///
+    /// Not nothing: a card that vanishes the instant it is pressed leaves a person unable to tell
+    /// whether it worked, and the record is not finished — the server holds it, stamped, until the
+    /// resumed turn produces something. So the server's own account is re-read and adopted, and
+    /// where it cannot be re-read the acceptance is itself the server having said yes, which is
+    /// what stamps the card this side. Only an answer of "nothing is interrupted" takes it down.
+    private func adoptAcceptedResume(_ cutOff: TurnInterruption?) async {
+        if case .answered(let cut) = await fetchInterruption() {
+            interruption = cut
+        } else if let cutOff, cutOff.resumedAt == nil {
+            interruption = TurnInterruption(
+                turnID: cutOff.turnID, prompt: cutOff.prompt, startedAt: cutOff.startedAt,
+                detectedAt: cutOff.detectedAt, progress: cutOff.progress, queued: cutOff.queued,
+                resumedAt: Date())
+        }
+        emit()
+    }
+
+    /// The old-bridge path: the machine kept no memory of the work, so the words that started it
+    /// are sent again.
+    private func resendInterruptedPrompt(_ cutOff: TurnInterruption?) async throws {
+        guard let prompt = cutOff?.prompt, !prompt.isEmpty else {
+            throw AgentError.unsupported("interruption")
+        }
+        try await send(prompt)
     }
 
     private func fetchQuestions() async -> [QuestionRequest] {
