@@ -649,6 +649,7 @@ struct BRTool: Decodable {
     let input: String
     let output: String?
     let status: String
+    let background: BRBackground?
 
     var toolCall: ToolCall {
         var parsed: JSONValue?
@@ -657,7 +658,23 @@ struct BRTool: Decodable {
         }
         return ToolCall(
             id: id, name: name, status: ToolStatus(rawValue: status) ?? .running,
-            input: parsed, output: output, title: name)
+            input: parsed, output: output, title: name, background: background?.outcome)
+    }
+}
+
+struct BRBackground: Decodable {
+    let taskID: String?
+    let status: String
+    let summary: String?
+    let result: String?
+    let reportedAt: Date?
+
+    /// A status word this client does not know is a report that the work ended without saying it
+    /// succeeded, which is a failure — never a success, and never nothing.
+    var outcome: BackgroundOutcome {
+        BackgroundOutcome(
+            taskID: taskID, status: BackgroundOutcome.Status(rawValue: status) ?? .failed,
+            summary: summary, result: result, reportedAt: reportedAt)
     }
 }
 

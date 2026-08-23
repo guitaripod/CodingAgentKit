@@ -20,6 +20,11 @@ public struct ToolCall: Sendable, Hashable, Codable {
     public var input: JSONValue?
     public var output: String?
     public var title: String?
+    /// How the work this call handed to the background ended, once it reported back. Absent on
+    /// every ordinary call — a tool that answers with its own result has nothing to wait for — and
+    /// absent on a background call that is still out, which is exactly what makes it the fact a
+    /// reader can trust: a launch that succeeded says only that something started.
+    public var background: BackgroundOutcome?
 
     public init(
         id: String,
@@ -27,7 +32,8 @@ public struct ToolCall: Sendable, Hashable, Codable {
         status: ToolStatus,
         input: JSONValue? = nil,
         output: String? = nil,
-        title: String? = nil
+        title: String? = nil,
+        background: BackgroundOutcome? = nil
     ) {
         self.id = id
         self.name = name
@@ -35,6 +41,7 @@ public struct ToolCall: Sendable, Hashable, Codable {
         self.input = input
         self.output = output
         self.title = title
+        self.background = background
     }
 }
 

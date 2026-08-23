@@ -15,6 +15,47 @@ import Testing
         ISO8601DateFormatter().date(from: fixedTimestamp)!
     }
 
+    /// A call that handed its work to the background answers in milliseconds and the work runs for
+    /// minutes, so the ending arrives long afterwards as its own field. A client that cannot read
+    /// it is a client holding a launch with no record that anything ever stopped.
+    @Test func aToolCarriesHowItsBackgroundWorkEnded() throws {
+        let tool = try decode(
+            BRTool.self,
+            #"""
+            {"id":"toolu_01","name":"Workflow","input":"{}","output":"launched","status":"completed",
+             "background":{"taskID":"w2cxy65y7","status":"stopped","summary":"no record",
+             "reportedAt":"\#(Self.fixedTimestamp)"}}
+            """#
+        ).toolCall
+
+        #expect(tool.background?.status == .stopped)
+        #expect(tool.background?.taskID == "w2cxy65y7")
+        #expect(tool.background?.result == nil)
+        #expect(tool.background?.summary == "no record")
+        #expect(tool.background?.reportedAt == Self.fixedDate)
+        #expect(tool.background?.isSuccess == false)
+        #expect(tool.background?.answer == "no record")
+    }
+
+    @Test func anOrdinaryToolHasNoBackgroundEnding() throws {
+        let tool = try decode(
+            BRTool.self, #"{"id":"t","name":"Bash","input":"{}","status":"completed"}"#).toolCall
+
+        #expect(tool.background == nil)
+    }
+
+    /// A status word a newer bridge invents must never read as success — an ending nobody
+    /// recognises is still an ending, and calling it done would fold a wrong answer into a card.
+    @Test func anUnknownBackgroundStatusIsNotSuccess() throws {
+        let tool = try decode(
+            BRTool.self,
+            #"{"id":"t","name":"Workflow","input":"{}","status":"completed","background":{"status":"exploded"}}"#
+        ).toolCall
+
+        #expect(tool.background?.status == .failed)
+        #expect(tool.background?.isSuccess == false)
+    }
+
     @Test func summaryMissingAllOptionalMetadataDecodesToSaneSession() throws {
         let summary = try decode(
             BRSummary.self, #"{"id":"s1","title":"Hello","directory":"/tmp"}"#)

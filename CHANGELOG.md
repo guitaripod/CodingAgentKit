@@ -28,6 +28,13 @@ A conversation hears the machine's own record, and a turn carries what it took.
   machine was never set up is the offer, not the refusal: `ServeManagerBackend` runs the installer
   on the server through its own pty, waits out the supervisor handover, and proves the machine
   restarts before reporting success.
+- **A call that hands its work to the background carries how that work ended.** A Workflow launch or
+  a background command answers within milliseconds and then runs for minutes, so the call's own
+  status can only ever say that a launch worked — which is a record of something starting and
+  nothing anywhere saying it stopped. `ToolCall.background` carries the harness's own report:
+  `BackgroundOutcome` with the task id, a terminal status that tells *stopped* apart from *failed*,
+  the summary, and the returned value already unwrapped from the JSON the harness writes it as.
+  Absent while the work is still out, which is what makes it worth trusting.
 
 ### Fixed
 - **A summarize that outlives the screen is still reported.** A compaction underway was a fact one
