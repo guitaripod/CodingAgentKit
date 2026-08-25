@@ -2,7 +2,7 @@ import AgentCore
 import Foundation
 
 public struct ClaudeCodeBackend: CodingAgentBackend {
-    public let agentType: AgentType = .claudeCode
+    public let agentType: AgentType
     public let capabilities = BackendCapabilities(
         supportsFileBrowsing: true,
         supportsDiffs: false,
@@ -48,12 +48,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     private let http: HTTPClient
     private let stream: BridgeStream
 
-    public init(config: ServerConfig) {
+    public init(config: ServerConfig, agentType: AgentType = .claudeCode) {
+        self.agentType = agentType
         let builder = RequestBuilder(config: config)
         let http = HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge"))
         self.builder = builder
         self.http = http
         self.stream = BridgeStreamRegistry.stream(config: config, builder: builder, http: http)
+        self.stream.agentType = agentType
     }
 
     /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
@@ -71,14 +73,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     public func listSessions() async throws -> [AgentSession] {
         let data = try await http.send(builder.request(.get, "/sessions"))
         return try BridgeCoding.decoder.decode([BRLenient<BRSummary>].self, from: data)
-            .compactMap(\.value).map(\.session)
+            .compactMap(\.value).map { $0.session(agentType: agentType) }
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {
         let body = try BridgeCoding.encoder.encode(
             BRCreate(title: title, directory: directory, model: nil, effort: nil))
         let data = try await http.send(builder.request(.post, "/sessions", body: body))
-        return try BridgeCoding.decoder.decode(BRSession.self, from: data).session
+        return try BridgeCoding.decoder.decode(BRSession.self, from: data).session(agentType: agentType)
     }
 
     public func deleteSession(_ sessionID: String) async throws {
@@ -98,7 +100,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         let data = try await http.send(
             builder.request(.get, "/sessions/\(sessionID)/agents/\(agentID)"))
         return try BridgeCoding.decoder.decode(BRSubagentTranscript.self, from: data)
-            .messages.map(\.chat)
+            .messages.map { $0.chat(agentType: agentType) }
     }
 
     public func renameSession(_ sessionID: String, title: String) async throws {
@@ -108,7 +110,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
         let data = try await http.send(builder.request(.post, "/sessions/\(sessionID)/fork"))
-        return try BridgeCoding.decoder.decode(BRSession.self, from: data).session
+        return try BridgeCoding.decoder.decode(BRSession.self, from: data).session(agentType: agentType)
     }
 
     public func clearConversation(_ sessionID: String) async throws {
@@ -117,7 +119,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
-        return try BridgeCoding.decoder.decode(BRSession.self, from: data).messages.map(\.chat)
+        return try BridgeCoding.decoder.decode(BRSession.self, from: data).messages.map {
+            $0.chat(agentType: agentType)
+        }
     }
 
     /// Bridges predating the command catalog answer 404, which decodes to an empty list rather
@@ -247,7 +251,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 }
                 await Self.legacyEvents(
                     for: sessionID, builder: self.builder, http: self.http,
-                    continuation: continuation)
+                    agentType: self.agentType, continuation: continuation)
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -255,6 +259,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
 
     private static func legacyEvents(
         for sessionID: String, builder: RequestBuilder, http: HTTPClient,
+        agentType flavor: AgentType,
         continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation
     ) async {
         let stream: AsyncThrowingStream<SSEvent, Error>
@@ -265,7 +270,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             continuation.finish(throwing: error)
             return
         }
-        var decoder = BridgeEventDecoder()
+        var decoder = BridgeEventDecoder(agentType: flavor)
         do {
             // Every frame off this socket, whatever it decodes to, is the socket proving itself —
             // an old bridge sends no hello, and an idle conversation would otherwise never say it
@@ -280,9 +285,33 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
     }
 
-    public func availableModels() async throws -> [ModelInfo] { Self.models }
+    public func availableModels() async throws -> [ModelInfo] {
+        guard agentType == .omp else { return Self.models }
+        do {
+            let data = try await http.send(builder.request(.get, "/models"))
+            struct RemoteModel: Decodable {
+                let id: String
+                let name: String?
+                let provider: String?
+            }
+            let remote = try BridgeCoding.decoder.decode([RemoteModel].self, from: data)
+            return remote.map { model in
+                ModelInfo(
+                    id: model.id,
+                    name: model.name ?? model.id,
+                    providerID: model.provider ?? model.id.split(separator: "/").first.map(String.init) ?? "",
+                    capabilities: Self.vision)
+            }
+        } catch {
+            return []
+        }
+    }
+
     public func defaultModel() async throws -> ModelSelection? {
-        Self.models.first.map { ModelSelection(providerID: $0.providerID, modelID: $0.id) }
+        if agentType == .omp {
+            return (try? await availableModels())?.first?.selection
+        }
+        return Self.models.first.map { ModelSelection(providerID: $0.providerID, modelID: $0.id) }
     }
 
     /// Newer bridges expose a two-field usage route; older ones require
@@ -443,9 +472,9 @@ struct BRSummary: Decodable {
     let agents: Int?
     let agentTask: String?
 
-    var session: AgentSession {
+    func session(agentType: AgentType) -> AgentSession {
         AgentSession(
-            id: id, agentType: .claudeCode, title: title, directory: directory,
+            id: id, agentType: agentType, title: title, directory: directory,
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
@@ -477,9 +506,9 @@ struct BRSession: Decodable {
     let lastTokens: Int?
     let goal: BRGoal?
 
-    var session: AgentSession {
+    func session(agentType: AgentType) -> AgentSession {
         AgentSession(
-            id: id, agentType: .claudeCode, title: title, directory: directory,
+            id: id, agentType: agentType, title: title, directory: directory,
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
@@ -572,7 +601,7 @@ struct BRMessage: Decodable {
     /// get an index suffix so `messageID:partID` row identifiers stay unique. The
     /// suffix scheme ("text", "text-1", …) is the same one `MessageReducer` numbers a newly
     /// opened text block by, so streamed tokens and full-message upserts converge on the same part.
-    var chat: ChatMessage {
+    func chat(agentType: AgentType) -> ChatMessage {
         var counts: [String: Int] = [:]
         let uniqueParts = parts.map { raw -> MessagePart in
             let part = raw.part
@@ -582,7 +611,7 @@ struct BRMessage: Decodable {
         }
         let tiers = usage?.usage
         return ChatMessage(
-            id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: .claudeCode,
+            id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: agentType,
             parts: uniqueParts, createdAt: createdAt, costUSD: costUSD, modelID: model,
             totalTokens: tiers.map(\.total), usage: tiers, duration: seconds)
     }
@@ -798,7 +827,11 @@ extension ClaudeCodeBackend: SessionListStreaming, SubagentStreaming {
 }
 
 public struct BridgeEventDecoder {
-    public init() {}
+    public let agentType: AgentType
+
+    public init(agentType: AgentType = .claudeCode) {
+        self.agentType = agentType
+    }
 
     public mutating func decode(_ event: SSEvent) -> BackendEvent? {
         guard let data = event.data.data(using: .utf8),
@@ -811,7 +844,7 @@ public struct BridgeEventDecoder {
                     withJSONObject: object["message"] ?? [:]),
                 let message = try? BridgeCoding.decoder.decode(BRMessage.self, from: messageData)
             else { return nil }
-            return .messageUpserted(message.chat, replaceParts: true)
+            return .messageUpserted(message.chat(agentType: agentType), replaceParts: true)
         case "delta":
             guard let messageID = object["messageID"] as? String,
                 let delta = object["delta"] as? String

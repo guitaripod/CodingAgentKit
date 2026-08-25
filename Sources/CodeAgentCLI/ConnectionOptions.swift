@@ -5,6 +5,7 @@ import Foundation
 enum BackendChoice: String, ExpressibleByArgument, Sendable {
     case opencode
     case claude
+    case omp
 }
 
 struct ConnectionOptions: ParsableArguments {
@@ -48,6 +49,14 @@ struct ConnectionOptions: ParsableArguments {
                 BasicCredentials(username: "claude", password: $0)
             }
             return ClaudeCodeBackend(config: ServerConfig(baseURL: url, credentials: credentials))
+        case .omp:
+            let url = try resolveURL(host ?? environment["OMP_HOST"] ?? "http://127.0.0.1:4099")
+            let resolvedPassword = resolvePassword(specificEnvKey: "OMP_PASSWORD", in: environment)
+            let credentials = resolvedPassword.map {
+                BasicCredentials(username: environment["OMP_USERNAME"] ?? "omp", password: $0)
+            }
+            return ClaudeCodeBackend(
+                config: ServerConfig(baseURL: url, credentials: credentials), agentType: .omp)
         }
     }
 
@@ -75,6 +84,8 @@ struct ConnectionOptions: ParsableArguments {
             return try resolveURL(host ?? environment["OPENCODE_HOST"] ?? "http://127.0.0.1:4096")
         case .claude:
             return try resolveURL(host ?? environment["BRIDGE_HOST"] ?? "http://127.0.0.1:4098")
+        case .omp:
+            return try resolveURL(host ?? environment["OMP_HOST"] ?? "http://127.0.0.1:4099")
         }
     }
 

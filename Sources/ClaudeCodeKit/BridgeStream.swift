@@ -17,6 +17,7 @@ actor BridgeStream {
 
     private let builder: RequestBuilder
     private let http: HTTPClient
+    nonisolated(unsafe) var agentType: AgentType = .claudeCode
 
     private var proto: Int?
     private var probedAt = Date.distantPast
@@ -263,7 +264,9 @@ actor BridgeStream {
             guard let data = try? JSONSerialization.data(withJSONObject: object),
                 let summary = try? BridgeCoding.decoder.decode(BRSummary.self, from: data)
             else { return }
-            for continuation in listSubs.values { continuation.yield(.upsert(summary.session)) }
+            for continuation in listSubs.values {
+                continuation.yield(.upsert(summary.session(agentType: agentType)))
+            }
         case "list.remove":
             guard let id = object["id"] as? String else { return }
             for continuation in listSubs.values { continuation.yield(.remove(id)) }

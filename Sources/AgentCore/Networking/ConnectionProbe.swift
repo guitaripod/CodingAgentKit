@@ -55,6 +55,8 @@ public struct ConnectionProbe: Sendable {
         return outcome
     }
 
+    static let ompAgentName = "omp"
+
     private func attemptProbe(
         baseURL: URL,
         credentials: BasicCredentials?,
@@ -88,7 +90,12 @@ public struct ConnectionProbe: Sendable {
             if let status = try? JSONCoding.decoder.decode(StatusProbe.self, from: data),
                 status.status != nil || status.agent != nil || status.agentType != nil
             {
-                return .ok(agentType: .claudeCode, version: status.agent ?? status.agentType)
+                let flavor: AgentType =
+                    (status.agent == Self.ompAgentName || status.agentType == Self.ompAgentName)
+                    ? .omp : .claudeCode
+                return .ok(
+                    agentType: flavor,
+                    version: status.version ?? status.agent ?? status.agentType)
             }
         } catch let error as AgentError {
             switch error {
@@ -114,11 +121,13 @@ public struct ConnectionProbe: Sendable {
         let status: String?
         let agentType: String?
         let agent: String?
+        let version: String?
 
         enum CodingKeys: String, CodingKey {
             case status
             case agentType = "agent_type"
             case agent
+            case version
         }
     }
 }

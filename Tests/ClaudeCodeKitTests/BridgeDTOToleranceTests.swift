@@ -59,7 +59,7 @@ import Testing
     @Test func summaryMissingAllOptionalMetadataDecodesToSaneSession() throws {
         let summary = try decode(
             BRSummary.self, #"{"id":"s1","title":"Hello","directory":"/tmp"}"#)
-        let session = summary.session
+        let session = summary.session(agentType: .claudeCode)
 
         #expect(session.id == "s1")
         #expect(session.title == "Hello")
@@ -74,29 +74,29 @@ import Testing
 
     @Test func missingTimestampFallbackIsDeterministicAcrossRefreshes() throws {
         let json = #"{"id":"s1b","title":"Hello"}"#
-        let first = try decode(BRSummary.self, json).session
-        let second = try decode(BRSummary.self, json).session
+        let first = try decode(BRSummary.self, json).session(agentType: .claudeCode)
+        let second = try decode(BRSummary.self, json).session(agentType: .claudeCode)
         #expect(first.createdAt == second.createdAt)
         #expect(first.updatedAt == second.updatedAt)
     }
 
     @Test func summaryEmptyEffortStringMapsToNil() throws {
         let summary = try decode(BRSummary.self, #"{"id":"s2","title":"t","effort":""}"#)
-        #expect(summary.session.reasoningEffort == nil)
+        #expect(summary.session(agentType: .claudeCode).reasoningEffort == nil)
     }
 
     @Test func summaryPresentEffortAndModelMapThrough() throws {
         let summary = try decode(
             BRSummary.self, #"{"id":"s3","title":"t","model":"opus","effort":"high"}"#)
-        #expect(summary.session.model == "opus")
-        #expect(summary.session.reasoningEffort == "high")
+        #expect(summary.session(agentType: .claudeCode).model == "opus")
+        #expect(summary.session(agentType: .claudeCode).reasoningEffort == "high")
     }
 
     @Test func summaryCreatedAtFallsBackToUpdatedAtWhenAbsent() throws {
         let summary = try decode(
             BRSummary.self,
             #"{"id":"s4","title":"t","updatedAt":"\#(Self.fixedTimestamp)"}"#)
-        let session = summary.session
+        let session = summary.session(agentType: .claudeCode)
         #expect(session.createdAt == Self.fixedDate)
         #expect(session.updatedAt == Self.fixedDate)
     }
@@ -105,7 +105,7 @@ import Testing
         let summary = try decode(
             BRSummary.self,
             #"{"id":"s5","title":"t","createdAt":"\#(Self.fixedTimestamp)"}"#)
-        let session = summary.session
+        let session = summary.session(agentType: .claudeCode)
         #expect(session.updatedAt == Self.fixedDate)
         #expect(session.createdAt == Self.fixedDate)
     }
@@ -120,7 +120,7 @@ import Testing
             ]
             """
         let sessions = try decode([BRLenient<BRSummary>].self, json)
-            .compactMap(\.value).map(\.session)
+            .compactMap(\.value).map { $0.session(agentType: .claudeCode) }
 
         #expect(sessions.map(\.id) == ["a", "b"])
         #expect(sessions[0].model == "opus")
@@ -133,7 +133,7 @@ import Testing
     @Test func fullSessionMissingMetadataDecodesWithMessagesRequired() throws {
         let session = try decode(
             BRSession.self, #"{"id":"f1","title":"Full","messages":[]}"#)
-        let mapped = session.session
+        let mapped = session.session(agentType: .claudeCode)
 
         #expect(mapped.id == "f1")
         #expect(mapped.model == nil)
@@ -147,7 +147,7 @@ import Testing
         let session = try decode(
             BRSession.self,
             #"{"id":"f2","title":"Full","effort":"","messages":[],"updatedAt":"\#(Self.fixedTimestamp)"}"#)
-        let mapped = session.session
+        let mapped = session.session(agentType: .claudeCode)
         #expect(mapped.reasoningEffort == nil)
         #expect(mapped.createdAt == Self.fixedDate)
         #expect(mapped.updatedAt == Self.fixedDate)

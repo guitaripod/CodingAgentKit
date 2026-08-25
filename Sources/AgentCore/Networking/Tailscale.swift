@@ -285,7 +285,7 @@ public struct TailnetScanner: Sendable {
                 os: device.os,
                 lastSeen: device.lastSeen)
         case .authFailed:
-            let guessed: AgentType = target.port == 4096 ? .openCode : .claudeCode
+            let guessed: AgentType = target.port == 4096 ? .openCode : (target.port == 4099 ? .omp : .claudeCode)
             return Suggestion(
                 id: "\(target.host):\(target.port)",
                 name: "\(label) (password required)",

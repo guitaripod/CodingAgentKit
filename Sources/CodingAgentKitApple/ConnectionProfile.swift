@@ -64,6 +64,11 @@ public struct ConnectionProfile: Sendable, Hashable, Codable, Identifiable {
             let credentials = password.map { BasicCredentials(username: "claude", password: $0) }
             return ClaudeCodeBackend(
                 config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
+        case .omp:
+            let credentials = password.map { BasicCredentials(username: "omp", password: $0) }
+            return ClaudeCodeBackend(
+                config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy),
+                agentType: .omp)
         }
     }
 }
