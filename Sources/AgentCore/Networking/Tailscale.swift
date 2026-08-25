@@ -203,7 +203,7 @@ public struct TailnetScanner: Sendable {
     /// the returned array is the final deduplicated result.
     public func scan(
         devices: [TailscaleDevice],
-        ports: [Int] = [4096, 4098],
+        ports: [Int] = [4096, 4098, 4099],
         onProgress: (@Sendable (Int, Int) -> Void)? = nil,
         onFound: (@Sendable (Suggestion) -> Void)? = nil
     ) async -> [Suggestion] {
