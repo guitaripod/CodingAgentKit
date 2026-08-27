@@ -256,8 +256,18 @@ enum ToolCallSummaryBuilder {
         (path as NSString).lastPathComponent
     }
 
+    /// The parent of `path`, computed without Foundation's `deletingLastPathComponent`: on Linux
+    /// (swift-corelibs-foundation 6.2.4) that API traps with SIGILL on any relative
+    /// single-component path — `"a"`, `"a/"` — and tool calls hand this builder exactly such
+    /// paths, so a crash here takes the whole client down mid-render.
     private static func directory(_ path: String) -> String {
-        (path as NSString).deletingLastPathComponent
+        var trimmed = Substring(path)
+        while trimmed.count > 1, trimmed.hasSuffix("/") { trimmed = trimmed.dropLast() }
+        guard let slash = trimmed.lastIndex(of: "/") else { return "" }
+        if slash == trimmed.startIndex { return "/" }
+        var parent = trimmed[..<slash]
+        while parent.count > 1, parent.hasSuffix("/") { parent = parent.dropLast() }
+        return String(parent)
     }
 
     private static func firstLine(_ text: String) -> String {

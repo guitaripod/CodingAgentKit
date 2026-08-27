@@ -76,6 +76,22 @@ private func call(
         #expect(summary.filePath == "/Users/marcus/Dev/App/AppCoordinator.swift")
     }
 
+    @Test func relativeAndDegeneratePathsNeverTrap() {
+        let cases: [(String, String, String)] = [
+            ("README.md", "README.md", ""),
+            ("docs/", "docs", ""),
+            ("docs/notes.md", "notes.md", "docs"),
+            ("/", "/", "/"),
+            ("/etc", "etc", "/"),
+            ("a//b", "b", "a"),
+        ]
+        for (path, title, detail) in cases {
+            let summary = call("Read", input: ["file_path": .string(path)]).summary
+            #expect(summary.title == title, "title for \(path)")
+            #expect((summary.detail ?? "") == detail, "detail for \(path)")
+        }
+    }
+
     @Test func editComputesDiffStatsAndHidesOutput() {
         let summary = call(
             "Edit",
