@@ -293,6 +293,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 let id: String
                 let name: String?
                 let provider: String?
+                let variants: [String]?
             }
             let remote = try BridgeCoding.decoder.decode([RemoteModel].self, from: data)
             return remote.map { model in
@@ -300,7 +301,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                     id: model.id,
                     name: model.name ?? model.id,
                     providerID: model.provider ?? model.id.split(separator: "/").first.map(String.init) ?? "",
-                    capabilities: Self.vision)
+                    capabilities: Self.vision,
+                    variants: model.variants)
             }
         } catch {
             return []
