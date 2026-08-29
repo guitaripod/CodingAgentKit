@@ -33,6 +33,12 @@ public struct ConnectionPolicy: Sendable, Hashable {
 
     public static let `default` = ConnectionPolicy()
 
+    /// Deadline for routes that answer only after minutes of server work — opencode's summarize
+    /// and command turns send no bytes until the whole turn has ended. Long enough for a large
+    /// compaction on a slow local model, short enough that a wedged connection is noticed the
+    /// same day.
+    public static let blockingTurn = Duration.seconds(900)
+
     /// Backoff delay for a given zero-based attempt: capped exponential with proportional jitter.
     public func backoffDelay(attempt: Int, jitterFraction: Double) -> Duration {
         let exponent = min(attempt, 16)

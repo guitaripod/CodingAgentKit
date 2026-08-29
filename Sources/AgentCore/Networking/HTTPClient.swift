@@ -44,14 +44,22 @@ public struct HTTPClient: Sendable {
         self.logger = logger
     }
 
-    @discardableResult
     public func send(_ request: URLRequest) async throws -> Data {
+        try await send(request, timeout: policy.requestTimeout)
+    }
+
+    /// Sends with a per-request deadline. Some routes answer only when minutes of server work
+    /// have finished — opencode's summarize returns no bytes until the whole compaction turn is
+    /// done — so the transport's idle budget must not be the one deciding their fate.
+    @discardableResult
+    public func send(_ request: URLRequest, timeout: Duration) async throws -> Data {
         logger.debug("→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?")")
         let data: Data
         let response: URLResponse
         do {
             var req = request
             req.cachePolicy = .reloadIgnoringLocalCacheData
+            req.timeoutInterval = timeout.timeInterval
             (data, response) = try await session.data(for: req)
         } catch is CancellationError {
             throw CancellationError()

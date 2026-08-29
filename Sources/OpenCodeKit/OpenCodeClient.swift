@@ -122,13 +122,15 @@ public struct OpenCodeClient: Sendable {
     }
 
     /// Unlike `prompt_async`, opencode has no non-blocking command route: this returns only once
-    /// the turn it starts has finished.
+    /// the turn it starts has finished. A turn can run for many minutes, so the call carries its
+    /// own long deadline rather than the transport's idle budget.
     func runCommand(sessionID: String, directory: String?, request: OCCommandRequest) async throws {
         let body = try JSONCoding.encoder.encode(request)
         try await http.send(
             builder.request(
                 .post, "/session/\(sessionID)/command", query: directoryQuery(directory),
-                body: body))
+                body: body),
+            timeout: ConnectionPolicy.blockingTurn)
     }
 
     func abort(sessionID: String) async throws {
@@ -137,8 +139,9 @@ public struct OpenCodeClient: Sendable {
     }
 
     /// Compacts a session: the server summarizes the conversation and carries the summary forward.
-    /// The route blocks until the whole compaction turn has ended, so it is dispatched rather than
-    /// awaited by callers that must not sit behind minutes of summarizing.
+    /// The route returns no bytes until the whole compaction turn has ended — minutes on a long
+    /// history — so it is dispatched rather than awaited by callers that must not sit behind it,
+    /// and carries its own long deadline rather than the transport's idle one.
     func summarize(
         sessionID: String, directory: String?, providerID: String, modelID: String
     ) async throws {
@@ -150,7 +153,8 @@ public struct OpenCodeClient: Sendable {
         try await http.send(
             builder.request(
                 .post, "/session/\(sessionID)/summarize", query: directoryQuery(directory),
-                body: body))
+                body: body),
+            timeout: ConnectionPolicy.blockingTurn)
     }
 
     func respondPermission(sessionID: String, permissionID: String, response: String) async throws {
