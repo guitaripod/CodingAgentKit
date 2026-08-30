@@ -26,6 +26,29 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(messageID == "msg_U")
         #expect(part.id == "prt_1")
         #expect(part.text == "Say hi")
+        #expect(part.startedAt == nil)
+    }
+
+    @Test func aStampedProsePartKeepsTheServersStart() {
+        let event = decode(
+            #"{"type":"message.part.updated","properties":{"sessionID":"ses_S","part":{"type":"text","text":"Hi","messageID":"msg_U","sessionID":"ses_S","id":"prt_1","time":{"start":1700000000000,"end":1700000004000}}}}"#
+        )
+        guard case .partUpserted(_, let part)? = event else {
+            Issue.record("expected partUpserted, got \(String(describing: event))")
+            return
+        }
+        #expect(part.startedAt == Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    @Test func aToolPartsClockTimesTheToolNotTheModel() {
+        let event = decode(
+            #"{"type":"message.part.updated","properties":{"sessionID":"ses_S","part":{"type":"tool","tool":"bash","callID":"c1","state":{"status":"running"},"messageID":"msg_U","sessionID":"ses_S","id":"prt_2","time":{"start":1700000000000}}}}"#
+        )
+        guard case .partUpserted(_, let part)? = event else {
+            Issue.record("expected partUpserted, got \(String(describing: event))")
+            return
+        }
+        #expect(part.startedAt == nil)
     }
 
     @Test func decodesToolPartUpdated() {

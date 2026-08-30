@@ -88,6 +88,15 @@ struct OCCache: Decodable, Sendable {
     let write: Double?
 }
 
+/// A part's own clock, which the server keys `start`/`end` where a message's is
+/// `created`/`completed`. Text and reasoning parts carry it; the start is the moment the model's
+/// first token of that part arrived at the server, which is the server's own measure of when
+/// generation began.
+struct OCPartTime: Decodable, Sendable {
+    let start: Double?
+    let end: Double?
+}
+
 struct OCToolState: Decodable, Sendable {
     let status: String
     let input: JSONValue?
@@ -114,10 +123,11 @@ struct OCPart: Decodable, Sendable {
     let auto: Bool?
     let overflow: Bool?
     let tailStartID: String?
+    let time: OCPartTime?
 
     private enum CodingKeys: String, CodingKey {
         case id, messageID, sessionID, type, text, callID, tool, state, mime, url, filename, auto,
-            overflow
+            overflow, time
         case tailStartID = "tail_start_id"
     }
 }

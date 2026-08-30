@@ -33,7 +33,11 @@ public struct MessageReducer: Sendable {
         case .partUpserted(let messageID, let part):
             edit(messageID) { message in
                 if let index = message.parts.firstIndex(where: { $0.id == part.id }) {
-                    message.parts[index] = part
+                    var incoming = part
+                    if incoming.startedAt == nil {
+                        incoming.startedAt = message.parts[index].startedAt
+                    }
+                    message.parts[index] = incoming
                 } else {
                     message.parts.append(part)
                 }

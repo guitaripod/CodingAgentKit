@@ -101,6 +101,23 @@ import Testing
         #expect(reducer.snapshot.first?.text == "x")
     }
 
+    @Test func anUpsertWithoutAStampKeepsTheLearnedStart() {
+        var reducer = MessageReducer(agentType: .openCode)
+        let stamp = Date(timeIntervalSince1970: 100)
+        reducer.apply(
+            .messageUpserted(
+                ChatMessage(
+                    id: "m", role: .assistant, agentType: .openCode,
+                    createdAt: Date(timeIntervalSince1970: 0)),
+                replaceParts: false))
+        reducer.apply(
+            .partUpserted(messageID: "m", MessagePart(id: "p", kind: .text("x"), startedAt: stamp)))
+        reducer.apply(
+            .partUpserted(messageID: "m", MessagePart(id: "p", kind: .text("xy"))))
+        #expect(reducer.snapshot.first?.parts.first?.startedAt == stamp)
+        #expect(reducer.snapshot.first?.parts.first?.text == "xy")
+    }
+
     @Test func seedInitialiserPreservesOrder() {
         let seed = [
             ChatMessage(

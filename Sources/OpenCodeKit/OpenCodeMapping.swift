@@ -136,7 +136,16 @@ enum OpenCodeMapping {
         default:
             kind = .unknown(type: part.type)
         }
-        return MessagePart(id: part.id, kind: kind)
+        return MessagePart(id: part.id, kind: kind, startedAt: startedAt(part))
+    }
+
+    /// The server's stamp for when this part's prose began, kept only on the parts the model
+    /// wrote. A tool part's clock times the tool, not the model, and would put the first-token
+    /// mark on work the model was waiting for.
+    private static func startedAt(_ part: OCPart) -> Date? {
+        guard part.type == "text" || part.type == "reasoning" else { return nil }
+        guard let start = part.time?.start, start > 0 else { return nil }
+        return date(start)
     }
 
     /// opencode puts the full path in an assistant file part's filename; the

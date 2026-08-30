@@ -64,10 +64,17 @@ public struct FileReference: Sendable, Hashable, Codable {
 public struct MessagePart: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var kind: Kind
+    /// When the model began writing this part, where the server stamped it. opencode stamps text
+    /// and reasoning parts with their own start; a backend that says nothing leaves it nil, and
+    /// nothing here may substitute a clock of its own. The earliest stamp on a turn's prose is the
+    /// turn's first output token — the seam between waiting for the model and reading it — which
+    /// is what a time-to-first-token and a generation-only speed are measured against.
+    public var startedAt: Date?
 
-    public init(id: String, kind: Kind) {
+    public init(id: String, kind: Kind, startedAt: Date? = nil) {
         self.id = id
         self.kind = kind
+        self.startedAt = startedAt
     }
 
     public enum Kind: Sendable, Hashable {

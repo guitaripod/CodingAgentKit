@@ -56,7 +56,7 @@ private func device(
             onFound: { suggestion in streamed.mutate { $0.append(suggestion.id) } })
 
         let urls = probed.value
-        #expect(urls.count == 4)
+        #expect(urls.count == 6)
         #expect(!urls.contains { $0.contains("fd7a") })
         #expect(urls.contains { $0.contains("arch.tail.ts.net") })
         #expect(!urls.contains { $0.contains("dead") })
@@ -64,7 +64,7 @@ private func device(
         #expect(found.count == 1)
         #expect(found.first?.backend == .claudeCode)
         #expect(streamed.value.count == 2)
-        #expect(progress.value.sorted() == [1, 2, 3, 4])
+        #expect(progress.value.sorted() == [1, 2, 3, 4, 5, 6])
     }
 
     @Test func dedupePrefersUnauthenticatedNamedHosts() async {
