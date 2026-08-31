@@ -128,7 +128,18 @@ private func makeTransport(
                 throw AgentError.http(status: 401, body: "unauthorized")
             })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
-        #expect(outcome == .authFailed)
+        #expect(outcome == .authFailed(.password))
+    }
+
+    @Test func tailnetOnlyRefusalIsNotAPasswordPrompt() async {
+        let probe = ConnectionProbe(
+            transport: makeTransport { _ in
+                throw AgentError.http(
+                    status: 401, body: #"{"error":"tailnet-only","detail":"no password"}"#)
+            })
+        let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
+        #expect(outcome == .authFailed(.tailnetOnly))
+        if case .authFailed = outcome {} else { Issue.record("a tailnet-only refusal is still a refusal") }
     }
 
     @Test func http403OnHealthClassifiesAsAuthFailed() async {
@@ -137,7 +148,7 @@ private func makeTransport(
                 throw AgentError.http(status: 403, body: "forbidden")
             })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
-        #expect(outcome == .authFailed)
+        #expect(outcome == .authFailed(.password))
     }
 
     @Test func authFailureOnStatusEndpointClassifiesAsAuthFailed() async {
@@ -149,7 +160,7 @@ private func makeTransport(
                 }
             })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
-        #expect(outcome == .authFailed)
+        #expect(outcome == .authFailed(.password))
     }
 
     @Test func connectionErrorClassifiesAsUnreachablePreservingDetail() async {
@@ -202,7 +213,7 @@ private func makeTransport(
                 throw AgentError.http(status: 401, body: "")
             })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: true)
-        #expect(outcome == .authFailed)
+        #expect(outcome == .authFailed(.password))
         #expect(await recorder.count == 1)
     }
 

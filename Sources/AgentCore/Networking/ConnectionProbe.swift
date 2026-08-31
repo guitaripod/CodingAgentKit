@@ -4,12 +4,32 @@ import Foundation
     import FoundationNetworking
 #endif
 
+/// What a server that refused a probe would accept instead. A bridge that admits only its own
+/// tailnet says so in the body of its 401, and a client that reads that must not ask for a
+/// password the machine was never given.
+public enum AuthChallenge: Sendable, Hashable {
+    case password
+    case tailnetOnly
+
+    static func read(body: String) -> AuthChallenge {
+        guard let data = body.data(using: .utf8),
+            let refusal = try? JSONDecoder().decode(Refusal.self, from: data)
+        else { return .password }
+        return refusal.error == "tailnet-only" ? .tailnetOnly : .password
+    }
+
+    private struct Refusal: Decodable {
+        let error: String?
+    }
+}
+
 public struct ConnectionProbe: Sendable {
     public enum Outcome: Sendable, Hashable {
         case ok(agentType: AgentType, version: String?)
-        case authFailed
+        case authFailed(AuthChallenge)
         case unreachable(String)
         case notAnAgentServer
+
     }
 
     typealias Transport = @Sendable (URLRequest) async throws -> Data
@@ -75,8 +95,8 @@ public struct ConnectionProbe: Sendable {
             }
         } catch let error as AgentError {
             switch error {
-            case .http(let status, _) where status == 401 || status == 403:
-                return .authFailed
+            case .http(let status, let body) where status == 401 || status == 403:
+                return .authFailed(AuthChallenge.read(body: body))
             case .connection(let detail):
                 return .unreachable(detail)
             default:
@@ -99,8 +119,8 @@ public struct ConnectionProbe: Sendable {
             }
         } catch let error as AgentError {
             switch error {
-            case .http(let httpStatus, _) where httpStatus == 401 || httpStatus == 403:
-                return .authFailed
+            case .http(let httpStatus, let body) where httpStatus == 401 || httpStatus == 403:
+                return .authFailed(AuthChallenge.read(body: body))
             case .connection(let detail):
                 return .unreachable(detail)
             default:

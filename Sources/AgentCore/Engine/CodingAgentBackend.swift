@@ -562,10 +562,37 @@ public struct UsageQuota: Sendable, Hashable, Codable {
 public struct ServerHealth: Sendable, Hashable {
     public var healthy: Bool
     public var version: String?
+    /// How the server let this device in, when it says. Nil is a server that does not report it.
+    public var access: ServerAccess?
 
-    public init(healthy: Bool, version: String? = nil) {
+    public init(healthy: Bool, version: String? = nil, access: ServerAccess? = nil) {
         self.healthy = healthy
         self.version = version
+        self.access = access
+    }
+}
+
+/// What admitted this device to a server: the password it sent, the tailnet identity the server
+/// looked up for it, or nothing at all. The identity is the server's reading of this device —
+/// the account it is signed into and the name the tailnet knows it by — so a machine that asked
+/// for no password can say why rather than looking unprotected.
+public struct ServerAccess: Sendable, Hashable, Codable {
+    public enum Mode: String, Sendable, Codable {
+        case password
+        case tailnet
+        case open
+    }
+
+    public var mode: Mode
+    public var login: String?
+    public var node: String?
+    public var os: String?
+
+    public init(mode: Mode, login: String? = nil, node: String? = nil, os: String? = nil) {
+        self.mode = mode
+        self.login = login
+        self.node = node
+        self.os = os
     }
 }
 

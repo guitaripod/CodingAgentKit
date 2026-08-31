@@ -74,7 +74,7 @@ private func device(
         let scanner = TailnetScanner { url, _ in
             guard url.port == 4098 else { return .unreachable("refused") }
             let isName = url.host?.contains("tail.ts.net") == true
-            return isName ? .ok(agentType: .claudeCode, version: nil) : .authFailed
+            return isName ? .ok(agentType: .claudeCode, version: nil) : .authFailed(.password)
         }
         let found = await scanner.scan(devices: devices)
         #expect(found.count == 1)

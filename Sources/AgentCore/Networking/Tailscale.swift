@@ -135,11 +135,32 @@ public struct TailnetScanner: Sendable {
         public let backend: AgentType
         public let version: String?
         public let requiresAuth: Bool
+        /// The machine admits only devices signed into its own tailnet account and was never given
+        /// a password; this device is signed in as somebody else. Asking for a password here would
+        /// ask for something that does not exist.
+        public var tailnetOnly: Bool = false
         public let recommendedProfileName: String
         public let os: String?
         public let lastSeen: String?
 
         public var dedupeKey: String { "\(recommendedProfileName)|\(backend.rawValue)" }
+
+        public init(
+            id: String, name: String, baseURL: URL, backend: AgentType, version: String?,
+            requiresAuth: Bool, tailnetOnly: Bool = false, recommendedProfileName: String,
+            os: String?, lastSeen: String?
+        ) {
+            self.id = id
+            self.name = name
+            self.baseURL = baseURL
+            self.backend = backend
+            self.version = version
+            self.requiresAuth = requiresAuth
+            self.tailnetOnly = tailnetOnly
+            self.recommendedProfileName = recommendedProfileName
+            self.os = os
+            self.lastSeen = lastSeen
+        }
     }
 
     public typealias ProbeFunction = @Sendable (URL, ConnectionPolicy) async -> ConnectionProbe.Outcome
@@ -281,18 +302,21 @@ public struct TailnetScanner: Sendable {
                 backend: agentType,
                 version: version,
                 requiresAuth: false,
+                tailnetOnly: false,
                 recommendedProfileName: label,
                 os: device.os,
                 lastSeen: device.lastSeen)
-        case .authFailed:
+        case .authFailed(let challenge):
             let guessed: AgentType = target.port == 4096 ? .openCode : (target.port == 4099 ? .omp : .claudeCode)
             return Suggestion(
                 id: "\(target.host):\(target.port)",
-                name: "\(label) (password required)",
+                name: challenge == .tailnetOnly
+                    ? "\(label) (its tailnet only)" : "\(label) (password required)",
                 baseURL: target.url,
                 backend: guessed,
                 version: nil,
                 requiresAuth: true,
+                tailnetOnly: challenge == .tailnetOnly,
                 recommendedProfileName: label,
                 os: device.os,
                 lastSeen: device.lastSeen)

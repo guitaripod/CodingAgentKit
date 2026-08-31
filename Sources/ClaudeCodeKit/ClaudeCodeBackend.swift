@@ -67,7 +67,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             _ = try await http.send(builder.request(.get, "/health"))
             return ServerHealth(healthy: true, version: nil)
         }
-        return ServerHealth(healthy: true, version: status.version)
+        return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
     public func listSessions() async throws -> [AgentSession] {
@@ -986,6 +986,7 @@ struct BRStatus: Decodable {
     let agent: String?
     let model: String?
     let version: String?
+    let access: ServerAccess?
 }
 
 struct BRFileEntry: Decodable {
