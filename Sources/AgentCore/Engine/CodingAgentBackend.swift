@@ -202,6 +202,11 @@ public struct SessionSpendReport: Sendable, Hashable, Codable {
 
         public var cacheWrite: Int { cacheWrite5m + cacheWrite1h }
         public var total: Int { input + output + cacheRead + cacheWrite }
+        /// The tokens the model actually worked through, counting each one once: a cached prefix
+        /// is billed as a write the first time and as a read on every turn after it, so cache
+        /// reads are re-reads of text already counted and including them would rank a model by
+        /// how long its conversations were rather than by how much of the work it did.
+        public var fresh: Int { input + output + cacheWrite }
     }
 
     /// One prompt and everything the agent did answering it. It begins when the person pressed
@@ -438,6 +443,46 @@ public struct UsageAnalyticsReport: Sendable, Hashable, Codable {
         }
     }
 
+    /// Which facts a report actually measured. A server that aggregates the CLI's own
+    /// transcripts knows every one of them; a server whose only affordable ledger is its session
+    /// records knows what was spent and on which model, and nothing about the turns inside. The
+    /// distinction has to travel with the numbers, because a zero that means "none" and a zero
+    /// that means "not counted" are different facts and only one of them may be drawn as a bar.
+    public struct Coverage: OptionSet, Sendable, Hashable, Codable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+
+        /// How many prompts the window holds.
+        public static let turns = Coverage(rawValue: 1 << 0)
+        /// Tool calls, by name.
+        public static let tools = Coverage(rawValue: 1 << 1)
+        /// The hour of the day each turn began.
+        public static let clock = Coverage(rawValue: 1 << 2)
+        /// The priciest turn and the longest one, named by the words that started them.
+        public static let turnRecords = Coverage(rawValue: 1 << 3)
+        /// Compaction seams and what they reclaimed.
+        public static let compactions = Coverage(rawValue: 1 << 4)
+        /// Money landing on the day it was spent rather than on the day its conversation was
+        /// last touched.
+        public static let dailyPrecision = Coverage(rawValue: 1 << 5)
+
+        public static let all: Coverage = [
+            .turns, .tools, .clock, .turnRecords, .compactions, .dailyPrecision,
+        ]
+        /// What a ledger of session records alone can honestly claim: the money, the tokens, the
+        /// model and the project, per conversation.
+        public static let sessionTotals: Coverage = []
+
+        public init(from decoder: Decoder) throws {
+            rawValue = try decoder.singleValueContainer().decode(Int.self)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+
     public var since: Date
     public var generatedAt: Date
     public var days: Int
@@ -456,6 +501,12 @@ public struct UsageAnalyticsReport: Sendable, Hashable, Codable {
     public var compactions: Compactions
     public var subagents: Subagents
     public var records: Records
+    /// Nil on a report from a server that predates the distinction, which measured
+    /// everything; read it through ``covers``.
+    public var coverage: Coverage?
+
+    /// What this report measured, with an older server's silence read as the full set.
+    public var covers: Coverage { coverage ?? .all }
 
     public init(
         since: Date, generatedAt: Date, days: Int, estimated: Bool = true,
@@ -463,7 +514,8 @@ public struct UsageAnalyticsReport: Sendable, Hashable, Codable {
         models: [SessionSpendReport.ModelShare] = [], projects: [Project] = [],
         tools: [Tool] = [], hourTurns: [Int] = [], hourCostUSD: [Double] = [],
         cacheSavedUSD: Double = 0, compactions: Compactions = Compactions(),
-        subagents: Subagents = Subagents(), records: Records = Records()
+        subagents: Subagents = Subagents(), records: Records = Records(),
+        coverage: Coverage? = nil
     ) {
         self.since = since
         self.generatedAt = generatedAt
@@ -480,9 +532,16 @@ public struct UsageAnalyticsReport: Sendable, Hashable, Codable {
         self.compactions = compactions
         self.subagents = subagents
         self.records = records
+        self.coverage = coverage
     }
 
-    public var isEmpty: Bool { totals.turns == 0 && totals.costUSD <= 0 }
+    /// A report with nothing to say. Turns alone are not the test: a server that counts
+    /// conversations rather than turns, or one whose models cost nothing to run, has a
+    /// full ledger and no turn count and no money.
+    public var isEmpty: Bool {
+        totals.turns == 0 && totals.sessions == 0 && totals.costUSD <= 0
+            && totals.tokens.total == 0
+    }
 }
 
 /// Live subscription quota for a provider (Claude Max/Pro rolling rate limits), sourced from the

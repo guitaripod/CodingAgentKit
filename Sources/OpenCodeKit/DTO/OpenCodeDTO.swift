@@ -24,6 +24,13 @@ struct OCSession: Decodable, Sendable {
     let directory: String?
     let time: OCTime?
     let model: OCSessionModel?
+    /// What the whole conversation has cost and consumed, as the server's own session record
+    /// keeps it. This is the only ledger opencode serves cheaply — a message walk is the same
+    /// numbers at a hundred times the bytes — so the account's analytics are read from here.
+    let cost: Double?
+    let tokens: OCTokens?
+    /// Which agent ran it: `build`, `plan`, or a named subagent.
+    let agent: String?
 }
 
 /// The model a session last ran with, as the session record reports it. The server names the

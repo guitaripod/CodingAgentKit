@@ -33,6 +33,16 @@ public struct OpenCodeClient: Sendable {
     /// `/session` answers only for the project the server was launched in unless
     /// a worktree is named, so account-wide history has to be walked project by
     /// project.
+    /// Every session the server holds, newest first, up to `limit`. The route's own default is
+    /// a hundred, which is a fortnight of ordinary use and half a month of heavy use, so a ledger
+    /// that means to cover a window has to ask for its own ceiling.
+    func listSessions(limit: Int) async throws -> [OCSession] {
+        try decode(
+            await http.send(
+                builder.request(
+                    .get, "/session", query: [URLQueryItem(name: "limit", value: "\(limit)")])))
+    }
+
     func listSessions(directory: String) async throws -> [OCSession] {
         try decode(
             await http.send(builder.request(.get, "/session", query: directoryQuery(directory))))

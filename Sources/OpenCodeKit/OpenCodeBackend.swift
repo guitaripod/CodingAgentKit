@@ -266,6 +266,17 @@ public struct OpenCodeBackend: FileBrowsingBackend {
         try await client.projects().compactMap(OpenCodeMapping.project)
     }
 
+    /// The whole account's ledger, read from the one place opencode serves it cheaply: its own
+    /// session records, each carrying the conversation's running cost, tokens and model. One
+    /// request covers the window however long it is — see ``OpenCodeLedger`` for what records
+    /// can and cannot say, which the report declares rather than implies. An account with nothing
+    /// on the ledger answers with an empty report rather than nil: nil is reserved for a server
+    /// that cannot answer at all, which is what a reader names as uncounted.
+    public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? {
+        let sessions = try await client.listSessions(limit: OpenCodeLedger.sessionCeiling)
+        return OpenCodeLedger.report(sessions: sessions, days: days)
+    }
+
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
         guard let worktree else { return try await listSessions() }
         let sessions = try await client.listSessions(directory: worktree)
