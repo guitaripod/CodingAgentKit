@@ -345,7 +345,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// The machine's whole ledger, aggregated by the bridge from every transcript it holds. Only
     /// a 404 reads as nil — a bridge too old for the route, which has nothing to say and is
     /// never zero. A transport failure throws, because an unreachable server must not be
-    /// mistaken for an old one.
+    /// mistaken for an old one, and so does a body this Kit cannot read: a bridge answering
+    /// 200 in a schema of its own was being reported as a machine too old to have the route,
+    /// which sent the person looking for an update that did not exist.
     public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? {
         let data: Data
         do {
@@ -355,7 +357,11 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         } catch AgentError.http(let status, _) where status == 404 {
             return nil
         }
-        return try? BridgeCoding.decoder.decode(UsageAnalyticsReport.self, from: data)
+        do {
+            return try BridgeCoding.decoder.decode(UsageAnalyticsReport.self, from: data)
+        } catch {
+            throw AgentError.decoding("analytics: \(error)")
+        }
     }
 
     public func usageQuota() async throws -> UsageQuota? {
