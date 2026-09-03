@@ -19,6 +19,9 @@ public actor AgentConversation {
     private var loadedTranscript = false
     private var goal: SessionGoal?
     private var compaction: CompactionActivity?
+    /// How many seams the transcript held when the running compaction began — the count its own
+    /// seam has to exceed. See ``settleCompactionAgainstTranscript()``.
+    private var seamsWhenCompactionBegan: Int?
     private var interruption: TurnInterruption?
 
     private var streamTask: Task<Void, Never>?
@@ -206,6 +209,40 @@ public actor AgentConversation {
         guard compaction?.isRunning != false else { return }
         guard compaction?.startedAt != activity.startedAt else { return }
         compaction = activity
+        seamsWhenCompactionBegan = landedSeams()
+    }
+
+    /// The transcript outranks the stream on whether a compaction is still running.
+    ///
+    /// A compaction is minutes of work, and the one event that ends it is easy to miss: a phone
+    /// suspended while the server summarized, a stream that reconnected past the finish, a
+    /// backend whose finish was never sent. Every client gates its own send queue on the
+    /// activity, so a compaction nobody closed is a conversation that quietly stops sending — the
+    /// prompts pile up as queued behind a summarize that ended an hour ago, and the card saying so
+    /// stays until the chat is opened afresh. The seam is the compaction's own product, written
+    /// into the transcript by every backend that compacts, so once the transcript holds one more
+    /// seam than it did when the compaction began, the compaction is over whatever was heard.
+    ///
+    /// A seam counts once its message is complete where the backend says when a message is
+    /// complete — opencode streams the summary into the seam's message, and a compaction that
+    /// ends the moment its summary starts is a card that goes down while the machine is still
+    /// writing. A backend that never stamps completion counts every seam it has.
+    private func settleCompactionAgainstTranscript() {
+        guard compaction?.isRunning == true, let began = seamsWhenCompactionBegan else { return }
+        guard landedSeams() > began else { return }
+        compaction = nil
+        seamsWhenCompactionBegan = nil
+    }
+
+    private func landedSeams() -> Int {
+        let reportsCompletion = backend.capabilities.reportsMessageCompletion
+        return reducer.snapshot.count { message in
+            guard !reportsCompletion || message.completedAt != nil else { return false }
+            return message.parts.contains { part in
+                if case .compaction = part.kind { return true }
+                return false
+            }
+        }
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
@@ -843,6 +880,7 @@ public actor AgentConversation {
         case .messageUpserted, .partUpserted, .partRemoved, .messageRemoved:
             reducer.apply(event)
             syncTranscriptQuestions()
+            settleCompactionAgainstTranscript()
             if status != .running, impliesRunning(event) { status = .running }
             persistDuringStream()
         case .status(let value):
@@ -853,6 +891,9 @@ public actor AgentConversation {
         case .compaction(let value):
             let wasRunning = compaction?.isRunning == true
             compaction = value
+            if value?.isRunning == true, !wasRunning {
+                seamsWhenCompactionBegan = loadedTranscript ? landedSeams() : nil
+            }
             /// A compaction that just ended rewrote the transcript on the server: the summary
             /// message the stream delivered is not the seam the transcript wants, so re-read the
             /// authoritative messages once the dust settles rather than leaving the raw summary
@@ -1050,6 +1091,10 @@ public actor AgentConversation {
             if backend.capabilities.supportsGoals { self.goal = goal }
             if case .answered(let cut) = cutOff { interruption = cut }
             adoptRunningCompaction(compacting)
+            if compaction?.isRunning == true, seamsWhenCompactionBegan == nil {
+                seamsWhenCompactionBegan = landedSeams()
+            }
+            settleCompactionAgainstTranscript()
             lastFailure = nil
             markAnswered(generation: gen)
             drainBufferedEvents(generation: gen, alreadyFolded: folded)

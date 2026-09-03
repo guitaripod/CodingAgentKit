@@ -28,6 +28,12 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     public let capabilities: BackendCapabilities
 
     private let script: [MockScriptStep]
+    /// How many of the script's steps the transcript the backend *serves* already reflects. Nil
+    /// means all of them — the default, where a read and the stream agree. A prefix models a
+    /// transcript that has not caught up with the stream: everything past it arrives over the
+    /// stream only, which is how a seam that did not exist when the conversation was read is
+    /// exercised.
+    private let transcriptPrefix: Int?
     private let scripts: [String: [MockScriptStep]]
     private let replyTurns: [[MockScriptStep]]
     private let interactive: Bool
@@ -94,10 +100,12 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         derivesQuestionsFromTranscript: Bool = false,
         commands: [AgentCommand] = MockBackend.demoCommands,
         git: GitSnapshot? = nil,
-        gitPatches: [String: String] = [:]
+        gitPatches: [String: String] = [:],
+        transcriptPrefix: Int? = nil
     ) {
         self.agentType = agentType
         self.script = script
+        self.transcriptPrefix = transcriptPrefix
         self.scripts = scripts
         self.replyTurns = replyTurns
         self.interactive = interactive
@@ -212,7 +220,9 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
         var reducer = MessageReducer(agentType: agentType)
-        for step in fullLog(for: sessionID) { reducer.apply(step.event) }
+        let log = fullLog(for: sessionID)
+        let served = transcriptPrefix.map { Array(log.prefix($0)) } ?? log
+        for step in served { reducer.apply(step.event) }
         return reducer.snapshot
     }
 

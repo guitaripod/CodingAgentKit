@@ -193,6 +193,13 @@ enum OpenCodeMapping {
     /// A marker older than ``staleMarker`` is not reported. Summarizing takes minutes, not hours,
     /// and a failed one can leave its marker behind for good: without a clock on it, one dead
     /// marker would pin "Compacting…" over a conversation for the rest of its life.
+    ///
+    /// The marker is answered by the *completed* summary, not by the summary's first byte: the
+    /// compaction-mode message exists from the moment summarizing begins and streams for as long
+    /// as it takes, so a read taken meanwhile that called the marker answered took the card down
+    /// while the machine was still writing. And a marker followed by anything else — a prompt,
+    /// an answer — belongs to an attempt the conversation has already moved past, whatever
+    /// became of it.
     static func compactionInFlight(_ envelopes: [OCMessageEnvelope], now: Date = Date()) -> Date? {
         var startedAt: Date?
         for envelope in envelopes {
@@ -200,9 +207,11 @@ enum OpenCodeMapping {
                 startedAt = envelope.info.time?.created.map(date) ?? now
                 continue
             }
-            if envelope.info.role == "assistant", envelope.info.mode == "compaction" {
-                startedAt = nil
-            }
+            guard startedAt != nil else { continue }
+            let summarizing =
+                envelope.info.role == "assistant" && envelope.info.mode == "compaction"
+                && envelope.info.time?.completed == nil
+            if !summarizing { startedAt = nil }
         }
         guard let startedAt, now.timeIntervalSince(startedAt) < staleMarker else { return nil }
         return startedAt

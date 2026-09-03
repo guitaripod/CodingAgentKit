@@ -256,6 +256,32 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(OpenCodeMapping.compactionInFlight(envelopes, now: Date()) == nil)
     }
 
+    @Test func aSummaryStillStreamingKeepsTheCompactionRunning() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]},
+             {"info":{"id":"msg_S","role":"assistant","sessionID":"ses_S","mode":"compaction","time":{"created":2}},"parts":[{"id":"prt_t","messageID":"msg_S","sessionID":"ses_S","type":"text","text":"So far"}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        #expect(
+            OpenCodeMapping.compactionInFlight(envelopes, now: Date(timeIntervalSince1970: 60))
+                != nil,
+            "the summary's first byte is not the summary")
+    }
+
+    @Test func aMarkerTheConversationMovedPastIsNotRunning() throws {
+        let json = #"""
+            [{"info":{"id":"msg_U","role":"user","sessionID":"ses_S","time":{"created":1}},"parts":[{"id":"prt_c","messageID":"msg_U","sessionID":"ses_S","type":"compaction","auto":false}]},
+             {"info":{"id":"msg_N","role":"user","sessionID":"ses_S","time":{"created":2}},"parts":[{"id":"prt_n","messageID":"msg_N","sessionID":"ses_S","type":"text","text":"never mind"}]}]
+            """#
+        let envelopes = try JSONCoding.decoder.decode(
+            [OCMessageEnvelope].self, from: Data(json.utf8))
+        #expect(
+            OpenCodeMapping.compactionInFlight(envelopes, now: Date(timeIntervalSince1970: 60))
+                == nil,
+            "a prompt after the marker means the attempt is over, however it ended")
+    }
+
     @Test func aMarkerPartEventIsTheRunningActivityNotATranscriptRow() {
         let event = decode(
             #"{"type":"message.part.updated","properties":{"sessionID":"ses_S","part":{"type":"compaction","auto":false,"messageID":"msg_U","sessionID":"ses_S","id":"prt_c"}}}"#

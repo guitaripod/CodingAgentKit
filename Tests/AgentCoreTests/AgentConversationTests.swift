@@ -204,6 +204,65 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
             "queueing a prompt took the running compaction off the screen")
     }
 
+    @Test func aCompactionIsOverOnceItsSeamIsInTheTranscript() async {
+        let seam = ChatMessage(
+            id: "seam", role: .assistant, agentType: .claudeCode,
+            parts: [MessagePart(id: "c", kind: .compaction(Compaction(tokensBefore: 90_000, tokensAfter: 4_000)))],
+            createdAt: Date())
+        let backend = MockBackend(
+            agentType: .claudeCode,
+            script: [
+                MockScriptStep(.compaction(CompactionActivity(startedAt: Date()))),
+                MockScriptStep(.messageUpserted(seam, replaceParts: true), delay: .milliseconds(300)),
+            ],
+            capabilities: BackendCapabilities(
+                supportsFileBrowsing: false, supportsDiffs: false, supportsPermissions: false,
+                supportsMultipleSessions: true, supportsModelSelection: true,
+                supportsAttachments: false, supportsCompaction: true,
+                reportsMessageCompletion: false),
+            transcriptPrefix: 0)
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        var sawRunning = false
+        var settled = false
+        for await state in await conversation.states() {
+            if state.activeCompaction != nil { sawRunning = true }
+            if sawRunning, state.activeCompaction == nil,
+                state.messages.contains(where: { $0.id == "seam" })
+            {
+                settled = true
+                break
+            }
+        }
+        #expect(sawRunning, "the compaction never showed as running")
+        #expect(settled, "a seam in the transcript did not end the compaction the stream never closed")
+    }
+
+    @Test func aSeamStillBeingWrittenDoesNotEndTheCompaction() async {
+        let streaming = ChatMessage(
+            id: "seam", role: .system, agentType: .openCode,
+            parts: [MessagePart(id: "c", kind: .compaction(Compaction(summary: "so far")))],
+            createdAt: Date(), completedAt: nil, isStreaming: true)
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(.compaction(CompactionActivity(startedAt: Date()))),
+                MockScriptStep(.messageUpserted(streaming, replaceParts: true), delay: .milliseconds(300)),
+            ],
+            transcriptPrefix: 0)
+        let conversation = AgentConversation(backend: backend, sessionID: "s", policy: fastPolicy)
+
+        var stillRunning: Bool?
+        for await state in await conversation.states()
+        where state.messages.contains(where: { $0.id == "seam" }) {
+            stillRunning = state.activeCompaction != nil
+            break
+        }
+        #expect(
+            stillRunning == true,
+            "a summary still streaming into its seam took the compaction card down early")
+    }
+
     @Test func aNewPromptDropsTheLastCompactionsFailure() async {
         let backend = MockBackend(
             agentType: .openCode,
