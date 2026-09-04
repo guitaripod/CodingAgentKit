@@ -158,6 +158,29 @@ public struct DelegateRun: Codable, Sendable, Hashable, Identifiable {
 
     public var created: Date? { DelegateTimestamp.parse(createdAt) }
     public var finished: Date? { finishedAt.flatMap(DelegateTimestamp.parse) }
+
+    public init(
+        id: String, packetID: String, taskClass: String, repo: String, host: String, mode: DelegateMode,
+        startTier: String, ceiling: String, status: DelegateRunStatus, createdAt: String,
+        finishedAt: String? = nil, passedTier: String? = nil, escalations: Int = 0, summary: String = "",
+        packet: DelegatePacket
+    ) {
+        self.id = id
+        self.packetID = packetID
+        self.taskClass = taskClass
+        self.repo = repo
+        self.host = host
+        self.mode = mode
+        self.startTier = startTier
+        self.ceiling = ceiling
+        self.status = status
+        self.createdAt = createdAt
+        self.finishedAt = finishedAt
+        self.passedTier = passedTier
+        self.escalations = escalations
+        self.summary = summary
+        self.packet = packet
+    }
 }
 
 public struct DelegateAttempt: Codable, Sendable, Hashable {
@@ -196,12 +219,43 @@ public struct DelegateAttempt: Codable, Sendable, Hashable {
     }
 
     public var duration: Duration { .milliseconds(durationMS) }
+
+    public init(
+        runID: String, tier: String, chainIndex: Int, runner: String, model: String, attempt: Int,
+        status: DelegateAttemptStatus, verifyExit: Int? = nil, durationMS: Int, tokensIn: Int = 0,
+        tokensOut: Int = 0, changedFiles: [String] = [], scopeViolations: [String] = [],
+        verifyTail: String = "", workerSummary: String = "", startedAt: String = "", finishedAt: String = ""
+    ) {
+        self.runID = runID
+        self.tier = tier
+        self.chainIndex = chainIndex
+        self.runner = runner
+        self.model = model
+        self.attempt = attempt
+        self.status = status
+        self.verifyExit = verifyExit
+        self.durationMS = durationMS
+        self.tokensIn = tokensIn
+        self.tokensOut = tokensOut
+        self.changedFiles = changedFiles
+        self.scopeViolations = scopeViolations
+        self.verifyTail = verifyTail
+        self.workerSummary = workerSummary
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+    }
 }
 
 public struct DelegateRunDetail: Codable, Sendable, Hashable {
     public var run: DelegateRun
     public var attempts: [DelegateAttempt]
     public var live: Bool
+
+    public init(run: DelegateRun, attempts: [DelegateAttempt], live: Bool) {
+        self.run = run
+        self.attempts = attempts
+        self.live = live
+    }
 }
 
 public struct DelegateStat: Codable, Sendable, Hashable {
@@ -222,6 +276,20 @@ public struct DelegateStat: Codable, Sendable, Hashable {
         case tokensIn = "tokens_in"
         case tokensOut = "tokens_out"
     }
+
+    public init(
+        taskClass: String, tier: String, attempts: Int, passes: Int, passRate: Double, averageMS: Double,
+        tokensIn: Int, tokensOut: Int
+    ) {
+        self.taskClass = taskClass
+        self.tier = tier
+        self.attempts = attempts
+        self.passes = passes
+        self.passRate = passRate
+        self.averageMS = averageMS
+        self.tokensIn = tokensIn
+        self.tokensOut = tokensOut
+    }
 }
 
 public struct DelegateChainEntry: Codable, Sendable, Hashable {
@@ -231,6 +299,15 @@ public struct DelegateChainEntry: Codable, Sendable, Hashable {
     public var health: String?
     public var healthy: Bool?
     public var reason: String?
+
+    public init(runner: String, model: String, thinking: String? = nil, health: String? = nil, healthy: Bool? = nil, reason: String? = nil) {
+        self.runner = runner
+        self.model = model
+        self.thinking = thinking
+        self.health = health
+        self.healthy = healthy
+        self.reason = reason
+    }
 }
 
 public struct DelegateTier: Codable, Sendable, Hashable, Identifiable {
@@ -239,6 +316,12 @@ public struct DelegateTier: Codable, Sendable, Hashable, Identifiable {
     public var chain: [DelegateChainEntry]
 
     public var id: String { tier }
+
+    public init(tier: String, label: String, chain: [DelegateChainEntry]) {
+        self.tier = tier
+        self.label = label
+        self.chain = chain
+    }
 
     /// The entry a run on this host would use right now, or nil when every probed entry is down.
     public var activeEntry: DelegateChainEntry? {
@@ -254,11 +337,26 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
     public var tiers: [String]
     public var classes: [String]
     public var modes: [String]
+
+    public init(api: Int, version: String, host: String, features: [String], tiers: [String], classes: [String], modes: [String]) {
+        self.api = api
+        self.version = version
+        self.host = host
+        self.features = features
+        self.tiers = tiers
+        self.classes = classes
+        self.modes = modes
+    }
 }
 
 public struct DelegateHealth: Codable, Sendable, Hashable {
     public var ok: Bool
     public var version: String
+
+    public init(ok: Bool, version: String) {
+        self.ok = ok
+        self.version = version
+    }
 }
 
 /// One line of a run's story, as the daemon emits it over SSE and stores it in its log.
