@@ -60,6 +60,9 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// What the single working agent was sent to do; nil when several are
     /// working, or none.
     public var agentTask: String?
+    /// The conversation is bookmarked on the server that holds it. Nil from a backend with no
+    /// notion of a bookmark, which is not the same as `false` — the mark is then the device's own.
+    public var saved: Bool?
 
     /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
     /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
@@ -95,6 +98,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         reasoningEffort: String? = nil,
         activeAgents: Int? = nil,
         agentTask: String? = nil,
+        saved: Bool? = nil,
         hostID: String? = nil
     ) {
         self.id = id
@@ -110,6 +114,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.reasoningEffort = reasoningEffort
         self.activeAgents = activeAgents
         self.agentTask = agentTask
+        self.saved = saved
         self.hostID = hostID
     }
 }

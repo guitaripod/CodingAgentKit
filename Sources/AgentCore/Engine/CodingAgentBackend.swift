@@ -22,6 +22,9 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// path, so it queues behind a running turn instead of being refused by it.
     public var answersQuestionsByMessage: Bool
     public var supportsRenaming: Bool
+    /// Whether the server keeps a conversation's bookmark, so saving a chat on one device shows
+    /// it on every other. False leaves the bookmark where it has always been: on the device.
+    public var supportsSavedChats: Bool
     public var supportsSubagents: Bool
     /// Whether the backend can list the slash commands it will resolve, so a client can offer them
     /// for completion instead of guessing.
@@ -67,6 +70,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsQuestions: Bool = false,
         answersQuestionsByMessage: Bool = false,
         supportsRenaming: Bool = false,
+        supportsSavedChats: Bool = false,
         supportsSubagents: Bool = false,
         supportsCommands: Bool = false,
         supportsGoals: Bool = false,
@@ -91,6 +95,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsQuestions = supportsQuestions
         self.answersQuestionsByMessage = answersQuestionsByMessage
         self.supportsRenaming = supportsRenaming
+        self.supportsSavedChats = supportsSavedChats
         self.supportsSubagents = supportsSubagents
         self.supportsCommands = supportsCommands
         self.supportsGoals = supportsGoals
@@ -895,6 +900,11 @@ public protocol CodingAgentBackend: Sendable {
     func forkSession(_ sessionID: String) async throws -> AgentSession
     /// Renames a session's display title.
     func renameSession(_ sessionID: String, title: String) async throws
+    /// Marks a conversation as one the user keeps, on the server that holds it — the bookmark is a
+    /// fact about the conversation rather than about the device that made it, so every client the
+    /// server answers sees the same shortlist. Throws ``AgentError/unsupported(_:)`` on a backend
+    /// with no notion of it, which leaves the bookmark device-local.
+    func setSessionSaved(_ sessionID: String, saved: Bool) async throws
     /// Slash commands this server will resolve — built-ins plus whatever the machine and the given
     /// worktree contribute. Empty when the backend can't enumerate them.
     func availableCommands(directory: String?) async throws -> [AgentCommand]
@@ -1005,6 +1015,10 @@ extension CodingAgentBackend {
     public func additionalUsageQuotas() async throws -> [UsageQuota] { [] }
     public func forkSession(_ sessionID: String) async throws -> AgentSession {
         throw AgentError.unsupported("fork")
+    }
+
+    public func setSessionSaved(_ sessionID: String, saved: Bool) async throws {
+        throw AgentError.unsupported("saved chats")
     }
 
     public func renameSession(_ sessionID: String, title: String) async throws {

@@ -19,6 +19,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsQuestions: true,
         answersQuestionsByMessage: true,
         supportsRenaming: true,
+        supportsSavedChats: true,
         supportsSubagents: true,
         supportsCommands: true,
         supportsGoals: true,
@@ -104,7 +105,14 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     }
 
     public func renameSession(_ sessionID: String, title: String) async throws {
-        let body = try BridgeCoding.encoder.encode(BRRename(title: title))
+        let body = try BridgeCoding.encoder.encode(BRPatch(title: title, saved: nil))
+        _ = try await http.send(builder.request(.patch, "/sessions/\(sessionID)", body: body))
+    }
+
+    /// A bridge too old for the field answers 400 to a patch that names no title, which the
+    /// caller reads as a server that cannot keep bookmarks rather than as a failure to save.
+    public func setSessionSaved(_ sessionID: String, saved: Bool) async throws {
+        let body = try BridgeCoding.encoder.encode(BRPatch(title: nil, saved: saved))
         _ = try await http.send(builder.request(.patch, "/sessions/\(sessionID)", body: body))
     }
 
@@ -479,6 +487,7 @@ struct BRSummary: Decodable {
     let active: Bool?
     let agents: Int?
     let agentTask: String?
+    let saved: Bool?
 
     func session(agentType: AgentType) -> AgentSession {
         AgentSession(
@@ -486,7 +495,7 @@ struct BRSummary: Decodable {
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
-            activeAgents: agents, agentTask: agentTask)
+            activeAgents: agents, agentTask: agentTask, saved: saved)
     }
 }
 
@@ -756,8 +765,9 @@ struct BRSubagentTranscript: Decodable {
     let messages: [BRMessage]
 }
 
-struct BRRename: Encodable {
-    let title: String
+struct BRPatch: Encodable {
+    let title: String?
+    let saved: Bool?
 }
 
 struct BRSend: Encodable {
