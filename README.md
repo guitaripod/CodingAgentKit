@@ -4,6 +4,7 @@ A cross-platform Swift package for driving coding-agent servers over HTTP + SSE.
 
 - **opencode** (`opencode serve`) — multi-provider, file browsing, diffs, permissions.
 - **Claude Code** via a bridge service (e.g. claude-bridge) exposing structured sessions over HTTP + SSE — a subscription-billed Claude Code session.
+- **delegate** (`delegate serve`) — a tiered task dispatcher: a packet goes in, a cheaper model tries it in an isolated worktree, a verifier decides, failures escalate, and the passing patch is applied; `DelegateKit` follows every run as a stream.
 
 It compiles, tests, and **runs on Linux and Apple platforms**. No Keychain, no OSLog, no UIKit anywhere in the core — so it works headless on a server as well as inside an iOS app.
 
@@ -18,12 +19,13 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 | `AgentCore` | Transport (URLSession REST + SSE), unified models, `CodingAgentBackend`, `MessageReducer`, `AgentConversation`, protocols (`SecretStore`, `SessionCache`), swift-log facade. No backend specifics, no Apple-only imports. |
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
 | `ClaudeCodeKit` | Hand-written client for Claude Code bridge + event decoder + `ClaudeCodeBackend`, over an SSE stream. |
+| `DelegateKit` | Client for the delegate daemon (tiered task dispatcher): packets, runs, tier health, approvals, and the run event stream. |
 | `CodingAgentKit` | Umbrella that re-exports the three. |
 | `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
 | `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |
 | `codeagent` | Scriptable CLI that exercises the whole stack. |
 
-`OpenCodeKit` and `ClaudeCodeKit` depend only on `AgentCore`; the core never imports a concrete backend.
+`OpenCodeKit`, `ClaudeCodeKit` and `DelegateKit` depend only on `AgentCore`; the core never imports a concrete backend.
 
 ## Requirements
 

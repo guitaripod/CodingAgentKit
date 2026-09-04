@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.23.0
+
+A machine can be handed a packet, and the packet comes back as a verified patch.
+
+### Added
+- **`DelegateKit` speaks to the delegate daemon.** `DelegateClient` covers the daemon's whole
+  surface — health, capabilities, the tier chains with their live health, the run list, one run
+  with its attempts, starting a packet, replaying it on another tier, approving or holding an
+  escalation, cancelling, and the pass-rate table — over the same `RequestBuilder`/`HTTPClient`
+  the bridges use, with Basic auth as user `delegate` on port 4100. `events(runID:)` is the
+  run's story as an `AsyncThrowingStream<DelegateEnvelope, Error>`: the stored past first, then
+  live, ending itself on `run_finished` so a reader never waits on a run that is over.
+- **The wire is decoded into names, not dictionaries.** `DelegatePacket` (the daemon's `class`
+  key is `taskClass` here), `DelegateRun`, `DelegateAttempt`, `DelegateStat`, `DelegateTier`,
+  `DelegateCapabilities`, and `DelegateEvent` with one case per event kind — and `.unknown(kind:)`
+  for a kind this Kit predates, so a newer daemon never breaks an older reader. Nanosecond
+  RFC 3339 stamps decode through `DelegateTimestamp`, and `DelegateIdentifier.mint()` makes a
+  ULID-shaped id so a packet written on a phone sorts beside one the daemon wrote.
+
 ## 0.18.0
 
 A conversation hears the machine's own record, and a turn carries what it took.
