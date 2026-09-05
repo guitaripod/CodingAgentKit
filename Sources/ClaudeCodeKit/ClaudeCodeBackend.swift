@@ -307,20 +307,15 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         guard agentType == .omp else { return Self.models }
         do {
             let data = try await http.send(builder.request(.get, "/models"))
-            struct RemoteModel: Decodable {
-                let id: String
-                let name: String?
-                let provider: String?
-                let variants: [String]?
-            }
-            let remote = try BridgeCoding.decoder.decode([RemoteModel].self, from: data)
+            let remote = try BridgeCoding.decoder.decode([BRRemoteModel].self, from: data)
             return remote.map { model in
                 ModelInfo(
                     id: model.id,
                     name: model.name ?? model.id,
                     providerID: model.provider ?? model.id.split(separator: "/").first.map(String.init) ?? "",
                     capabilities: Self.vision,
-                    variants: model.variants)
+                    variants: model.variants,
+                    contextWindow: model.contextWindow)
             }
         } catch {
             return []
@@ -517,6 +512,16 @@ struct BRLenient<Wrapped: Decodable>: Decodable {
     init(from decoder: Decoder) throws {
         value = try? Wrapped(from: decoder)
     }
+}
+/// One row of the omp-bridge `/models` catalog.
+struct BRRemoteModel: Decodable {
+    let id: String
+    let name: String?
+    let provider: String?
+    let variants: [String]?
+    /// The catalog's own limit; a bridge older than this field leaves it nil and the client
+    /// falls back to what the model's name is known to hold.
+    let contextWindow: Int?
 }
 
 struct BRSession: Decodable {

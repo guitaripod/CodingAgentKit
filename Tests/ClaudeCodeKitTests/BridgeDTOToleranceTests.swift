@@ -143,6 +143,24 @@ import Testing
         #expect(session.messages.isEmpty)
     }
 
+    @Test func aModelRowCarriesTheCatalogsWindow() throws {
+        let model = try decode(
+            BRRemoteModel.self,
+            #"{"id":"ollama-cloud/glm-5.3-flash","name":"GLM 5.3 Flash","provider":"ollama-cloud","contextWindow":1048576}"#
+        )
+        #expect(model.contextWindow == 1_048_576)
+    }
+
+    /// A bridge older than the field says nothing, and a client then sizes the ring against what
+    /// the model's name is known to hold — so the field must read as absent, not as zero.
+    @Test func anOldBridgeLeavesTheModelWindowUnknown() throws {
+        let model = try decode(
+            BRRemoteModel.self,
+            #"{"id":"anthropic/fable","name":"Fable","provider":"anthropic"}"#
+        )
+        #expect(model.contextWindow == nil)
+    }
+
     @Test func fullSessionEmptyEffortMapsToNilAndTimestampFallsBack() throws {
         let session = try decode(
             BRSession.self,
