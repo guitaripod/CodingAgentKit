@@ -225,6 +225,11 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     /// the one number every existing surface reads; this is what a turn's own account is drawn
     /// from, and what a speed can honestly be computed against.
     public var usage: MessageUsage?
+    /// What the turn's last request handed the model and got back — the conversation's footprint
+    /// in the context window after this turn. `usage` is the turn's whole bill and for a turn of
+    /// many tool calls is many times the window; this is one call and never more than the window.
+    /// Absent means the server did not say, and a client falls back to estimating from the text.
+    public var context: MessageUsage?
     /// How long the turn took, where the server measured it itself — from the moment the person
     /// pressed return to the last thing the turn wrote, which is the wait a person actually had.
     /// Nil where the server does not say and the stamps are all there is; never a substitute for
@@ -249,6 +254,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         reasoningEffort: String? = nil,
         totalTokens: Int? = nil,
         usage: MessageUsage? = nil,
+        context: MessageUsage? = nil,
         duration: TimeInterval? = nil,
         finishReason: String? = nil
     ) {
@@ -266,6 +272,7 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
         self.reasoningEffort = reasoningEffort
         self.totalTokens = totalTokens
         self.usage = usage
+        self.context = context
         self.duration = duration
         self.finishReason = finishReason
     }

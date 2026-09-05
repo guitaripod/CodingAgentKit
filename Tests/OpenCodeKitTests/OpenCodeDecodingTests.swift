@@ -402,3 +402,22 @@ private func decode(_ json: String) -> BackendEvent? {
         #expect(mapped.reasoningEffort == nil)
     }
 }
+
+@Suite struct OpenCodeContextWindowTests {
+    @Test func aModelCarriesItsContextLimit() throws {
+        let json = #"{"id":"anthropic","name":"Anthropic","models":{"claude-opus-5":{"id":"claude-opus-5","name":"Opus 5","limit":{"context":200000,"output":32000}},"local":{"id":"local","name":"Local"}}}"#
+        let provider = try JSONDecoder().decode(OCProvider.self, from: Data(json.utf8))
+        #expect(provider.models?["claude-opus-5"]?.limit?.context == 200_000)
+        #expect(provider.models?["local"]?.limit == nil)
+    }
+
+    /// opencode's `tokens` is the last step's usage, so the footprint and the bill are the same
+    /// record on the way in.
+    @Test func aMessageFootprintIsItsTokens() throws {
+        let json = #"{"id":"m1","sessionID":"s","role":"assistant","cost":0.1,"providerID":"anthropic","modelID":"claude-opus-5","tokens":{"input":100,"output":50,"reasoning":0,"cache":{"read":40000,"write":0}},"finish":"stop"}"#
+        let message = try JSONDecoder().decode(OCMessage.self, from: Data(json.utf8))
+        let chat = OpenCodeMapping.shell(message)
+        #expect(chat.context?.total == 40_150)
+        #expect(chat.context == chat.usage)
+    }
+}

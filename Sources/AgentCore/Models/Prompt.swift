@@ -81,16 +81,20 @@ public struct ModelInfo: Identifiable, Sendable, Hashable, Codable {
     /// variants: "low", "high", …), in ascending effort order. `nil` or empty means the model
     /// takes no per-turn effort control.
     public var variants: [String]?
+    /// How many tokens the model can hold at once, as the server's catalog states it. Nil means
+    /// the catalog did not say, and a client may fall back to what it knows about the name.
+    public var contextWindow: Int?
 
     public init(
         id: String, name: String, providerID: String, capabilities: ModelCapabilities? = nil,
-        variants: [String]? = nil
+        variants: [String]? = nil, contextWindow: Int? = nil
     ) {
         self.id = id
         self.name = name
         self.providerID = providerID
         self.capabilities = capabilities
         self.variants = variants
+        self.contextWindow = contextWindow
     }
 
     public var selection: ModelSelection { ModelSelection(providerID: providerID, modelID: id) }

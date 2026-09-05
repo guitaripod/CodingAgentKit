@@ -34,11 +34,21 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         attachment: true, imageInput: true, pdfInput: true)
 
     public static let models: [ModelInfo] = [
-        ModelInfo(id: "fable", name: "Fable", providerID: "anthropic", capabilities: vision),
-        ModelInfo(id: "opus", name: "Opus", providerID: "anthropic", capabilities: vision),
-        ModelInfo(id: "opus[1m]", name: "Opus 1M", providerID: "anthropic", capabilities: vision),
-        ModelInfo(id: "sonnet", name: "Sonnet", providerID: "anthropic", capabilities: vision),
-        ModelInfo(id: "haiku", name: "Haiku", providerID: "anthropic", capabilities: vision),
+        ModelInfo(
+            id: "fable", name: "Fable", providerID: "anthropic", capabilities: vision,
+            contextWindow: 200_000),
+        ModelInfo(
+            id: "opus", name: "Opus", providerID: "anthropic", capabilities: vision,
+            contextWindow: 200_000),
+        ModelInfo(
+            id: "opus[1m]", name: "Opus 1M", providerID: "anthropic", capabilities: vision,
+            contextWindow: 1_000_000),
+        ModelInfo(
+            id: "sonnet", name: "Sonnet", providerID: "anthropic", capabilities: vision,
+            contextWindow: 200_000),
+        ModelInfo(
+            id: "haiku", name: "Haiku", providerID: "anthropic", capabilities: vision,
+            contextWindow: 200_000),
     ]
 
     /// `ultracode` is a mode more than a level — the server maps it to xhigh
@@ -612,6 +622,7 @@ struct BRMessage: Decodable {
     let seconds: Double?
     let model: String?
     let usage: BRTokens?
+    let context: BRTokens?
     let costUSD: Double?
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
@@ -630,7 +641,8 @@ struct BRMessage: Decodable {
         return ChatMessage(
             id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: agentType,
             parts: uniqueParts, createdAt: createdAt, costUSD: costUSD, modelID: model,
-            totalTokens: tiers.map(\.total), usage: tiers, duration: seconds)
+            totalTokens: tiers.map(\.total), usage: tiers, context: context?.usage,
+            duration: seconds)
     }
 }
 

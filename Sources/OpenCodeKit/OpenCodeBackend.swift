@@ -682,7 +682,10 @@ public struct OpenCodeBackend: FileBrowsingBackend {
                                 imageInput: caps.input?.image ?? false,
                                 pdfInput: caps.input?.pdf ?? false)
                         },
-                        variants: Self.orderedVariants($0.value.variants))
+                        variants: Self.orderedVariants($0.value.variants),
+                        contextWindow: ($0.value.limit?.context).flatMap {
+                            $0 > 0 ? Int($0) : nil
+                        })
                 }
                 .sorted { $0.id < $1.id }
             return Provider(

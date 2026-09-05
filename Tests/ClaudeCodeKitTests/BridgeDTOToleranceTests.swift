@@ -214,3 +214,37 @@ import Testing
         #expect(call.status == .running)
     }
 }
+
+@Suite struct BridgeContextFootprintTests {
+    private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+        try BridgeCoding.decoder.decode(type, from: Data(json.utf8))
+    }
+
+    /// The footprint is the turn's last call; the bill is every call. A bridge too old to send the
+    /// footprint leaves it nil rather than letting the bill stand in for it.
+    @Test func aMessageCarriesItsFootprintApartFromItsBill() throws {
+        let message = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"m1","role":"assistant","parts":[],"createdAt":"2024-01-02T03:04:05Z",
+             "usage":{"input":130,"output":1000,"cacheRead":82000,"cacheWrite5m":2000},
+             "context":{"input":10,"output":700,"cacheRead":42000}}
+            """#
+        ).chat(agentType: .claudeCode)
+        #expect(message.usage?.cacheRead == 82_000)
+        #expect(message.context?.cacheRead == 42_000)
+        #expect(message.context?.total == 42_710)
+    }
+
+    @Test func anOldBridgeLeavesTheFootprintUnknown() throws {
+        let message = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"m1","role":"assistant","parts":[],"createdAt":"2024-01-02T03:04:05Z",
+             "usage":{"input":130,"output":1000,"cacheRead":82000}}
+            """#
+        ).chat(agentType: .claudeCode)
+        #expect(message.usage != nil)
+        #expect(message.context == nil)
+    }
+}

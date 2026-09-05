@@ -515,7 +515,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                         parts: message.parts, createdAt: Date(), completedAt: message.completedAt,
                         isStreaming: message.isStreaming, error: message.error,
                         costUSD: message.costUSD, providerID: message.providerID,
-                        modelID: message.modelID, totalTokens: message.totalTokens),
+                        modelID: message.modelID, totalTokens: message.totalTokens,
+                        usage: message.usage, context: message.context),
                     replaceParts: replaceParts)
             case .partUpserted(let messageID, let part):
                 event = .partUpserted(messageID: messageID + suffix, part)

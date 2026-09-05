@@ -95,10 +95,14 @@ enum OpenCodeMapping {
             reasoningEffort: message.variant,
             totalTokens: usage(message.tokens).map(\.total),
             usage: usage(message.tokens),
+            context: usage(message.tokens),
             finishReason: message.finish
         )
     }
 
+    /// opencode overwrites a message's `tokens` with each step's own usage rather than adding
+    /// them, so the record is the last request's — the turn's footprint in the window — and it is
+    /// handed over as both the bill and the footprint.
     private static func usage(_ tokens: OCTokens?) -> MessageUsage? {
         guard let tokens else { return nil }
         let usage = MessageUsage(

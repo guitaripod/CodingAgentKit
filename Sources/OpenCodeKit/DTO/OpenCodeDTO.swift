@@ -160,6 +160,12 @@ struct OCModel: Decodable, Sendable {
     let name: String?
     let capabilities: OCModelCapabilities?
     let variants: [String: OCModelVariant]?
+    let limit: OCModelLimit?
+}
+
+struct OCModelLimit: Decodable, Sendable {
+    let context: Double?
+    let output: Double?
 }
 
 struct OCModelVariant: Decodable, Sendable {}
