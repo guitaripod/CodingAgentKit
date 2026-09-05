@@ -329,6 +329,54 @@ public struct DelegateTier: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// What a class decides for a packet that leaves the field blank: where it starts, how far it may
+/// climb, what judges it. The daemon's own table, so a client can say it before the packet goes.
+public struct DelegateClassPolicy: Codable, Sendable, Hashable {
+    public var tier: String?
+    public var ceiling: String?
+    public var verify: String?
+    public var verified: Bool?
+    public var attempts: Int?
+
+    public init(tier: String? = nil, ceiling: String? = nil, verify: String? = nil, verified: Bool? = nil, attempts: Int? = nil) {
+        self.tier = tier
+        self.ceiling = ceiling
+        self.verify = verify
+        self.verified = verified
+        self.attempts = attempts
+    }
+}
+
+/// What a mode does to the ladder: the start shifted by `shift` rungs, a ceiling for classes with
+/// an objective verifier, and the rung the daemon asks about before spending it.
+public struct DelegateModePolicy: Codable, Sendable, Hashable {
+    public var shift: Int
+    public var ceilingVerified: String?
+    public var askBefore: String?
+
+    enum CodingKeys: String, CodingKey {
+        case shift
+        case ceilingVerified = "ceiling_verified"
+        case askBefore = "ask_before"
+    }
+
+    public init(shift: Int = 0, ceilingVerified: String? = nil, askBefore: String? = nil) {
+        self.shift = shift
+        self.ceilingVerified = ceilingVerified
+        self.askBefore = askBefore
+    }
+}
+
+public struct DelegateModePolicies: Codable, Sendable, Hashable {
+    public var conserve: DelegateModePolicy
+    public var rush: DelegateModePolicy
+
+    public init(conserve: DelegateModePolicy, rush: DelegateModePolicy) {
+        self.conserve = conserve
+        self.rush = rush
+    }
+}
+
 public struct DelegateCapabilities: Codable, Sendable, Hashable {
     public var api: Int
     public var version: String
@@ -337,8 +385,22 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
     public var tiers: [String]
     public var classes: [String]
     public var modes: [String]
+    /// Per class, what the daemon fills in for a packet that leaves it blank. Empty from a daemon
+    /// too old to say.
+    public var classPolicies: [String: DelegateClassPolicy]
+    /// What conserve and rush do to the ladder. Nil from a daemon too old to say.
+    public var modePolicies: DelegateModePolicies?
 
-    public init(api: Int, version: String, host: String, features: [String], tiers: [String], classes: [String], modes: [String]) {
+    enum CodingKeys: String, CodingKey {
+        case api, version, host, features, tiers, classes, modes
+        case classPolicies = "class_policies"
+        case modePolicies = "mode_policies"
+    }
+
+    public init(
+        api: Int, version: String, host: String, features: [String], tiers: [String], classes: [String], modes: [String],
+        classPolicies: [String: DelegateClassPolicy] = [:], modePolicies: DelegateModePolicies? = nil
+    ) {
         self.api = api
         self.version = version
         self.host = host
@@ -346,6 +408,26 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
         self.tiers = tiers
         self.classes = classes
         self.modes = modes
+        self.classPolicies = classPolicies
+        self.modePolicies = modePolicies
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        api = try container.decode(Int.self, forKey: .api)
+        version = try container.decode(String.self, forKey: .version)
+        host = try container.decode(String.self, forKey: .host)
+        features = try container.decodeIfPresent([String].self, forKey: .features) ?? []
+        tiers = try container.decodeIfPresent([String].self, forKey: .tiers) ?? []
+        classes = try container.decodeIfPresent([String].self, forKey: .classes) ?? []
+        modes = try container.decodeIfPresent([String].self, forKey: .modes) ?? []
+        classPolicies = try container.decodeIfPresent([String: DelegateClassPolicy].self, forKey: .classPolicies) ?? [:]
+        modePolicies = try container.decodeIfPresent(DelegateModePolicies.self, forKey: .modePolicies)
+    }
+
+    /// The class's own policy, or the daemon's `default` class when the name has none.
+    public func policy(for taskClass: String) -> DelegateClassPolicy? {
+        classPolicies[taskClass] ?? classPolicies["default"]
     }
 }
 

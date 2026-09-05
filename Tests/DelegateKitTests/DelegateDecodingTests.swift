@@ -75,6 +75,22 @@ import Testing
         #expect(tiers.first?.activeEntry?.model == "b")
         let caps = try decode(DelegateCapabilities.self, #"{"api":1,"version":"0.1.0","host":"arch","features":["runs"],"tiers":["t1","t2"],"classes":["docs"],"modes":["normal"]}"#)
         #expect(caps.tiers == ["t1", "t2"])
+        #expect(caps.classPolicies.isEmpty)
+        #expect(caps.modePolicies == nil)
+        #expect(caps.policy(for: "docs") == nil)
+    }
+
+    @Test func aDaemonThatKnowsItsClassesSaysWhatEachDecides() throws {
+        let caps = try decode(
+            DelegateCapabilities.self,
+            #"{"api":1,"version":"0.2.0","host":"arch","features":["runs"],"tiers":["t1","t2","t3"],"classes":["default","rust-mech"],"modes":["normal","conserve","rush"],"class_policies":{"default":{"tier":"t2","ceiling":"t3","verify":null,"verified":null,"attempts":null},"rust-mech":{"tier":"t1","ceiling":"t2","verify":"cargo test","verified":true,"attempts":2}},"mode_policies":{"conserve":{"shift":-1,"ceiling_verified":"t2","ask_before":"t3"},"rush":{"shift":1,"ceiling_verified":null,"ask_before":null}}}"#)
+        #expect(caps.policy(for: "rust-mech")?.verify == "cargo test")
+        #expect(caps.policy(for: "rust-mech")?.attempts == 2)
+        #expect(caps.policy(for: "swift-impl")?.tier == "t2")
+        #expect(caps.modePolicies?.conserve.askBefore == "t3")
+        #expect(caps.modePolicies?.rush.shift == 1)
+        let again = try decode(DelegateCapabilities.self, String(decoding: JSONEncoder().encode(caps), as: UTF8.self))
+        #expect(again == caps)
     }
 
     @Test func aStreamLineWithoutDataIsNotAnEvent() {

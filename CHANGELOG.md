@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.24.0
+
+The daemon says what each class decides, and a client can say it before the packet goes.
+
+### Added
+- **`DelegateCapabilities.classPolicies` and `modePolicies`.** A daemon from 0.2.0 lists, per class,
+  the tier a blank packet starts at, the ceiling it may climb to, the verify command that judges
+  it and its attempt budget (`DelegateClassPolicy`, `policy(for:)` falling back to `default`), and
+  what conserve and rush do to the ladder — the start shift, the ceiling for verified classes and
+  the rung asked about before it is spent (`DelegateModePolicy`). Both decode as empty from an
+  older daemon, so nothing that reads capabilities changes shape.
+- **A message carries the window's footprint beside its bill, and a model its window.**
+  `ChatMessage.context` is what the turn's last request handed the model and got back, and
+  `ModelInfo.contextWindow` is how many tokens the model can hold, as the server's catalog states it.
+
 ## 0.23.0
 
 A machine can be handed a packet, and the packet comes back as a verified patch.
