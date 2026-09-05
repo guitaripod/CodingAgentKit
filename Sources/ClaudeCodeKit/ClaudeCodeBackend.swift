@@ -33,19 +33,23 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     private static let vision = ModelCapabilities(
         attachment: true, imageInput: true, pdfInput: true)
 
+    /// The bridge serves no catalog of its own, so this table is the client's whole answer about
+    /// a model's window. The current generation runs a million-token window (`claude-fable-5`,
+    /// `claude-opus-4.6+`, `claude-sonnet-5`), and the aliases route to it; only the dated 4.x
+    /// predecessors and haiku stay at two hundred thousand.
     public static let models: [ModelInfo] = [
         ModelInfo(
             id: "fable", name: "Fable", providerID: "anthropic", capabilities: vision,
-            contextWindow: 200_000),
+            contextWindow: 1_000_000),
         ModelInfo(
             id: "opus", name: "Opus", providerID: "anthropic", capabilities: vision,
-            contextWindow: 200_000),
+            contextWindow: 1_000_000),
         ModelInfo(
             id: "opus[1m]", name: "Opus 1M", providerID: "anthropic", capabilities: vision,
             contextWindow: 1_000_000),
         ModelInfo(
             id: "sonnet", name: "Sonnet", providerID: "anthropic", capabilities: vision,
-            contextWindow: 200_000),
+            contextWindow: 1_000_000),
         ModelInfo(
             id: "haiku", name: "Haiku", providerID: "anthropic", capabilities: vision,
             contextWindow: 200_000),
