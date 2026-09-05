@@ -390,16 +390,19 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
     public var classPolicies: [String: DelegateClassPolicy]
     /// What conserve and rush do to the ladder. Nil from a daemon too old to say.
     public var modePolicies: DelegateModePolicies?
+    /// Who the daemon lets in without a password: "tailnet" (a peer on the tailnet or loopback) or
+    /// "password" (everyone asks). Nil from a daemon too old to say, which asked everyone.
+    public var auth: String?
 
     enum CodingKeys: String, CodingKey {
-        case api, version, host, features, tiers, classes, modes
+        case api, version, host, features, tiers, classes, modes, auth
         case classPolicies = "class_policies"
         case modePolicies = "mode_policies"
     }
 
     public init(
         api: Int, version: String, host: String, features: [String], tiers: [String], classes: [String], modes: [String],
-        classPolicies: [String: DelegateClassPolicy] = [:], modePolicies: DelegateModePolicies? = nil
+        classPolicies: [String: DelegateClassPolicy] = [:], modePolicies: DelegateModePolicies? = nil, auth: String? = nil
     ) {
         self.api = api
         self.version = version
@@ -410,7 +413,11 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
         self.modes = modes
         self.classPolicies = classPolicies
         self.modePolicies = modePolicies
+        self.auth = auth
     }
+
+    /// Whether this daemon lets the tailnet in without a password.
+    public var trustsTailnet: Bool { auth == "tailnet" }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -423,6 +430,7 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
         modes = try container.decodeIfPresent([String].self, forKey: .modes) ?? []
         classPolicies = try container.decodeIfPresent([String: DelegateClassPolicy].self, forKey: .classPolicies) ?? [:]
         modePolicies = try container.decodeIfPresent(DelegateModePolicies.self, forKey: .modePolicies)
+        auth = try container.decodeIfPresent(String.self, forKey: .auth)
     }
 
     /// The class's own policy, or the daemon's `default` class when the name has none.

@@ -89,8 +89,11 @@ import Testing
         #expect(caps.policy(for: "swift-impl")?.tier == "t2")
         #expect(caps.modePolicies?.conserve.askBefore == "t3")
         #expect(caps.modePolicies?.rush.shift == 1)
+        #expect(!caps.trustsTailnet)
         let again = try decode(DelegateCapabilities.self, String(decoding: JSONEncoder().encode(caps), as: UTF8.self))
         #expect(again == caps)
+        let trusting = try decode(DelegateCapabilities.self, #"{"api":1,"version":"0.3.0","host":"arch","auth":"tailnet"}"#)
+        #expect(trusting.trustsTailnet)
     }
 
     @Test func aStreamLineWithoutDataIsNotAnEvent() {

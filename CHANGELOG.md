@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.25.0
+
+The daemon says who it lets in.
+
+### Added
+- **`DelegateCapabilities.auth` and `trustsTailnet`.** A daemon from 0.3.0 reports whether it trusts
+  the tailnet (`"tailnet"`, the default: a peer on the tailnet or loopback needs no password) or
+  asks everyone (`"password"`), so a client asks for a password only when the machine will ask for
+  one. Nil from an older daemon.
+
 ## 0.24.0
 
 The daemon says what each class decides, and a client can say it before the packet goes.
