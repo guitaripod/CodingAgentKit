@@ -70,6 +70,12 @@ public enum OpenCodeEventDecoder {
         case "session.idle":
             return .status(.idle)
 
+        case "server.heartbeat", "server.connected":
+            /// The socket proving itself, which is the transport's news rather than the
+            /// session's: it must not read as the conversation having said something, or the
+            /// defences that fire on a quiet stream never fire while the socket is fine.
+            return .attached
+
         case "session.status":
             guard let status = properties?["status"],
                 let type = status["type"]?.stringValue
@@ -80,15 +86,12 @@ public enum OpenCodeEventDecoder {
             case "busy":
                 return .status(.running)
             case "retry":
-                let message =
-                    status["message"]?.stringValue
-                    ?? status["action"]?["title"]?.stringValue
-                    ?? "the agent is waiting on the server"
-                return .failure(
-                    BackendFailure(
-                        message: message,
-                        code: status["action"]?["reason"]?.stringValue,
-                        retryable: true))
+                /// A turn waiting on the provider between attempts is a turn in flight: opencode
+                /// is still working the prompt and will answer or fail it in its own time. Read as
+                /// a failure this ended the turn on the client — spinner off, queue held, the
+                /// next prompt sent behind a turn still running — for a wait the server had not
+                /// given up on. A wall it does give up on arrives as its own error.
+                return .status(.running)
             default:
                 return .unknown(type: "session.status.\(type)")
             }

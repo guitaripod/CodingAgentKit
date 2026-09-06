@@ -122,18 +122,32 @@ private func decode(_ json: String) -> BackendEvent? {
         }
     }
 
-    @Test func decodesSessionStatusRetryAsQuotaWallFailure() {
+    /// A turn waiting on the provider between attempts is a turn still running: opencode has not
+    /// given up on it, so the client must not end it — spinner off, queue held, the next prompt
+    /// sent behind a turn still in flight — for a wait the server itself is sitting out.
+    @Test func decodesSessionStatusRetryAsATurnStillRunning() {
         guard
-            case .failure(let failure)? = decode(
+            case .status(.running)? = decode(
                 #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"retry","attempt":1,"message":"monthly usage limit reached. It will reset in 3 days 5 hours.","action":{"reason":"account_rate_limit","provider":"opencode-go","title":"Go limit reached"}}}}"#
             )
         else {
-            Issue.record("expected failure")
+            Issue.record("expected running")
             return
         }
-        #expect(failure.message.contains("usage limit"))
-        #expect(failure.code == "account_rate_limit")
-        #expect(failure.retryable)
+    }
+
+    /// The server's keepalive is the transport proving itself, never the session speaking: read
+    /// as session activity it kept every quiet-stream defence from firing while the socket was
+    /// fine, which is exactly when a turn run by another process is invisible.
+    @Test func decodesHeartbeatAsTheTransportAttaching() {
+        guard
+            case .attached? = decode(
+                #"{"id":"evt_1","type":"server.heartbeat","properties":{}}"#
+            )
+        else {
+            Issue.record("expected attached")
+            return
+        }
     }
 
     @Test func unknownEventFallsBack() {

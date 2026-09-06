@@ -767,6 +767,20 @@ public enum BackendEvent: Sendable {
     /// opens and whenever it proves itself (a heartbeat), which is what makes "live" a fact rather
     /// than a guess about how recently something happened to be said.
     case attached
+    /// The event transport for this session has dropped and is being dialled again.
+    ///
+    /// The counterpart of ``attached`` for a transport shared by every conversation on a server:
+    /// the socket going away is a fact about the connection rather than about any one
+    /// subscription, so nobody's stream is ended over it. A conversation hearing this says it is
+    /// reconnecting and keeps listening; the next ``attached`` says the socket is back, and a
+    /// transport that replays what was missed owes nothing else.
+    case detached
+    /// The transport lost continuity and cannot say what was missed — a replay window that
+    /// closed, a frame that arrived past a hole — so the transcript must be re-read before
+    /// anything later on this stream can be trusted. The subscription itself stays open: a
+    /// conversation re-reads in place, holding what streams meanwhile, rather than dropping the
+    /// stream and dialling a new one into a window nothing covers.
+    case resync
     /// The session's standing goal changed; `nil` once nothing is being pursued.
     case goal(SessionGoal?)
     /// A compaction started, finished (`nil`), or failed. Distinct from ``status`` because
@@ -785,6 +799,19 @@ public enum BackendEvent: Sendable {
     case questionResolved(requestID: String)
     case failure(BackendFailure)
     case unknown(type: String)
+}
+
+/// One read of a conversation: its messages, and — where the server can say — whether a turn is
+/// open in it right now. `status` is `nil` from a server that cannot say, which leaves the reader
+/// to what the transcript's own shape implies; it is never a guess made on the server's behalf.
+public struct TranscriptSnapshot: Sendable {
+    public var messages: [ChatMessage]
+    public var status: BackendStatus?
+
+    public init(messages: [ChatMessage], status: BackendStatus? = nil) {
+        self.messages = messages
+        self.status = status
+    }
 }
 
 /// A coding-agent server behind one unified surface. Conformers translate their wire protocol
@@ -813,6 +840,12 @@ public protocol CodingAgentBackend: Sendable {
     func createSession(title: String?, directory: String?) async throws -> AgentSession
     func deleteSession(_ sessionID: String) async throws
     func messages(for sessionID: String) async throws -> [ChatMessage]
+    /// The transcript together with what the server says about the turn in it. A transcript alone
+    /// cannot always say whether a turn is open — a backend that never stamps completion leaves
+    /// every assistant message looking the same whether it is finished or half-written — so a
+    /// server that knows says so beside the words, and a re-read of the conversation corrects a
+    /// status the stream left stale in either direction. Defaults to the messages with no verdict.
+    func transcript(for sessionID: String) async throws -> TranscriptSnapshot
     /// Where the server's own record of this session stands right now, asked on a clock while the
     /// event stream is silent. It exists because silence on a stream is not evidence that nothing
     /// happened: opencode's bus is per-process, so a turn another process on that machine is
@@ -1007,6 +1040,10 @@ extension CodingAgentBackend {
     }
 
     public func revision(for sessionID: String) async throws -> SessionRevision? { nil }
+
+    public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
+        TranscriptSnapshot(messages: try await messages(for: sessionID), status: nil)
+    }
 
     public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? { nil }
     public func sessionSpend(_ sessionID: String) async throws -> SessionSpendReport? { nil }

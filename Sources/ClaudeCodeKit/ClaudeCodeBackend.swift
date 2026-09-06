@@ -140,10 +140,38 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     }
 
     public func messages(for sessionID: String) async throws -> [ChatMessage] {
+        try await transcript(for: sessionID).messages
+    }
+
+    /// The conversation and, from a bridge that reports it, whether a turn is open in it. The
+    /// bridge never stamps a message complete, so its transcript alone cannot say when a turn
+    /// ended — this word is the only thing that can settle a `running` the stream left behind, or
+    /// raise one for a turn another device started. An older bridge says nothing and leaves it
+    /// nil; a bridge that reports both the turn and the wider "something is moving" reading is
+    /// read on the turn, since agents still working after the conversation settled keep a list
+    /// row live but are not a turn a client should show as running.
+    public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
-        return try BridgeCoding.decoder.decode(BRSession.self, from: data).messages.map {
-            $0.chat(agentType: agentType)
+        let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
+        return TranscriptSnapshot(
+            messages: session.messages.map { $0.chat(agentType: agentType) },
+            status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle })
+    }
+
+    /// Where the bridge's record of the session stands, in one small answer: when it last moved,
+    /// and whether a turn is open. Served by the bridge from what its observer computed within the
+    /// last second, so a conversation may ask on a clock. A bridge too old for the route answers
+    /// 404, which is *cannot say* rather than *nothing changed*.
+    public func revision(for sessionID: String) async throws -> SessionRevision? {
+        let data: Data
+        do {
+            data = try await http.send(builder.request(.get, "/sessions/\(sessionID)/revision"))
+        } catch AgentError.http(let status, _) where status == 404 {
+            return nil
         }
+        let revision = try BridgeCoding.decoder.decode(BRRevision.self, from: data)
+        return SessionRevision(
+            updatedAt: revision.updatedAt, running: revision.turnOpen ?? revision.active)
     }
 
     /// Bridges predating the command catalog answer 404, which decodes to an empty list rather
@@ -541,6 +569,11 @@ struct BRSession: Decodable {
     let lastCostUSD: Double?
     let lastTokens: Int?
     let goal: BRGoal?
+    /// Something is moving in this conversation — its own turn, or agents still working for it.
+    let active: Bool?
+    /// The conversation's own turn is open. Narrower than `active`, and the reading a client
+    /// shows as running.
+    let turnOpen: Bool?
 
     func session(agentType: AgentType) -> AgentSession {
         AgentSession(
@@ -549,6 +582,13 @@ struct BRSession: Decodable {
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
     }
+}
+
+/// `GET /sessions/:id/revision`: the bridge's record in one small answer.
+struct BRRevision: Decodable {
+    let updatedAt: Date?
+    let active: Bool?
+    let turnOpen: Bool?
 }
 
 /// The route answers `{"interruption": …}` with the key present and null when nothing was cut off,

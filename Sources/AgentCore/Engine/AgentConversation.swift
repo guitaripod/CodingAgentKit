@@ -532,6 +532,13 @@ public actor AgentConversation {
     /// buffered rather than applied and reconciled against the snapshot once it lands — the same
     /// path every later refetch takes, because every refetch has the same race inside it. Live
     /// events with no fetch out apply directly.
+    ///
+    /// Every dial reads the transcript beside it, not only the first. A stream that dropped was
+    /// dropped for a while, and whatever the server said in that while is in its transcript and
+    /// nowhere else — so the redial and the re-read go out together, and the events the new stream
+    /// delivers before the read lands are held and folded on top of it. Reading first and dialling
+    /// after left a window between the two that nothing covered: a turn ending inside it was a
+    /// conversation that stayed busy forever, with every later prompt queued behind it.
     private func runLoop(generation gen: Int) async {
         defer { clearStreamTask(generation: gen) }
         let watchdog = Task { [weak self] in
@@ -556,20 +563,29 @@ public actor AgentConversation {
         lastEventAt = Date()
         lastRecordSeen = nil
         await seedFromCache(generation: gen)
-        refreshInFlight = true
-        bufferedEvents = []
-        let initialRefresh = Task { [weak self] in
-            await self?.refreshQuietly(generation: gen)
-        }
-        defer { initialRefresh.cancel() }
 
         var attempt = 0
 
         while gen == generation && !Task.isCancelled {
-            setConnection(.connecting, generation: gen)
+            setConnection(attempt == 0 ? .connecting : .reconnecting, generation: gen)
+            refreshInFlight = true
+            bufferedEvents = []
+            let opening = Task { [weak self] in
+                await self?.refreshQuietly(generation: gen)
+            }
             do {
                 for try await event in backend.events(for: sessionID) {
-                    guard gen == generation else { return }
+                    guard gen == generation else {
+                        opening.cancel()
+                        return
+                    }
+                    // A shared transport says when its socket has gone: the subscription is
+                    // intact and the socket is being dialled again underneath it, so this is a
+                    // phase to show rather than a stream to drop.
+                    if case .detached = event {
+                        setConnection(.reconnecting, generation: gen)
+                        continue
+                    }
                     // Anything arriving off the transport proves the transport, whether or not
                     // there is a transcript to fold it into yet. Marking live only on the far
                     // side of the buffer meant a chat opened during its own first fetch stayed
@@ -584,9 +600,13 @@ public actor AgentConversation {
                     apply(event, generation: gen)
                 }
             } catch {
-                guard gen == generation else { return }
+                guard gen == generation else {
+                    opening.cancel()
+                    return
+                }
                 let failure = Self.failure(from: error)
                 guard failure.retryable else {
+                    opening.cancel()
                     lastFailure = failure
                     reachedTerminal = true
                     setConnection(.offline, generation: gen)
@@ -596,7 +616,7 @@ public actor AgentConversation {
                 setFailure(failure, generation: gen)
             }
 
-            await initialRefresh.value
+            await opening.value
             guard gen == generation && !Task.isCancelled else { return }
 
             attempt += 1
@@ -607,7 +627,6 @@ public actor AgentConversation {
             }
 
             setConnection(.reconnecting, generation: gen)
-            await refreshQuietly(generation: gen)
             let delay = policy.backoffDelay(
                 attempt: attempt - 1, jitterFraction: .random(in: 0...1))
             try? await Task.sleep(for: delay)
@@ -831,6 +850,13 @@ public actor AgentConversation {
     /// was last written to, and an advance is re-read. A conversation streaming normally never asks
     /// — every event pushes the quiet window out — and a backend that cannot answer leaves the
     /// question where it was rather than concluding that nothing changed.
+    ///
+    /// The record may also say whether a turn is open, and that word outranks whatever the stream
+    /// last said: a turn end this connection never heard leaves `running` standing forever
+    /// otherwise, with every later prompt queued behind a turn that ended an hour ago, and a turn
+    /// another device started leaves `idle` standing just as long. A turn the record says is open
+    /// is adopted outright; one it says is over is re-read, so the transcript's own account of
+    /// how it ended is what settles it.
     private func followServerRecord(generation gen: Int) async {
         let quiet = policy.sessionRecordInterval.timeInterval
         guard gen == generation, connection == .live, !reachedTerminal,
@@ -839,13 +865,27 @@ public actor AgentConversation {
         else { return }
         let reading: SessionRevision?
         do { reading = try await backend.revision(for: sessionID) } catch { return }
-        guard gen == generation, let updatedAt = reading?.updatedAt else { return }
-        guard let seen = lastRecordSeen else {
-            lastRecordSeen = updatedAt
-            return
+        guard gen == generation, let reading else { return }
+        var reread = false
+        if let running = reading.running {
+            if running, status != .running {
+                status = .running
+                emit()
+            } else if !running, status == .running {
+                reread = true
+            }
         }
-        guard updatedAt > seen else { return }
-        lastRecordSeen = updatedAt
+        if let updatedAt = reading.updatedAt {
+            if let seen = lastRecordSeen {
+                if updatedAt > seen {
+                    lastRecordSeen = updatedAt
+                    reread = true
+                }
+            } else {
+                lastRecordSeen = updatedAt
+            }
+        }
+        guard reread else { return }
         await refreshQuietly(generation: gen)
     }
 
@@ -868,6 +908,10 @@ public actor AgentConversation {
 
     private func apply(_ event: BackendEvent, generation gen: Int) {
         guard gen == generation else { return }
+        // A frame this Kit has no reading of is not the session speaking: a server's own
+        // keepalive lands here, and counting it as activity would keep every quiet-stream defence
+        // — the stale-turn nudge, the record follow — from ever firing while the socket is fine.
+        if case .unknown = event { return }
         lastEventAt = Date()
         switch event {
         case .partTextDelta(let messageID, let partID, _):
@@ -903,6 +947,10 @@ public actor AgentConversation {
             interruption = value
         case .attached:
             markLive(generation: gen)
+        case .detached:
+            setConnection(.reconnecting, generation: gen)
+        case .resync:
+            scheduleRecoveryRefresh(generation: gen)
         case .permission(let request):
             guard !resolvedPermissionIDs.contains(request.id) else { break }
             if !pendingPermissions.contains(where: { $0.id == request.id }) {
@@ -997,8 +1045,25 @@ public actor AgentConversation {
     /// that cannot report a turn of its own then had nothing left to fall back on. The one case
     /// this decides rather than reads is a transcript ending at the user's message: a turn adopted
     /// mid-flight from another machine settles as idle until its first assistant line lands.
-    private func deriveStatusFromTranscript() {
+    ///
+    /// A server that says outright whether a turn is open is believed over the shape of its
+    /// transcript. That is the only way a backend that never stamps completion can be settled at
+    /// all: on claude-bridge every assistant message looks the same finished or half-written, so
+    /// a turn end the stream lost — a phone asleep for the one frame that mattered — used to leave
+    /// the conversation busy forever, and a turn another device started left it idle just as long.
+    private func deriveStatusFromTranscript(reported: BackendStatus?) {
         defer { if status == .unknown { status = .idle } }
+        if let reported {
+            switch reported {
+            case .running:
+                if status != .running { status = .running }
+            case .idle, .stable:
+                if status == .running { status = .idle }
+            case .unknown:
+                break
+            }
+            return
+        }
         guard let last = reducer.snapshot.last, last.role == .assistant else { return }
         if last.completedAt != nil {
             if status == .running { status = .idle }
@@ -1073,7 +1138,7 @@ public actor AgentConversation {
         do {
             async let questionsFetch = fetchQuestions()
             async let goalFetch = fetchGoal()
-            let messages = try await backend.messages(for: sessionID)
+            let snapshot = try await backend.transcript(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
             let cutOff = await fetchInterruption()
             let compacting = try? await backend.runningCompaction(for: sessionID)
@@ -1082,10 +1147,10 @@ public actor AgentConversation {
                 drainBufferedEvents(generation: gen)
                 return nil
             }
-            reducer = MessageReducer(agentType: backend.agentType, messages: messages)
+            reducer = MessageReducer(agentType: backend.agentType, messages: snapshot.messages)
             let folded = restoreMessagesTheStreamIsWriting(from: preRefresh)
             loadedTranscript = true
-            deriveStatusFromTranscript()
+            deriveStatusFromTranscript(reported: snapshot.status)
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }

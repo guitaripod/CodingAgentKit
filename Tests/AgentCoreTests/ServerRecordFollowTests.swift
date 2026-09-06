@@ -12,7 +12,7 @@ private let fastPolicy = ConnectionPolicy(
     sessionRecordInterval: .milliseconds(20)
 )
 
-private func transcript(_ answer: String, completed: Bool = false) -> [ChatMessage] {
+private func sample(_ answer: String, completed: Bool = false) -> [ChatMessage] {
     [
         ChatMessage(
             id: "u1", role: .user, agentType: .openCode,
@@ -45,7 +45,7 @@ private final class OutOfProcessServer: CodingAgentBackend, @unchecked Sendable 
 
     init(reportsRecord: Bool = true) {
         self.reportsRecord = reportsRecord
-        self.stored = transcript("Hello")
+        self.stored = sample("Hello")
         self.updatedAt = fixedDate
     }
 
@@ -86,7 +86,7 @@ private final class OutOfProcessServer: CodingAgentBackend, @unchecked Sendable 
     func writeFromAnotherProcess(_ answer: String, at seconds: TimeInterval, completed: Bool = false)
     {
         lock.withLock {
-            stored = transcript(answer, completed: completed)
+            stored = sample(answer, completed: completed)
             updatedAt = Date(timeIntervalSince1970: seconds)
         }
     }

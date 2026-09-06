@@ -310,10 +310,24 @@ public struct OpenCodeBackend: FileBrowsingBackend {
     /// `/event`. The session record is where that work is visible: it carries when the store was
     /// last written to, in one small request, so a conversation can follow a turn it was never told
     /// about.
+    ///
+    /// The status route says whether a turn is open, scoped to the session's workspace like every
+    /// other session route; a session whose workspace is unknown gets no answer rather than an
+    /// empty map read as idle.
     public func revision(for sessionID: String) async throws -> SessionRevision? {
+        let directory = await directories.directory(for: sessionID, client: client)
+        let client = self.client
+        async let statuses: [String: OCSessionStatus]? = {
+            guard let directory else { return nil }
+            return try? await client.sessionStatuses(directory: directory)
+        }()
         let session = try await client.session(sessionID)
-        guard let time = session.time else { return SessionRevision(updatedAt: nil) }
-        return SessionRevision(updatedAt: OpenCodeMapping.date(time.updated ?? time.created))
+        let running = await statuses.map { $0[sessionID].map(OpenCodeMapping.isRunning) ?? false }
+        guard let time = session.time else {
+            return SessionRevision(updatedAt: nil, running: running)
+        }
+        return SessionRevision(
+            updatedAt: OpenCodeMapping.date(time.updated ?? time.created), running: running)
     }
 
     /// What the last read of this session's transcript said about a compaction still running. The

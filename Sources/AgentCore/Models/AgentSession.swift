@@ -26,9 +26,13 @@ public struct SessionRevision: Sendable, Hashable {
     /// compared against another reading of the same clock. `nil` from a server that keeps the
     /// session but stamps nothing, which is *cannot say* rather than *has not changed*.
     public var updatedAt: Date?
+    /// Whether the server holds a turn open in this conversation right now. `nil` from a server
+    /// that keeps no such fact on its record, which is *cannot say* rather than *idle*.
+    public var running: Bool?
 
-    public init(updatedAt: Date?) {
+    public init(updatedAt: Date?, running: Bool? = nil) {
         self.updatedAt = updatedAt
+        self.running = running
     }
 }
 

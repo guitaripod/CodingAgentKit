@@ -4,8 +4,17 @@ import Foundation
 /// One multiplexed connection to a proto-2 bridge, shared by every conversation and list view on
 /// that server. Owns the socket, the `epoch:seq` cursor, reconnection with replay, a heartbeat
 /// watchdog, and per-session fan-out. The contract it enforces: a subscriber either receives a
-/// contiguous run of the bridge's log, or its stream fails so the caller re-fetches — silence is
-/// never a lie, a gap is never invisible.
+/// contiguous run of the bridge's log, or is told to re-read (``BackendEvent/resync``) — silence
+/// is never a lie, a gap is never invisible.
+///
+/// A subscription is never ended by the socket. The socket belongs to every conversation on the
+/// server at once, and ending each one's stream whenever it dropped sent every conversation off to
+/// re-read and re-subscribe on its own clock, into a window between the two that nothing covered:
+/// a turn end published in that window reached nobody, and the conversation stayed busy for good.
+/// So the socket's state travels as events inside the subscription instead — ``detached`` while it
+/// is being dialled again, ``attached`` when it proves itself, ``resync`` when the bridge could not
+/// replay what was missed — and the one thing that ends a subscription is a refusal that a redial
+/// cannot cure.
 actor BridgeStream {
     enum ListChange: Sendable {
         case upsert(AgentSession)
@@ -25,6 +34,24 @@ actor BridgeStream {
     private var connectionTask: Task<Void, Never>?
     private var connectionGeneration = 0
     private var lastFrameAt = Date.distantPast
+    /// Whether the socket has spoken since it was last dialled. Set by the first frame off a
+    /// connection and cleared the moment the connection ends, so it is never true of a dial that
+    /// is still in progress.
+    private var connected = false
+    private var lastRedialAt = Date.distantPast
+
+    /// The bridge heartbeats every ten seconds. A socket that has said nothing for longer than
+    /// two and a half of them is not believed to be open, whatever the transport thinks.
+    private static let freshWindow: TimeInterval = 25
+    /// How long a proven-silent socket is left to the watchdog before an arriving subscriber is
+    /// allowed to hurry it along. The watchdog is the ceiling, this is the floor.
+    private static let redialGap: TimeInterval = 2
+
+    /// A socket that has proved itself recently enough to be trusted with a subscriber's
+    /// "connected" reading.
+    private var isFresh: Bool {
+        connected && Date().timeIntervalSince(lastFrameAt) < Self.freshWindow
+    }
 
     private var sessionSubs: [String: [UUID: AsyncThrowingStream<BackendEvent, Error>.Continuation]] = [:]
     private var sessionDecoders: [String: BridgeEventDecoder] = [:]
@@ -90,8 +117,31 @@ actor BridgeStream {
         // A conversation opened onto a socket that is already up hears no hello of its own — the
         // hello was somebody else's. Without this it would wait for the next heartbeat to learn
         // it is connected, which on a quiet server is the difference between "ready" and
-        // "connecting" for a minute.
-        if cursor != nil { continuation.yield(.attached) }
+        // "connecting" for a minute. Only a socket that has spoken recently is vouched for: one
+        // that is dialling, or has gone quiet past its heartbeats, is exactly what a phone back
+        // from its pocket is holding, and calling that "live" is the lie this event exists to end.
+        if isFresh { continuation.yield(.attached) }
+        let wasDialling = connectionTask != nil
+        ensureRunning()
+        if wasDialling { redialIfStale() }
+    }
+
+    /// Dials again now on a socket nobody has heard from past the bridge's heartbeats.
+    ///
+    /// The watchdog inside the connection notices the same silence on its own interval, and a
+    /// transport whose socket a suspension killed underneath it may take the whole read timeout
+    /// to say so. A subscriber arriving is a reason not to wait: it is a conversation being opened
+    /// or a phone coming back, and the first thing either wants is a socket that is actually open.
+    /// Rate-limited so a burst of subscribers on the same wake dials once.
+    private func redialIfStale() {
+        guard connectionTask != nil, cursor != nil, !isFresh,
+            Date().timeIntervalSince(lastFrameAt) > Self.freshWindow,
+            Date().timeIntervalSince(lastRedialAt) > Self.redialGap
+        else { return }
+        lastRedialAt = Date()
+        connectionGeneration += 1
+        connectionTask?.cancel()
+        connectionTask = nil
         ensureRunning()
     }
 
@@ -149,27 +199,38 @@ actor BridgeStream {
         if !sessionSubs.isEmpty || !listSubs.isEmpty || !agentSubs.isEmpty { ensureRunning() }
     }
 
+    /// Dials until cancelled. A connection that ends is dialled again with its cursor, so the
+    /// bridge replays what was missed and no subscriber has to be told anything but that the
+    /// socket went and came back; the backoff grows with consecutive failures and resets the
+    /// moment a hello lands. Only a refusal a redial cannot cure — a password the bridge no longer
+    /// takes, a route it does not have — ends the subscriptions, because dialling into that
+    /// forever would be silence dressed as reconnecting.
     private func runLoop(generation: Int) async {
         defer { clearConnectionTask(generation: generation) }
-        var failures = 0
         while !Task.isCancelled {
             guard !sessionSubs.isEmpty || !listSubs.isEmpty || !agentSubs.isEmpty else { return }
             do {
                 try await connectOnce()
-                failures = 0
             } catch is CancellationError {
                 return
             } catch {
+                connected = false
                 failures += 1
-                if failures >= 3 {
-                    failSessionSubs(error)
+                if let refusal = error as? AgentError, !refusal.isRetryable {
+                    failSessionSubs(refusal)
                     invalidateListSubs()
+                } else {
+                    notifyDetached()
                 }
             }
             let delay = min(10.0, 0.5 * pow(2, Double(min(failures, 5))))
             try? await Task.sleep(for: .seconds(delay))
         }
     }
+
+    /// Consecutive dials that ended without a hello. Kept on the actor rather than the loop so a
+    /// redial hurried along by a subscriber inherits the backoff it was in.
+    private var failures = 0
 
     private func connectOnce() async throws {
         var query: [URLQueryItem] = []
@@ -178,6 +239,7 @@ actor BridgeStream {
         }
         let request = try builder.eventStreamRequest("/stream", query: query)
         lastFrameAt = Date()
+        connected = false
 
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -201,6 +263,7 @@ actor BridgeStream {
 
     private func handle(_ sse: SSEvent) {
         lastFrameAt = Date()
+        connected = true
         guard let type = sse.type,
             let data = sse.data.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -208,6 +271,7 @@ actor BridgeStream {
 
         switch type {
         case "hello":
+            failures = 0
             let epoch = object["epoch"] as? String ?? ""
             let head = (object["seq"] as? NSNumber)?.uint64Value ?? 0
             let reset = object["reset"] as? Bool ?? false
@@ -218,9 +282,10 @@ actor BridgeStream {
             let hadCursor = cursor != nil
             cursor = (epoch, head)
             if hadCursor || reset {
-                failSessionSubs(AgentError.connection("stream replay window lost"))
+                // The replay window is gone — a restarted bridge, a cursor that fell off the
+                // ring: whatever was missed is missed, and the transcript is the only account.
+                notifyResync()
                 invalidateListSubs()
-                break
             }
             notifyAttached()
         case "heartbeat":
@@ -233,9 +298,10 @@ actor BridgeStream {
                 if parts.count == 2, let seq = UInt64(parts[1]) {
                     if let cursor, String(parts[0]) == cursor.epoch, seq != cursor.seq &+ 1 {
                         // A frame arrived out of order or past a hole the server dropped: every
-                        // subscriber refetches rather than rendering around an invisible gap.
+                        // subscriber re-reads rather than rendering around an invisible gap, and
+                        // keeps listening from here, where the log is contiguous again.
                         self.cursor = (cursor.epoch, seq)
-                        failSessionSubs(AgentError.connection("stream gap"))
+                        notifyResync()
                         invalidateListSubs()
                         return
                     }
@@ -291,6 +357,25 @@ actor BridgeStream {
     private func notifyAttached() {
         for subs in sessionSubs.values {
             for continuation in subs.values { continuation.yield(.attached) }
+        }
+    }
+
+    /// Tells every session watching this server that the socket has gone and is being dialled
+    /// again. Nothing is dropped: the cursor stands, the bridge replays on the way back, and a
+    /// subscriber only has to say "reconnecting" until then.
+    private func notifyDetached() {
+        for subs in sessionSubs.values {
+            for continuation in subs.values { continuation.yield(.detached) }
+        }
+    }
+
+    /// Tells every session watching this server that frames were lost for good and the transcript
+    /// has to be re-read. The subscriptions stay: they re-read in place, holding what streams
+    /// meanwhile, which is the one arrangement with no window in it.
+    private func notifyResync() {
+        sessionDecoders = [:]
+        for subs in sessionSubs.values {
+            for continuation in subs.values { continuation.yield(.resync) }
         }
     }
 
