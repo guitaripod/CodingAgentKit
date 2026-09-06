@@ -210,7 +210,7 @@ actor BridgeStream {
         while !Task.isCancelled {
             guard !sessionSubs.isEmpty || !listSubs.isEmpty || !agentSubs.isEmpty else { return }
             do {
-                try await connectOnce()
+                try await connectOnce(generation: generation)
             } catch is CancellationError {
                 return
             } catch {
@@ -232,7 +232,14 @@ actor BridgeStream {
     /// redial hurried along by a subscriber inherits the backoff it was in.
     private var failures = 0
 
-    private func connectOnce() async throws {
+    /// One connection, dialled from the cursor and read until it ends. Every frame it delivers
+    /// is stamped with the generation it belongs to: a redial cancels the connection before it,
+    /// but cancellation is cooperative and the old socket can still hand over frames it had
+    /// already read — after the new dial's cursor was taken. Let through, those frames advanced
+    /// the cursor past what the new connection was about to replay, so the replay read as a gap,
+    /// and everything replayed after the gap was dispatched a second time: an answer that
+    /// doubled on the screen until a refetch put it right.
+    private func connectOnce(generation: Int) async throws {
         var query: [URLQueryItem] = []
         if let cursor {
             query.append(URLQueryItem(name: "since", value: "\(cursor.epoch):\(cursor.seq)"))
@@ -244,7 +251,7 @@ actor BridgeStream {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 for try await sse in self.http.serverSentEvents(request) {
-                    await self.handle(sse)
+                    await self.handle(sse, generation: generation)
                 }
                 throw AgentError.connection("stream ended")
             }
@@ -261,7 +268,8 @@ actor BridgeStream {
         }
     }
 
-    private func handle(_ sse: SSEvent) {
+    private func handle(_ sse: SSEvent, generation: Int) {
+        guard generation == connectionGeneration else { return }
         lastFrameAt = Date()
         connected = true
         guard let type = sse.type,
