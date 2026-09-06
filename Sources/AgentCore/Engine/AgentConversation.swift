@@ -23,6 +23,7 @@ public actor AgentConversation {
     /// seam has to exceed. See ``settleCompactionAgainstTranscript()``.
     private var seamsWhenCompactionBegan: Int?
     private var interruption: TurnInterruption?
+    private var backgroundWork: BackgroundWork?
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -73,7 +74,8 @@ public actor AgentConversation {
             goal: goal,
             compaction: compaction,
             interruption: interruption,
-            connectionChangedAt: connectionChangedAt
+            connectionChangedAt: connectionChangedAt,
+            backgroundWork: backgroundWork
         )
     }
 
@@ -875,6 +877,10 @@ public actor AgentConversation {
                 reread = true
             }
         }
+        if reading.backgroundWork != backgroundWork {
+            backgroundWork = reading.backgroundWork
+            emit()
+        }
         if let updatedAt = reading.updatedAt {
             if let seen = lastRecordSeen {
                 if updatedAt > seen {
@@ -945,6 +951,8 @@ public actor AgentConversation {
             if wasRunning, value == nil { scheduleRecoveryRefresh(generation: gen) }
         case .interruption(let value):
             interruption = value
+        case .backgroundWork(let value):
+            backgroundWork = value
         case .attached:
             markLive(generation: gen)
         case .detached:
@@ -1151,6 +1159,7 @@ public actor AgentConversation {
             let folded = restoreMessagesTheStreamIsWriting(from: preRefresh)
             loadedTranscript = true
             deriveStatusFromTranscript(reported: snapshot.status)
+            backgroundWork = snapshot.backgroundWork
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }

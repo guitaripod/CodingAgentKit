@@ -790,6 +790,10 @@ public enum BackendEvent: Sendable {
     /// It arrives on the stream as well as on the fetch, because the server may notice it while a
     /// client is already watching — a bridge that restarts reconnects the stream it just dropped.
     case interruption(TurnInterruption?)
+    /// The work the agent's process is carrying between turns changed; `nil` once nothing is
+    /// running. Distinct from ``status`` because no turn is open either way — the prompt is free
+    /// and the machine is still busy for this chat, which is a state of its own rather than idle.
+    case backgroundWork(BackgroundWork?)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,
@@ -807,10 +811,17 @@ public enum BackendEvent: Sendable {
 public struct TranscriptSnapshot: Sendable {
     public var messages: [ChatMessage]
     public var status: BackendStatus?
+    /// Work the agent's process is carrying with no turn open, where the server can say; `nil`
+    /// from one that reports none or has no such notion.
+    public var backgroundWork: BackgroundWork?
 
-    public init(messages: [ChatMessage], status: BackendStatus? = nil) {
+    public init(
+        messages: [ChatMessage], status: BackendStatus? = nil,
+        backgroundWork: BackgroundWork? = nil
+    ) {
         self.messages = messages
         self.status = status
+        self.backgroundWork = backgroundWork
     }
 }
 

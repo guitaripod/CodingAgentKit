@@ -56,6 +56,18 @@ import Testing
         #expect(tool.background?.isSuccess == false)
     }
 
+    @Test func summaryCarryingBackgroundWorkNamesItAndAnIdleOneHasNone() throws {
+        let carrying = try decode(
+            BRSummary.self,
+            #"{"id":"s1","title":"t","active":false,"backgroundTasks":1,"backgroundTask":"sleep 60"}"#
+        ).session(agentType: .claudeCode)
+        #expect(carrying.isActive == false)
+        #expect(carrying.backgroundWork == BackgroundWork(tasks: 1, task: "sleep 60"))
+        let idle = try decode(BRSummary.self, #"{"id":"s1","title":"t","active":false}"#)
+            .session(agentType: .claudeCode)
+        #expect(idle.backgroundWork == nil)
+    }
+
     @Test func summaryMissingAllOptionalMetadataDecodesToSaneSession() throws {
         let summary = try decode(
             BRSummary.self, #"{"id":"s1","title":"Hello","directory":"/tmp"}"#)

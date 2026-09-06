@@ -43,6 +43,23 @@ private let deltaForMessageA =
         #expect(delta == "more")
     }
 
+    @Test func backgroundFrameCarriesTheWorkAndZeroClearsIt() {
+        var decoder = BridgeEventDecoder()
+        let carried = decoder.decode(
+            sse(#"{"type":"background","tasks":1,"task":"sleep 60"}"#))
+        guard case .backgroundWork(let work)? = carried else {
+            Issue.record("expected backgroundWork, got \(String(describing: carried))")
+            return
+        }
+        #expect(work == BackgroundWork(tasks: 1, task: "sleep 60"))
+        let cleared = decoder.decode(sse(#"{"type":"background","tasks":0}"#))
+        guard case .backgroundWork(let none)? = cleared else {
+            Issue.record("expected backgroundWork, got \(String(describing: cleared))")
+            return
+        }
+        #expect(none == nil)
+    }
+
     @Test func toolEventUpsertsToolPartWithParsedJSONInput() {
         var decoder = BridgeEventDecoder()
         let event = decoder.decode(

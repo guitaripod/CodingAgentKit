@@ -38,6 +38,12 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// that cannot tell the difference — a client must never render its absence as proof that a
     /// turn finished.
     public var interruption: TurnInterruption?
+    /// Work the agent's process is carrying with no turn open — a command it started and stepped
+    /// back from, an agent it backgrounded. `status` is idle throughout and the prompt is free,
+    /// but the machine is still working for this conversation and the agent will speak again on
+    /// its own when it ends, so a surface must not draw it as a conversation that finished. `nil`
+    /// when there is none, and always on a backend with no such notion.
+    public var backgroundWork: BackgroundWork?
     /// When the connection last became what it is. A phase with no clock on it cannot be told
     /// apart from a phase that is stuck, so every surface that reports one reports how long it has
     /// been true.
@@ -54,7 +60,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         goal: SessionGoal? = nil,
         compaction: CompactionActivity? = nil,
         interruption: TurnInterruption? = nil,
-        connectionChangedAt: Date = .distantPast
+        connectionChangedAt: Date = .distantPast,
+        backgroundWork: BackgroundWork? = nil
     ) {
         self.messages = messages
         self.status = status
@@ -67,6 +74,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.compaction = compaction
         self.interruption = interruption
         self.connectionChangedAt = connectionChangedAt
+        self.backgroundWork = backgroundWork
     }
 
     public var isBusy: Bool { status == .running }

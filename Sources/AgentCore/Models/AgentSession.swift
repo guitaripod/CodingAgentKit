@@ -29,10 +29,14 @@ public struct SessionRevision: Sendable, Hashable {
     /// Whether the server holds a turn open in this conversation right now. `nil` from a server
     /// that keeps no such fact on its record, which is *cannot say* rather than *idle*.
     public var running: Bool?
+    /// Work the agent's process is carrying with no turn open; `nil` when there is none, or from a
+    /// server with no such notion.
+    public var backgroundWork: BackgroundWork?
 
-    public init(updatedAt: Date?, running: Bool? = nil) {
+    public init(updatedAt: Date?, running: Bool? = nil, backgroundWork: BackgroundWork? = nil) {
         self.updatedAt = updatedAt
         self.running = running
+        self.backgroundWork = backgroundWork
     }
 }
 
@@ -67,6 +71,12 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// The conversation is bookmarked on the server that holds it. Nil from a backend with no
     /// notion of a bookmark, which is not the same as `false` — the mark is then the device's own.
     public var saved: Bool?
+    /// Work the agent's process is still carrying with no turn open — a command it started and
+    /// stepped back from. The turn is over and the prompt is free, but the machine is still busy
+    /// for this chat and the agent will speak again when the work ends, so a list must not file
+    /// it with everything that finished. Nil when there is none, or from a backend with no such
+    /// notion.
+    public var backgroundWork: BackgroundWork?
 
     /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
     /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
@@ -103,7 +113,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         activeAgents: Int? = nil,
         agentTask: String? = nil,
         saved: Bool? = nil,
-        hostID: String? = nil
+        hostID: String? = nil,
+        backgroundWork: BackgroundWork? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -120,5 +131,6 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.agentTask = agentTask
         self.saved = saved
         self.hostID = hostID
+        self.backgroundWork = backgroundWork
     }
 }

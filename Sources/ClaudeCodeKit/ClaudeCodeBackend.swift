@@ -155,7 +155,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
         return TranscriptSnapshot(
             messages: session.messages.map { $0.chat(agentType: agentType) },
-            status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle })
+            status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
+            backgroundWork: BackgroundWork.reported(
+                tasks: session.backgroundTasks, task: session.backgroundTask))
     }
 
     /// Where the bridge's record of the session stands, in one small answer: when it last moved,
@@ -171,7 +173,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         let revision = try BridgeCoding.decoder.decode(BRRevision.self, from: data)
         return SessionRevision(
-            updatedAt: revision.updatedAt, running: revision.turnOpen ?? revision.active)
+            updatedAt: revision.updatedAt, running: revision.turnOpen ?? revision.active,
+            backgroundWork: BackgroundWork.reported(
+                tasks: revision.backgroundTasks, task: revision.backgroundTask))
     }
 
     /// Bridges predating the command catalog answer 404, which decodes to an empty list rather
@@ -525,6 +529,8 @@ struct BRSummary: Decodable {
     let agents: Int?
     let agentTask: String?
     let saved: Bool?
+    let backgroundTasks: Int?
+    let backgroundTask: String?
 
     func session(agentType: AgentType) -> AgentSession {
         AgentSession(
@@ -532,7 +538,8 @@ struct BRSummary: Decodable {
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
             model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
-            activeAgents: agents, agentTask: agentTask, saved: saved)
+            activeAgents: agents, agentTask: agentTask, saved: saved,
+            backgroundWork: BackgroundWork.reported(tasks: backgroundTasks, task: backgroundTask))
     }
 }
 
@@ -574,6 +581,9 @@ struct BRSession: Decodable {
     /// The conversation's own turn is open. Narrower than `active`, and the reading a client
     /// shows as running.
     let turnOpen: Bool?
+    /// Work the conversation's process is carrying with no turn open, and what it is when one.
+    let backgroundTasks: Int?
+    let backgroundTask: String?
 
     func session(agentType: AgentType) -> AgentSession {
         AgentSession(
@@ -589,6 +599,8 @@ struct BRRevision: Decodable {
     let updatedAt: Date?
     let active: Bool?
     let turnOpen: Bool?
+    let backgroundTasks: Int?
+    let backgroundTask: String?
 }
 
 /// The route answers `{"interruption": …}` with the key present and null when nothing was cut off,
@@ -964,6 +976,11 @@ public struct BridgeEventDecoder {
                 let cutOff = try? BridgeCoding.decoder.decode(BRInterruption.self, from: data)
             else { return .interruption(nil) }
             return .interruption(cutOff.interruption)
+        case "background":
+            return .backgroundWork(
+                BackgroundWork.reported(
+                    tasks: (object["tasks"] as? NSNumber)?.intValue,
+                    task: object["task"] as? String))
         case "error":
             return .failure(BackendFailure(message: object["error"] as? String ?? "error"))
         default:
