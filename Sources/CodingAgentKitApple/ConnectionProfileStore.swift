@@ -43,6 +43,13 @@
         /// returning `[]`, so `save`/`delete` can never rebuild the file from an
         /// empty read and silently drop every stored profile.
         public func profiles() throws -> [ConnectionProfile] {
+            try file().known
+        }
+
+        /// Every read behind `save`/`delete` goes through here rather than through `profiles()`,
+        /// so the entries this build cannot decode survive the rewrite instead of being erased by
+        /// a version that merely does not know their backend yet.
+        private func file() throws -> ProfileFile {
             let data: Data
             do {
                 data = try Data(contentsOf: fileURL)
@@ -50,9 +57,9 @@
             where error.domain == NSCocoaErrorDomain
                 && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)
             {
-                return []
+                return ProfileFile()
             }
-            return try JSONDecoder().decode([ConnectionProfile].self, from: data)
+            return try ProfileFile.read(data)
         }
 
         /// Keychain first: if the password write fails, no profile lands on
@@ -61,10 +68,10 @@
         /// read-modify-write runs under `writeLock` so concurrent saves serialize.
         public func save(_ profile: ConnectionProfile, password: String?) throws {
             try writeLock.withLock {
-                var all = try profiles().filter { $0.id != profile.id }
-                all.append(profile)
+                var stored = try file()
+                stored.replace(profile)
                 if let password { try keychain.setValue(password, for: profile.id) }
-                try write(all)
+                try write(stored)
             }
         }
 
@@ -76,7 +83,8 @@
         /// its password rather than 401ing on next launch.
         public func delete(id: String) throws {
             try writeLock.withLock {
-                let remaining = try profiles().filter { $0.id != id }
+                var remaining = try file()
+                remaining.remove(id: id)
                 let backup = try? keychain.value(for: id)
                 try keychain.removeValue(for: id)
                 do {
@@ -99,10 +107,8 @@
             profile.makeBackend(password: try password(for: profile.id), policy: policy)
         }
 
-        private func write(_ profiles: [ConnectionProfile]) throws {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(profiles).write(to: fileURL, options: .atomic)
+        private func write(_ file: ProfileFile) throws {
+            try file.encoded().write(to: fileURL, options: .atomic)
         }
     }
 #endif

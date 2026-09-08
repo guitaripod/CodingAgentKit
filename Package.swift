@@ -111,6 +111,11 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
+            name: "CodingAgentKitAppleTests",
+            dependencies: ["CodingAgentKitApple"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
             name: "DelegateKitTests",
             dependencies: ["DelegateKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
