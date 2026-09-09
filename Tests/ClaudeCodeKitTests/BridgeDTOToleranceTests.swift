@@ -183,13 +183,13 @@ import Testing
         #expect(mapped.updatedAt == Self.fixedDate)
     }
 
-    @Test func toolUnknownStatusFallsBackToRunning() throws {
+    @Test func toolUnknownStatusSettlesAsStopped() throws {
         let tool = try decode(
             BRTool.self,
             #"{"id":"t1","name":"Bash","input":"[1,2]","output":"done","status":"who_knows"}"#)
         let call = tool.toolCall
 
-        #expect(call.status == .running)
+        #expect(call.status == .stopped)
         #expect(call.name == "Bash")
         #expect(call.output == "done")
         #expect(call.id == "t1")

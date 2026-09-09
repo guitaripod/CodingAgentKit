@@ -11,6 +11,9 @@ public enum ToolStatus: String, Sendable, Hashable, Codable {
     case running
     case completed
     case error
+    /// A call that was ended rather than finished — an interrupted turn's tool whose result never
+    /// came back. A record, not a fault: it holds still, claiming neither success nor blame.
+    case stopped
 }
 
 public struct ToolCall: Sendable, Hashable, Codable {

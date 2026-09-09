@@ -776,7 +776,7 @@ struct BRTool: Decodable {
             parsed = try? JSONDecoder().decode(JSONValue.self, from: data)
         }
         return ToolCall(
-            id: id, name: name, status: ToolStatus(rawValue: status) ?? .running,
+            id: id, name: name, status: ToolStatus(rawValue: status) ?? .stopped,
             input: parsed, output: output, title: name, background: background?.outcome)
     }
 }

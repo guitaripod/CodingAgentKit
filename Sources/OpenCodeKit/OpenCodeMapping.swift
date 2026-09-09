@@ -15,7 +15,7 @@ enum OpenCodeMapping {
     }
 
     static func toolStatus(_ raw: String?) -> ToolStatus {
-        ToolStatus(rawValue: raw ?? "") ?? .pending
+        ToolStatus(rawValue: raw ?? "") ?? .stopped
     }
 
     static func errorMessage(_ value: JSONValue) -> String? {
