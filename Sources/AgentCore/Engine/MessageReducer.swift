@@ -4,6 +4,9 @@ public struct MessageReducer: Sendable {
     public let agentType: AgentType
     private var messages: [ChatMessage] = []
     private var indexByID: [String: Int] = [:]
+    /// Second names for messages this transcript already holds, by the name the copy arrived
+    /// under. See ``renamedCopy(of:)``.
+    private var aliases: [String: String] = [:]
 
     public init(agentType: AgentType, messages: [ChatMessage] = []) {
         self.agentType = agentType
@@ -21,7 +24,7 @@ public struct MessageReducer: Sendable {
     /// that message is currently being written into. A message the transcript has never held
     /// answers neither, and that is exactly the divergence a refetch exists to heal.
     public func canAddress(messageID: String, partID: String?) -> Bool {
-        guard let index = indexByID[messageID] else { return false }
+        guard let index = indexByID[aliases[messageID] ?? messageID] else { return false }
         guard let partID else { return true }
         return messages[index].parts.contains { $0.id == partID }
     }
@@ -103,11 +106,66 @@ public struct MessageReducer: Sendable {
     }
 
     private mutating func upsert(_ message: ChatMessage, replaceParts: Bool) {
-        if let index = indexByID[message.id] {
+        if let held = aliases[message.id], let index = indexByID[held] {
+            mergeCopy(message, into: index)
+        } else if let index = indexByID[message.id] {
             merge(message, into: &messages[index], replaceParts: replaceParts)
+        } else if let index = renamedCopy(of: message) {
+            aliases[message.id] = messages[index].id
+            mergeCopy(message, into: index)
         } else {
             indexByID[message.id] = messages.count
             messages.append(message)
+        }
+    }
+
+    /// The message this one is a second account of, if it is one.
+    ///
+    /// A backend can hold one conversation in two records that name messages differently — the
+    /// Claude bridge streams a turn under ids its store mints and reads the same turn back off the
+    /// CLI's JSONL under the ids of the lines — and a server bug that lets the second name leak
+    /// hands a client the answer it has just watched arrive as a message it has never seen. Kept,
+    /// it stands on screen twice until a refetch replaces the transcript, and the replacement is
+    /// the flash a reader sees. So an assistant message under an unknown name, arriving while the
+    /// newest answer of the same turn already says the same thing, is taken as that answer again.
+    ///
+    /// The bar is deliberately narrow, because merging two messages that are really two is worse
+    /// than showing one twice: only the newest assistant message with words since the last prompt
+    /// is a candidate, and the words have to match — equal, or one the whole opening of the other —
+    /// over a length no two different sentences of a turn share by chance.
+    private func renamedCopy(of message: ChatMessage) -> Int? {
+        guard message.role == .assistant else { return nil }
+        let incoming = Self.words(of: message)
+        guard incoming.count >= Self.renameEvidence else { return nil }
+        let prompt = messages.lastIndex { $0.role == .user } ?? -1
+        guard
+            let index = messages.indices.reversed().first(where: {
+                $0 > prompt && messages[$0].role == .assistant
+                    && !Self.words(of: messages[$0]).isEmpty
+            })
+        else { return nil }
+        let held = Self.words(of: messages[index])
+        guard min(held.count, incoming.count) >= Self.renameEvidence,
+            held.hasPrefix(incoming) || incoming.hasPrefix(held)
+        else { return nil }
+        return index
+    }
+
+    /// How much of an answer two copies have to agree on before they are one answer.
+    private static let renameEvidence = 80
+
+    /// A second account only ever adds to the first. Its metadata fills what the held copy lacks;
+    /// its parts are taken only when they carry more words than the held copy has, because the
+    /// part ids are the copy's own and replacing equal parts would re-key every row the answer
+    /// already drew — the flash, without the duplicate.
+    private mutating func mergeCopy(_ message: ChatMessage, into index: Int) {
+        let fuller = Self.words(of: message).count > Self.words(of: messages[index]).count
+        merge(message, into: &messages[index], replaceParts: fuller)
+    }
+
+    private static func words(of message: ChatMessage) -> String {
+        message.parts.reduce(into: "") { text, part in
+            if case .text(let value) = part.kind { text += value }
         }
     }
 
@@ -141,11 +199,15 @@ public struct MessageReducer: Sendable {
     /// already diverged from — the engine's answer to that divergence is a refetch, so the delta is
     /// dropped here rather than turned into a message the server never reported.
     private mutating func editExisting(_ id: String, _ body: (inout ChatMessage) -> Void) {
-        guard let index = indexByID[id] else { return }
+        guard aliases[id] == nil, let index = indexByID[id] else { return }
         body(&messages[index])
     }
 
+    /// A part addressed to a second name is a part of a copy this transcript already holds under
+    /// its first one, and it is left there: the copy's part ids are not the held message's, so
+    /// applying them would write the same words into the answer a second time.
     private mutating func edit(_ id: String, _ body: (inout ChatMessage) -> Void) {
+        guard aliases[id] == nil else { return }
         if let index = indexByID[id] {
             body(&messages[index])
         } else {
@@ -158,6 +220,7 @@ public struct MessageReducer: Sendable {
     }
 
     private mutating func remove(_ id: String) {
+        guard aliases.removeValue(forKey: id) == nil else { return }
         guard let index = indexByID.removeValue(forKey: id) else { return }
         messages.remove(at: index)
         reindex(from: index)
