@@ -37,6 +37,36 @@ import Testing
         #expect(tool.background?.answer == "no record")
     }
 
+    /// omp-bridge names a model door first ("openrouter/stealth/union-alpha") while its catalog
+    /// lists id "stealth/union-alpha" behind provider "openrouter"; claude-bridge's bare "opus"
+    /// has no door to split off.
+    @Test func anOmpModelNameSplitsIntoDoorAndID() throws {
+        let summary = try decode(
+            BRSummary.self,
+            #"{"id":"s1","title":"Hi","model":"openrouter/stealth/union-alpha","effort":""}"#)
+        let omp = summary.session(agentType: .omp)
+        #expect(omp.modelProviderID == "openrouter")
+        #expect(omp.model == "stealth/union-alpha")
+        #expect(omp.reasoningEffort == nil)
+
+        let claude = try decode(BRSummary.self, #"{"id":"s2","title":"Hi","model":"opus"}"#)
+            .session(agentType: .claudeCode)
+        #expect(claude.modelProviderID == nil)
+        #expect(claude.model == "opus")
+
+        let message = try decode(
+            BRMessage.self,
+            #"{"id":"m1","role":"assistant","parts":[],"createdAt":"\#(Self.fixedTimestamp)","model":"llama-swap/qwen38-nvfp4"}"#
+        ).chat(agentType: .omp)
+        #expect(message.providerID == "llama-swap")
+        #expect(message.modelID == "qwen38-nvfp4")
+    }
+
+    @Test func ompOffersItsOwnLadderNotClaudeCodes() {
+        #expect(!ClaudeCodeBackend.ompEfforts.contains("ultracode"))
+        #expect(ClaudeCodeBackend.ompEfforts == ["minimal", "low", "medium", "high", "xhigh", "max"])
+    }
+
     @Test func anOrdinaryToolHasNoBackgroundEnding() throws {
         let tool = try decode(
             BRTool.self, #"{"id":"t","name":"Bash","input":"{}","status":"completed"}"#).toolCall

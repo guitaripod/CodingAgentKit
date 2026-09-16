@@ -55,9 +55,20 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             contextWindow: 200_000),
     ]
 
-    /// `ultracode` is a mode more than a level — the server maps it to xhigh
-    /// effort plus standing multi-agent workflow orchestration for the session.
-    public var reasoningEffortOptions: [String] { ["low", "medium", "high", "xhigh", "max", "ultracode"] }
+    /// The levels the agent takes for a model its catalog cannot describe. On claude-bridge
+    /// `ultracode` is a mode more than a level — the server maps it to xhigh effort plus standing
+    /// multi-agent workflow orchestration for the session. omp has no such mode and no such word:
+    /// its dial runs minimal to max, and a model it does not know was being offered Claude Code's
+    /// ladder, ultracode included, because the two bridges share this backend.
+    public var reasoningEffortOptions: [String] {
+        switch agentType {
+        case .omp: return Self.ompEfforts
+        default: return ["low", "medium", "high", "xhigh", "max", "ultracode"]
+        }
+    }
+
+    /// Every level omp's own catalog names across its providers, cold to hot.
+    static let ompEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
     private let builder: RequestBuilder
     private let http: HTTPClient
@@ -533,13 +544,29 @@ struct BRSummary: Decodable {
     let backgroundTask: String?
 
     func session(agentType: AgentType) -> AgentSession {
-        AgentSession(
+        let named = BridgeModelName.split(model, agentType: agentType)
+        return AgentSession(
             id: id, agentType: agentType, title: title, directory: directory,
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast, isActive: active,
-            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
+            model: named.modelID, modelProviderID: named.providerID,
+            reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
             activeAgents: agents, agentTask: agentTask, saved: saved,
             backgroundWork: BackgroundWork.reported(tasks: backgroundTasks, task: backgroundTask))
+    }
+}
+
+/// How a bridge names the model a session or an answer ran on. claude-bridge says "opus" and
+/// nothing more; omp-bridge says "openrouter/stealth/union-alpha" — the door first, then the
+/// model's own id, which on a gateway carries a slash of its own — and its catalog lists the same
+/// model as id "stealth/union-alpha" behind provider "openrouter". Handing the whole string on as
+/// the model id meant no catalog lookup ever matched, so an omp chat was offered the levels of a
+/// model nobody could find rather than its own.
+enum BridgeModelName {
+    static func split(_ model: String?, agentType: AgentType) -> (providerID: String?, modelID: String?) {
+        guard let model, !model.isEmpty else { return (nil, nil) }
+        guard agentType == .omp, let selection = ModelSelection(string: model) else { return (nil, model) }
+        return (selection.providerID, selection.modelID)
     }
 }
 
@@ -586,11 +613,13 @@ struct BRSession: Decodable {
     let backgroundTask: String?
 
     func session(agentType: AgentType) -> AgentSession {
-        AgentSession(
+        let named = BridgeModelName.split(model, agentType: agentType)
+        return AgentSession(
             id: id, agentType: agentType, title: title, directory: directory,
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
-            model: model, reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
+            model: named.modelID, modelProviderID: named.providerID,
+            reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
     }
 }
 
@@ -699,9 +728,11 @@ struct BRMessage: Decodable {
             return seen == 0 ? part : MessagePart(id: "\(part.id)-\(seen)", kind: part.kind)
         }
         let tiers = usage?.usage
+        let named = BridgeModelName.split(model, agentType: agentType)
         return ChatMessage(
             id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: agentType,
-            parts: uniqueParts, createdAt: createdAt, costUSD: costUSD, modelID: model,
+            parts: uniqueParts, createdAt: createdAt, costUSD: costUSD,
+            providerID: named.providerID, modelID: named.modelID,
             totalTokens: tiers.map(\.total), usage: tiers, context: context?.usage,
             duration: seconds)
     }
