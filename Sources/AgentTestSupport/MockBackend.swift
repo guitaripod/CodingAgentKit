@@ -63,6 +63,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private struct Mutable {
         var subscriptions = 0
         var sentPrompts: [SendPrompt] = []
+        var backgroundStops: [String] = []
         var sessions: [AgentSession] = []
         var appendedEvents: [String: [MockScriptStep]] = [:]
         var cleared: Set<String> = []
@@ -152,6 +153,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     }
 
     public var recordedPrompts: [SendPrompt] { mutable.withLock { $0.sentPrompts } }
+    /// Every session whose background work a client asked to stop, in order.
+    public var backgroundStops: [String] { mutable.withLock { $0.backgroundStops } }
 
     public func availableCommands(directory: String?) async throws -> [AgentCommand] { commands }
 
@@ -268,6 +271,14 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     public func abort(sessionID: String) async throws {
         guard interactive else { return }
         stream([MockScriptStep(.status(.idle), delay: .zero)], to: sessionID)
+    }
+
+    /// Ends the mock's background work: the session is told the work is gone, and the request is
+    /// remembered so a test can see that the client asked.
+    public func stopBackgroundWork(sessionID: String) async throws {
+        mutable.withLock { $0.backgroundStops.append(sessionID) }
+        guard interactive else { return }
+        stream([MockScriptStep(.backgroundWork(nil), delay: .zero)], to: sessionID)
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws

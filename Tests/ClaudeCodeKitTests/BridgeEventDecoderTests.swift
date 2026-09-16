@@ -52,6 +52,14 @@ private let deltaForMessageA =
             return
         }
         #expect(work == BackgroundWork(tasks: 1, task: "sleep 60"))
+        let aged = decoder.decode(
+            sse(#"{"type":"background","tasks":1,"task":"grep","since":"2026-09-16T17:41:00Z","stalled":true}"#))
+        guard case .backgroundWork(let stuck?)? = aged else {
+            Issue.record("expected backgroundWork, got \(String(describing: aged))")
+            return
+        }
+        #expect(stuck.stalled)
+        #expect(stuck.since == ISO8601DateFormatter().date(from: "2026-09-16T17:41:00Z"))
         let cleared = decoder.decode(sse(#"{"type":"background","tasks":0}"#))
         guard case .backgroundWork(let none)? = cleared else {
             Issue.record("expected backgroundWork, got \(String(describing: cleared))")

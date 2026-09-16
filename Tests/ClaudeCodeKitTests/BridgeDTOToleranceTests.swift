@@ -37,6 +37,31 @@ import Testing
         #expect(tool.background?.answer == "no record")
     }
 
+    /// A listing says how long the machine has been at its background work and whether the
+    /// server found it stuck; an older bridge says neither, and that is no work at all rather
+    /// than stuck work.
+    @Test func backgroundWorkCarriesItsAgeAndStall() throws {
+        let row = try decode(
+            BRSummary.self,
+            #"{"id":"s1","title":"Hi","backgroundTasks":1,"backgroundTask":"grep -rl x","backgroundSince":"\#(Self.fixedTimestamp)","backgroundStalled":true}"#
+        ).session(agentType: .claudeCode)
+        #expect(row.backgroundWork?.tasks == 1)
+        #expect(row.backgroundWork?.since == Self.fixedDate)
+        #expect(row.backgroundWork?.stalled == true)
+
+        let plain = try decode(
+            BRSummary.self, #"{"id":"s2","title":"Hi","backgroundTasks":2}"#
+        ).session(agentType: .claudeCode)
+        #expect(plain.backgroundWork == BackgroundWork(tasks: 2))
+        #expect(plain.backgroundWork?.stalled == false)
+
+        let revision = try decode(
+            BRRevision.self,
+            #"{"updatedAt":"\#(Self.fixedTimestamp)","active":false,"turnOpen":false,"backgroundTasks":1,"backgroundSince":"\#(Self.fixedTimestamp)"}"#)
+        #expect(revision.backgroundSince == Self.fixedDate)
+        #expect(revision.backgroundStalled == nil)
+    }
+
     /// omp-bridge names a model door first ("openrouter/stealth/union-alpha") while its catalog
     /// lists id "stealth/union-alpha" behind provider "openrouter"; claude-bridge's bare "opus"
     /// has no door to split off.

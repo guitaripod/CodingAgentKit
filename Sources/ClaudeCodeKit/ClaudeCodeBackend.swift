@@ -27,7 +27,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         supportsCompactionInstructions: true,
         reportsMessageCompletion: false,
         reportsInterruptions: true,
-        supportsTranscriptSearch: true
+        supportsTranscriptSearch: true,
+        supportsBackgroundStop: true
     )
 
     private static let vision = ModelCapabilities(
@@ -117,6 +118,28 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         _ = try await http.send(builder.request(.post, "/sessions/\(sessionID)/abort"))
     }
 
+    /// The bridge refuses with a sentence in the body when there is nothing it can end, and a
+    /// bridge too old for the route answers 404; both reach the person as words, not numbers.
+    public func stopBackgroundWork(sessionID: String) async throws {
+        do {
+            _ = try await http.send(
+                builder.request(.post, "/sessions/\(sessionID)/background/stop"))
+        } catch AgentError.http(let status, let body) where status == 409 || status == 404 {
+            if status == 404 {
+                throw AgentError.server("This server is too old to stop background work; update it.")
+            }
+            throw AgentError.server(Self.refusal(in: body) ?? "The server would not stop it.")
+        }
+    }
+
+    private static func refusal(in body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let error = object["error"] as? String, !error.isEmpty
+        else { return nil }
+        return error
+    }
+
     public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)/agents"))
         return try BridgeCoding.decoder.decode([BRSubagent].self, from: data).map(\.summary)
@@ -168,7 +191,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             messages: session.messages.map { $0.chat(agentType: agentType) },
             status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
             backgroundWork: BackgroundWork.reported(
-                tasks: session.backgroundTasks, task: session.backgroundTask))
+                tasks: session.backgroundTasks, task: session.backgroundTask,
+                since: session.backgroundSince, stalled: session.backgroundStalled))
     }
 
     /// Where the bridge's record of the session stands, in one small answer: when it last moved,
@@ -186,7 +210,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         return SessionRevision(
             updatedAt: revision.updatedAt, running: revision.turnOpen ?? revision.active,
             backgroundWork: BackgroundWork.reported(
-                tasks: revision.backgroundTasks, task: revision.backgroundTask))
+                tasks: revision.backgroundTasks, task: revision.backgroundTask,
+                since: revision.backgroundSince, stalled: revision.backgroundStalled))
     }
 
     /// Bridges predating the command catalog answer 404, which decodes to an empty list rather
@@ -514,6 +539,17 @@ private struct BRUsage: Decodable {
 }
 
 enum BridgeCoding {
+    /// A date the way the bridge writes one into a loose JSON object rather than a typed row.
+    /// A formatter per call, because the events that carry one are rare and the formatter is
+    /// not something two threads may share.
+    static func date(_ text: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: text) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: text)
+    }
+
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -542,6 +578,8 @@ struct BRSummary: Decodable {
     let saved: Bool?
     let backgroundTasks: Int?
     let backgroundTask: String?
+    let backgroundSince: Date?
+    let backgroundStalled: Bool?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -552,7 +590,9 @@ struct BRSummary: Decodable {
             model: named.modelID, modelProviderID: named.providerID,
             reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
             activeAgents: agents, agentTask: agentTask, saved: saved,
-            backgroundWork: BackgroundWork.reported(tasks: backgroundTasks, task: backgroundTask))
+            backgroundWork: BackgroundWork.reported(
+                tasks: backgroundTasks, task: backgroundTask, since: backgroundSince,
+                stalled: backgroundStalled))
     }
 }
 
@@ -611,6 +651,8 @@ struct BRSession: Decodable {
     /// Work the conversation's process is carrying with no turn open, and what it is when one.
     let backgroundTasks: Int?
     let backgroundTask: String?
+    let backgroundSince: Date?
+    let backgroundStalled: Bool?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -630,6 +672,8 @@ struct BRRevision: Decodable {
     let turnOpen: Bool?
     let backgroundTasks: Int?
     let backgroundTask: String?
+    let backgroundSince: Date?
+    let backgroundStalled: Bool?
 }
 
 /// The route answers `{"interruption": …}` with the key present and null when nothing was cut off,
@@ -1011,7 +1055,9 @@ public struct BridgeEventDecoder {
             return .backgroundWork(
                 BackgroundWork.reported(
                     tasks: (object["tasks"] as? NSNumber)?.intValue,
-                    task: object["task"] as? String))
+                    task: object["task"] as? String,
+                    since: (object["since"] as? String).flatMap(BridgeCoding.date),
+                    stalled: object["stalled"] as? Bool))
         case "error":
             return .failure(BackendFailure(message: object["error"] as? String ?? "error"))
         default:

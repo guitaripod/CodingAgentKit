@@ -53,6 +53,11 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// their titles. A chat list matches titles; this is what makes what was actually said — the
     /// answer, the diff, the command that worked — findable after it scrolls off.
     public var supportsTranscriptSearch: Bool
+    /// Whether the backend can end the background work a conversation's process is carrying
+    /// between turns (``CodingAgentBackend/stopBackgroundWork(sessionID:)``) — a shell the model
+    /// started and stepped back from that is never going to finish. Distinct from
+    /// ``supportsAbort``, which stops a turn: the work this ends is what goes on after the turn.
+    public var supportsBackgroundStop: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -78,7 +83,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsCompactionInstructions: Bool = false,
         reportsMessageCompletion: Bool = true,
         reportsInterruptions: Bool = false,
-        supportsTranscriptSearch: Bool = false
+        supportsTranscriptSearch: Bool = false,
+        supportsBackgroundStop: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -104,6 +110,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.reportsMessageCompletion = reportsMessageCompletion
         self.reportsInterruptions = reportsInterruptions
         self.supportsTranscriptSearch = supportsTranscriptSearch
+        self.supportsBackgroundStop = supportsBackgroundStop
     }
 }
 
@@ -869,6 +876,11 @@ public protocol CodingAgentBackend: Sendable {
     func send(_ prompt: SendPrompt, to sessionID: String) async throws
     func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error>
     func abort(sessionID: String) async throws
+    /// Ends the background work the conversation's process is carrying with no turn open. The
+    /// server says why when it cannot — a turn is open, nothing is resident, the work is an agent
+    /// rather than a shell — and that sentence is thrown as ``AgentError/server(_:)`` so a client
+    /// can show it rather than a status code.
+    func stopBackgroundWork(sessionID: String) async throws
     func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     /// Answers a pending question request: one answer array per question, in
     /// order, each holding the selected option labels (or a custom string).
@@ -1001,6 +1013,10 @@ public protocol CodingAgentBackend: Sendable {
 extension CodingAgentBackend {
     public func abort(sessionID: String) async throws {
         throw AgentError.unsupported("abort")
+    }
+
+    public func stopBackgroundWork(sessionID: String) async throws {
+        throw AgentError.unsupported("background stop")
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
