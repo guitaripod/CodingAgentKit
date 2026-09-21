@@ -1,0 +1,706 @@
+import AgentCore
+import Foundation
+
+public struct OpenCodeV1Backend: OpenCodeGeneration {
+    public let agentType: AgentType = .openCode
+    public var capabilities: BackendCapabilities { Self.baseline }
+
+    /// What every opencode can do, whichever generation answers: the floor a client may assume
+    /// before the server has said which API it speaks.
+    static let baseline = BackendCapabilities(
+        supportsFileBrowsing: true,
+        supportsDiffs: true,
+        supportsPermissions: true,
+        supportsMultipleSessions: true,
+        supportsModelSelection: true,
+        supportsAttachments: true,
+        supportsReasoningEffort: true,
+        supportsAbort: true,
+        supportsSessionUsage: false,
+        supportsQuestions: true,
+        supportsSubagents: true,
+        supportsCommands: true,
+        supportsCompaction: true
+    )
+
+    let client: OpenCodeClient
+    let directories = SessionDirectoryCache()
+    let compactions = CompactionWatch()
+
+    public init(config: ServerConfig) {
+        self.client = OpenCodeClient(config: config)
+    }
+
+    public init(client: OpenCodeClient) {
+        self.client = client
+    }
+
+    /// What each session's last transcript read said about a compaction in flight, so the answer
+    /// is free at the moment the conversation asks for it.
+    actor CompactionWatch {
+        private var startedAt: [String: Date] = [:]
+
+        func record(_ moment: Date?, for sessionID: String) { startedAt[sessionID] = moment }
+
+        func value(for sessionID: String) -> Date? { startedAt[sessionID] }
+    }
+
+    /// opencode scopes `/event` and `/question` by workspace directory, so
+    /// per-session calls need the session's directory. Cached; refreshed from
+    /// the session list on miss — and from `GET /session/:id` when the session
+    /// lives outside every known project (home-directory chats, for example).
+    actor SessionDirectoryCache {
+        private var directories: [String: String] = [:]
+
+        func directory(for sessionID: String, client: OpenCodeClient) async -> String? {
+            if let cached = directories[sessionID] { return cached }
+            if let sessions = try? await client.listSessions() {
+                for session in sessions {
+                    if let directory = session.directory {
+                        directories[session.id] = directory
+                    }
+                }
+            }
+            if let cached = directories[sessionID] { return cached }
+            if let projects = try? await client.projects() {
+                for project in projects {
+                    guard let worktree = project.worktree, !worktree.isEmpty else { continue }
+                    guard let sessions = try? await client.listSessions(directory: worktree) else {
+                        continue
+                    }
+                    for session in sessions {
+                        if let directory = session.directory {
+                            directories[session.id] = directory
+                        }
+                    }
+                }
+            }
+            if let cached = directories[sessionID] { return cached }
+            if let session = try? await client.session(sessionID),
+                let directory = session.directory, !directory.isEmpty
+            {
+                directories[sessionID] = directory
+                return directory
+            }
+            return directories[sessionID]
+        }
+
+        func record(sessionID: String, directory: String?) {
+            guard let directory, !directory.isEmpty else { return }
+            directories[sessionID] = directory
+        }
+    }
+
+    let local = OpenCodeLocalEvents()
+
+    public func health() async throws -> ServerHealth {
+        let health = try await client.health()
+        return ServerHealth(healthy: health.healthy, version: health.version)
+    }
+
+    /// What the server said about turns in flight, and — just as importantly — which workspaces it
+    /// was actually asked about.
+    ///
+    /// `/session/status` is scoped to one directory, so a chat's answer only exists in the map its
+    /// own directory returned. A scope that was never asked, or that failed, leaves its sessions
+    /// *unknown* rather than idle: a listing that cannot see a turn must not report there is none.
+    struct LivenessReading: Sendable {
+        var running: Set<String> = []
+        var scopes: Set<String> = []
+
+        var isEmpty: Bool { scopes.isEmpty }
+
+        mutating func absorb(_ statuses: [String: OCSessionStatus], scope: String) {
+            scopes.insert(scope)
+            for (id, status) in statuses where OpenCodeMapping.isRunning(status) {
+                running.insert(id)
+            }
+        }
+
+        /// The workspace a session's liveness would be reported under. The server's own launch
+        /// directory answers the unscoped ask, which is what a session with no directory rides.
+        static func scope(of directory: String?) -> String { directory ?? "" }
+    }
+
+    /// One `/session/status` per distinct workspace, asked in the same small batches the directory
+    /// walk uses so a machine with thirty projects does not open thirty sockets at once. A scope
+    /// that throws is simply left out of the reading, so its sessions keep saying nothing rather
+    /// than saying idle.
+    func liveness(scopes: Set<String>) async -> LivenessReading {
+        var reading = LivenessReading()
+        guard !scopes.isEmpty else { return reading }
+        let client = self.client
+        let ordered = Array(scopes)
+        for start in stride(from: 0, to: ordered.count, by: 6) {
+            let batch = ordered[start..<min(start + 6, ordered.count)]
+            let answers = await withTaskGroup(
+                of: (String, [String: OCSessionStatus]?).self
+            ) { group -> [(String, [String: OCSessionStatus]?)] in
+                for scope in batch {
+                    group.addTask {
+                        let statuses = try? await client.sessionStatuses(
+                            directory: scope.isEmpty ? nil : scope)
+                        return (scope, statuses)
+                    }
+                }
+                var collected: [(String, [String: OCSessionStatus]?)] = []
+                for await answer in group { collected.append(answer) }
+                return collected
+            }
+            for (scope, statuses) in answers {
+                guard let statuses else { continue }
+                reading.absorb(statuses, scope: scope)
+            }
+        }
+        return reading
+    }
+
+    /// The listing's own answer about which conversations have a turn open, written onto the
+    /// sessions it describes. A parent whose own turn is closed while the agents it spawned still
+    /// run is working, so the busy children are counted onto it rather than lost with them.
+    static func applying(
+        _ reading: LivenessReading, to sessions: [AgentSession]
+    ) -> [AgentSession] {
+        guard !reading.isEmpty else { return sessions }
+        var agents: [String: Int] = [:]
+        for session in sessions where reading.running.contains(session.id) {
+            guard let parent = session.parentID else { continue }
+            agents[parent, default: 0] += 1
+        }
+        return sessions.map { session in
+            var session = session
+            let scope = LivenessReading.scope(of: session.directory)
+            if reading.scopes.contains(scope) {
+                session.isActive = reading.running.contains(session.id)
+            }
+            session.activeAgents = agents[session.id]
+            return session
+        }
+    }
+
+    private static func scopes(of sessions: [AgentSession]) -> Set<String> {
+        Set(sessions.map { LivenessReading.scope(of: $0.directory) })
+    }
+
+    public func listSessions() async throws -> [AgentSession] {
+        let sessions = try await client.listSessions().map { OpenCodeMapping.session($0) }
+        return Self.applying(await liveness(scopes: Self.scopes(of: sessions)), to: sessions)
+    }
+
+    /// opencode scopes `/session` to the project the server was launched in unless a worktree is
+    /// named, so a complete history is a walk: the server's own project first — the call that
+    /// throws when the machine is unreachable — then every project the server knows, then the
+    /// places the caller has seen sessions work in that no project owns. Duplicates collapse by
+    /// session id, and the result is sorted like the plain listing.
+    ///
+    /// A spawned agent is given a session of its own here, parented to the one that spawned it.
+    /// That is a subagent's transcript, which the conversation renders at the tool call that
+    /// spawned it — so it is dropped rather than listed, and the chat that started the work stays
+    /// the only chat the work produced. The turns in flight are written on before that drop, so a
+    /// parent still collects the agents working for it rather than losing the count with them.
+    public func listAllSessions(knownDirectories: [String]) async throws -> [AgentSession] {
+        var scopes = Set(knownDirectories)
+        scopes.formUnion((try? await client.projects())?.compactMap(\.worktree) ?? [])
+        let owned = try await client.listSessions().map { OpenCodeMapping.session($0) }
+        var merged: [String: AgentSession] = [:]
+        for session in owned {
+            merged[session.id] = session
+            await directories.record(sessionID: session.id, directory: session.directory)
+        }
+        let ordered = Array(scopes)
+        for start in stride(from: 0, to: ordered.count, by: 6) {
+            let batch = ordered[start..<min(start + 6, ordered.count)]
+            await withTaskGroup(of: (String, [AgentSession]).self) { group in
+                for directory in batch {
+                    group.addTask {
+                        let sessions =
+                            (try? await self.client.listSessions(directory: directory)) ?? []
+                        return (directory, sessions.map { OpenCodeMapping.session($0) })
+                    }
+                }
+                for await (_, sessions) in group {
+                    for session in sessions where merged[session.id] == nil {
+                        merged[session.id] = session
+                        await directories.record(
+                            sessionID: session.id, directory: session.directory)
+                    }
+                }
+            }
+        }
+        let sessions = Array(merged.values)
+        let reading = await liveness(scopes: Self.scopes(of: sessions).union(scopes))
+        return Self.applying(reading, to: sessions)
+            .filter { !$0.isSubagent }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public func projects() async throws -> [AgentProject] {
+        try await client.projects().compactMap(OpenCodeMapping.project)
+    }
+
+    /// The whole account's ledger, read from the one place opencode serves it cheaply: its own
+    /// session records, each carrying the conversation's running cost, tokens and model. One
+    /// request covers the window however long it is — see ``OpenCodeLedger`` for what records
+    /// can and cannot say, which the report declares rather than implies. An account with nothing
+    /// on the ledger answers with an empty report rather than nil: nil is reserved for a server
+    /// that cannot answer at all, which is what a reader names as uncounted.
+    public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? {
+        let sessions = try await client.listSessions(limit: OpenCodeLedger.sessionCeiling)
+        return OpenCodeLedger.report(sessions: sessions, days: days)
+    }
+
+    public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
+        guard let worktree else { return try await listSessions() }
+        let sessions = try await client.listSessions(directory: worktree)
+            .map { OpenCodeMapping.session($0) }
+        let reading = await liveness(
+            scopes: Self.scopes(of: sessions).union([worktree]))
+        return Self.applying(reading, to: sessions)
+    }
+
+    public func createSession(title: String?, directory: String?) async throws -> AgentSession {
+        let session = OpenCodeMapping.session(
+            try await client.createSession(title: title, directory: directory))
+        await directories.record(sessionID: session.id, directory: session.directory)
+        return session
+    }
+
+    public func deleteSession(_ sessionID: String) async throws {
+        try await client.deleteSession(sessionID)
+    }
+
+    public func messages(for sessionID: String) async throws -> [ChatMessage] {
+        let envelopes = try await client.messages(sessionID: sessionID)
+        await compactions.record(
+            OpenCodeMapping.compactionInFlight(envelopes), for: sessionID)
+        return OpenCodeMapping.transcript(envelopes)
+    }
+
+    /// opencode's event bus belongs to one process. A session another process on the same machine
+    /// is writing — `opencode run` under a script, a second serve, a CLI somebody left working —
+    /// lands in the same storage the server reads, and emits nothing at all on this connection's
+    /// `/event`. The session record is where that work is visible: it carries when the store was
+    /// last written to, in one small request, so a conversation can follow a turn it was never told
+    /// about.
+    ///
+    /// The status route says whether a turn is open, scoped to the session's workspace like every
+    /// other session route; a session whose workspace is unknown gets no answer rather than an
+    /// empty map read as idle.
+    public func revision(for sessionID: String) async throws -> SessionRevision? {
+        let directory = await directories.directory(for: sessionID, client: client)
+        let client = self.client
+        async let statuses: [String: OCSessionStatus]? = {
+            guard let directory else { return nil }
+            return try? await client.sessionStatuses(directory: directory)
+        }()
+        let session = try await client.session(sessionID)
+        let running = await statuses.map { $0[sessionID].map(OpenCodeMapping.isRunning) ?? false }
+        guard let time = session.time else {
+            return SessionRevision(updatedAt: nil, running: running)
+        }
+        return SessionRevision(
+            updatedAt: OpenCodeMapping.date(time.updated ?? time.created), running: running)
+    }
+
+    /// What the last read of this session's transcript said about a compaction still running. The
+    /// transcript is the authority — a dangling marker is `summarize` in flight — and it is read
+    /// here rather than fetched again, because the caller asks this immediately after a transcript
+    /// load and a second pass over a long conversation's messages is a round trip for a fact we
+    /// just had in hand.
+    public func runningCompaction(for sessionID: String) async throws -> CompactionActivity? {
+        await compactions.value(for: sessionID).map { CompactionActivity(startedAt: $0) }
+    }
+
+    /// opencode gives a spawned agent a session of its own, parented to the one
+    /// that spawned it. Those children are subagents, not conversations: they
+    /// are reported here so a client can nest them under their parent rather
+    /// than list them as chats in their own right.
+    public func subagents(for sessionID: String) async throws -> [SubagentSummary] {
+        let sessions: [OCSession]
+        let directory = await directories.directory(for: sessionID, client: client)
+        if let directory {
+            sessions = (try? await client.listSessions(directory: directory)) ?? []
+        } else {
+            sessions = (try? await client.listSessions()) ?? []
+        }
+        let scope = LivenessReading.scope(of: directory)
+        let reading = await liveness(scopes: [scope])
+        let running = reading.scopes.contains(scope) ? reading.running : nil
+        return sessions
+            .filter { $0.parentID == sessionID }
+            .map { OpenCodeMapping.subagent($0, running: running) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public func subagentMessages(sessionID: String, agentID: String) async throws -> [ChatMessage] {
+        try await OpenCodeMapping.transcript(client.messages(sessionID: agentID))
+    }
+
+    public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
+        let model = prompt.model.map {
+            OCModelInput(providerID: $0.providerID, modelID: $0.modelID)
+        }
+        var parts: [OCPartInput] = [.text(prompt.text)]
+        for attachment in prompt.attachments {
+            guard let url = Self.attachmentURL(attachment) else { continue }
+            parts.append(.file(mime: attachment.mime, filename: attachment.filename, url: url))
+        }
+        let request = OCPromptRequest(
+            parts: parts, model: model, agent: prompt.agent, variant: prompt.reasoningEffort)
+        try await client.promptAsync(sessionID: sessionID, request: request)
+    }
+
+    private static func attachmentURL(_ attachment: PromptAttachment) -> String? {
+        if let url = attachment.url { return url }
+        if let data = attachment.data {
+            return "data:\(attachment.mime);base64,\(data.base64EncodedString())"
+        }
+        return nil
+    }
+
+    public func availableModels() async throws -> [ModelInfo] {
+        try await providers().flatMap(\.models)
+    }
+
+    public func defaultModel() async throws -> ModelSelection? {
+        for provider in try await providers() where provider.defaultModelID != nil {
+            return ModelSelection(providerID: provider.id, modelID: provider.defaultModelID!)
+        }
+        return nil
+    }
+
+    public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                // Prefer the session's own directory: an unscoped `/event` stream is silent for
+                // chats that live outside the server's launch project (e.g. directory=/Users/…),
+                // which is exactly what made Linux look frozen while the Mac GPU still worked.
+                let directory = await directories.directory(for: sessionID, client: client)
+                let token = await local.listen(sessionID, continuation)
+                defer { Task { await self.local.drop(sessionID, token) } }
+                do {
+                    for try await sse in client.eventStream(directory: directory) {
+                        if let event = OpenCodeEventDecoder.decode(sse, sessionID: sessionID) {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func abort(sessionID: String) async throws {
+        try await client.abort(sessionID: sessionID)
+    }
+
+    /// What this session can be told to do: the server's own catalog for the chat's directory —
+    /// user and project command files, MCP prompts, and skills, and the project half of that only
+    /// exists for a request that names the directory — plus the built-ins the Kit runs itself.
+    ///
+    /// `GET /command` answers with prompt templates only; its schema requires a `template`, so the
+    /// slash words opencode's own client offers for its built-in actions are structurally absent
+    /// from it. A command nobody can see is a command nobody has, so the ones this Kit can carry
+    /// out are published beside the server's. The server wins any collision: a `compact.md` written
+    /// by hand is that machine's answer to what the word means.
+    public func availableCommands(directory: String?) async throws -> [AgentCommand] {
+        let published = try await client.commands(directory: directory).map(Self.command)
+        let claimed = Set(published.map(\.name))
+        return published + OpenCodeCommon.builtins.filter { !claimed.contains($0.name) }
+    }
+
+    static func command(for command: OCCommand) -> AgentCommand {
+        AgentCommand(
+            name: command.name,
+            details: command.description ?? "",
+            argumentHint: argumentHint(for: command),
+            source: source(for: command))
+    }
+
+    /// `POST /session/:id/command` only answers when the turn it starts has ended, so awaiting it
+    /// would leave the caller blocked for the whole turn. The command is dispatched and the result
+    /// left to the event stream, matching how `prompt_async` behaves for an ordinary message; a
+    /// dispatch failure has no reply channel, so it is logged rather than lost silently.
+    public var resolvesCommandsFromPromptText: Bool { false }
+
+    public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
+        if OpenCodeCommon.isCompaction(run.command.name) {
+            try await dispatchCompaction(run, sessionID: sessionID)
+            return
+        }
+        let directory = await directories.directory(for: sessionID, client: client)
+        let request = Self.commandRequest(for: run)
+        let client = self.client
+        let name = run.command.name
+        let local = self.local
+        Task.detached {
+            do {
+                try await client.runCommand(
+                    sessionID: sessionID, directory: directory, request: request)
+            } catch {
+                AgentLog.logger("opencode").error(
+                    "command /\(name) failed: \(error)")
+                await local.send(
+                    .failure(
+                        BackendFailure(
+                            message: "/\(name) didn't run.",
+                            retryable: true, detail: "\(error)")),
+                    to: sessionID)
+            }
+        }
+    }
+
+    /// opencode's compaction lives on `/session/:id/summarize`, which blocks until the whole
+    /// summarize has finished — so like every command it is dispatched rather than awaited, and the
+    /// event stream reports the marker, the summary and the seam. The route needs a model for its
+    /// payload: the one the run names when it names one, else the session record's own. opencode's
+    /// summarize takes no instructions, so any the preflight collected stay out of the wire; the
+    /// server decides what the summary keeps.
+    private func dispatchCompaction(_ run: CommandRun, sessionID: String) async throws {
+        let payload: (providerID: String, modelID: String)?
+        if let model = run.model {
+            payload = (model.providerID, model.modelID)
+        } else if let session = try? await client.session(sessionID),
+            let model = session.model,
+            let providerID = model.providerID,
+            let modelID = model.id
+        {
+            payload = (providerID, modelID)
+        } else {
+            payload = nil
+        }
+        guard let payload else {
+            throw AgentError.unsupported(
+                "the server reported no model for this session to summarize with")
+        }
+        let client = self.client
+        let local = self.local
+        let directory = await directories.directory(for: sessionID, client: client)
+        Task.detached {
+            do {
+                try await client.summarize(
+                    sessionID: sessionID, directory: directory, providerID: payload.providerID,
+                    modelID: payload.modelID)
+            } catch {
+                AgentLog.logger("opencode").error(
+                    "compaction of \(sessionID) failed: \(error)")
+                await local.send(
+                    .compaction(
+                        CompactionActivity(
+                            startedAt: Date(), failure: CompactionActivity.unexplainedFailure)),
+                    to: sessionID)
+            }
+        }
+    }
+
+    /// The run as opencode's command route wants it. The model is one `providerID/modelID` string
+    /// rather than the prompt route's object, the effort travels under opencode's own name for it
+    /// (`variant`), and `arguments` is always written — the key is required, and a command with
+    /// nothing after it is an empty argument, not an absent one. A command that pins its own model
+    /// or agent in its frontmatter still wins on the server, which is right: that pin is the
+    /// command author's answer to what may run it, and this asks rather than orders.
+    static func commandRequest(for run: CommandRun) -> OCCommandRequest {
+        OCCommandRequest(
+            command: run.command.name, arguments: run.arguments ?? "",
+            model: run.model?.rawValue, agent: run.agent, variant: run.reasoningEffort)
+    }
+
+    private static func source(for command: OCCommand) -> AgentCommand.Source {
+        switch command.source {
+        case "mcp": return .mcp
+        case "skill": return .skill
+        case "command": return .custom
+        default: return .custom
+        }
+    }
+
+    /// opencode describes a command's placeholders as template variables (`$ARGUMENTS`, `$1`);
+    /// render them the way an argument hint reads elsewhere so one palette can present every
+    /// backend's commands identically, without leaking template syntax at the user.
+    private static func argumentHint(for command: OCCommand) -> String? {
+        guard let hints = command.hints, !hints.isEmpty else { return nil }
+        return hints
+            .map { hint in
+                let bare = hint.hasPrefix("$") ? String(hint.dropFirst()) : hint
+                return "<\(bare.uppercased() == "ARGUMENTS" ? "arguments" : bare)>"
+            }
+            .joined(separator: " ")
+    }
+
+    public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
+    {
+        try await client.respondPermission(
+            sessionID: permission.sessionID,
+            permissionID: permission.id,
+            response: decision.rawValue
+        )
+    }
+
+    public func answerQuestion(_ request: QuestionRequest, answers: [[String]]) async throws {
+        let directory = await directories.directory(for: request.sessionID, client: client)
+        try await client.answerQuestion(
+            requestID: request.id, directory: directory, answers: answers)
+    }
+
+    public func rejectQuestion(_ request: QuestionRequest) async throws {
+        let directory = await directories.directory(for: request.sessionID, client: client)
+        try await client.rejectQuestion(requestID: request.id, directory: directory)
+    }
+
+    public func pendingQuestions(for sessionID: String) async throws -> [QuestionRequest] {
+        let directory = await directories.directory(for: sessionID, client: client)
+        return try await client.pendingQuestions(directory: directory)
+            .compactMap(OpenCodeMapping.question)
+            .filter { $0.sessionID == sessionID }
+    }
+
+    public func listFiles(path: String?) async throws -> [FileNode] {
+        try await client.files(path: path ?? ".").map {
+            FileNode(path: $0.path, name: $0.name, isDirectory: $0.type == "directory")
+        }
+    }
+
+    public func fileContent(path: String) async throws -> String {
+        try await client.fileContent(path: path).content
+    }
+
+    public func attachmentData(_ file: FileReference) async throws -> Data {
+        try OpenCodeCommon.attachmentData(file)
+    }
+
+    public func diff(sessionID: String) async throws -> [FileDiff] {
+        try await client.diff(sessionID: sessionID).map {
+            FileDiff(
+                path: $0.file ?? "", additions: $0.additions ?? 0, deletions: $0.deletions ?? 0,
+                patch: $0.patch)
+        }
+    }
+
+    public func find(pattern: String) async throws -> [String] {
+        try await client.find(pattern: pattern).compactMap { match in
+            guard let path = match.path?.text else { return nil }
+            if let line = match.lineNumber { return "\(path):\(line)" }
+            return path
+        }
+    }
+
+    static func orderedVariants(_ variants: [String: OCModelVariant]?) -> [String]? {
+        guard let variants, !variants.isEmpty else { return nil }
+        return OpenCodeCommon.orderedVariants(Array(variants.keys))
+    }
+
+    public func providers() async throws -> [Provider] {
+        let response = try await client.providers()
+        return response.providers.map { provider in
+            let models = (provider.models ?? [:])
+                .map {
+                    ModelInfo(
+                        id: $0.value.id ?? $0.key, name: $0.value.name ?? $0.key,
+                        providerID: provider.id,
+                        capabilities: $0.value.capabilities.map { caps in
+                            ModelCapabilities(
+                                attachment: caps.attachment ?? false,
+                                imageInput: caps.input?.image ?? false,
+                                pdfInput: caps.input?.pdf ?? false)
+                        },
+                        variants: Self.orderedVariants($0.value.variants),
+                        contextWindow: ($0.value.limit?.context).flatMap {
+                            $0 > 0 ? Int($0) : nil
+                        })
+                }
+                .sorted { $0.id < $1.id }
+            return Provider(
+                id: provider.id,
+                name: provider.name ?? provider.id,
+                models: models,
+                defaultModelID: response.default?[provider.id]
+            )
+        }
+    }
+}
+
+extension OpenCodeV1Backend: RestartableBackend {
+    public func restart() async throws {
+        try await OpenCodeCommon.restart(spawn: spawn, ptyIDs: ptyIDs)
+    }
+
+    var spawn: OpenCodeCommon.Spawn {
+        let client = self.client
+        return { command, args, title in
+            try await client.spawn(command: command, args: args, title: title)
+        }
+    }
+
+    var ptyIDs: OpenCodeCommon.PtyIDs {
+        let client = self.client
+        return { try await client.ptyIDs() }
+    }
+}
+
+/// opencode has no `/git` routes. When the conversation's directory is a path this process can
+/// open — the desktop client sitting next to the checkout — the repository is read locally. A
+/// remote phone talking to a remote opencode has no path here, so the band stays quiet about git
+/// rather than inventing a failure.
+extension OpenCodeV1Backend: GitObservingBackend {
+    public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        #if os(macOS) || os(Linux)
+        return await Task.detached(priority: .utility) {
+            LocalGit.snapshot(directory: directory)
+        }.value
+        #else
+        return nil
+        #endif
+    }
+
+    public func gitPatch(directory: String?, sessionID: String?, path: String, staged: Bool)
+        async throws -> GitPatch?
+    {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        #if os(macOS) || os(Linux)
+        return await Task.detached(priority: .utility) {
+            LocalGit.patch(directory: directory, path: path, staged: staged)
+        }.value
+        #else
+        return nil
+        #endif
+    }
+
+    public func gitCommit(directory: String?, sessionID: String?, hash: String) async throws
+        -> GitCommitDetail?
+    {
+        guard let directory = await resolveGitDirectory(directory, sessionID: sessionID)
+        else { return nil }
+        #if os(macOS) || os(Linux)
+        return await Task.detached(priority: .utility) {
+            LocalGit.commit(directory: directory, hash: hash)
+        }.value
+        #else
+        return nil
+        #endif
+    }
+
+    private func resolveGitDirectory(_ directory: String?, sessionID: String?) async -> String? {
+        if let directory, !directory.isEmpty,
+            FileManager.default.fileExists(atPath: directory)
+        {
+            return directory
+        }
+        guard let sessionID, !sessionID.isEmpty,
+            let resolved = await directories.directory(for: sessionID, client: client),
+            FileManager.default.fileExists(atPath: resolved)
+        else { return nil }
+        return resolved
+    }
+}
+
+extension OpenCodeV1Backend: ServeManagerBackend {
+    public func installServeManager() async throws {
+        try await OpenCodeCommon.installServeManager(spawn: spawn, ptyIDs: ptyIDs)
+    }
+}

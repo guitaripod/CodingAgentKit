@@ -20,7 +20,7 @@ import Testing
              {"name":"customize-opencode","description":"opencode config","source":"skill",
               "template":"...","hints":[]}]
             """)
-        let mapped = commands.map { OpenCodeBackend.command(for: $0) }
+        let mapped = commands.map { OpenCodeV1Backend.command(for: $0) }
 
         #expect(mapped[0].source == .custom)
         #expect(mapped[0].argumentHint == "<arguments>")
@@ -43,9 +43,9 @@ import Testing
             [{"name":"init","description":"guided setup","source":"command",
               "template":"...","hints":[]}]
             """
-        ).map { OpenCodeBackend.command(for: $0) }
+        ).map { OpenCodeV1Backend.command(for: $0) }
         let claimed = Set(published.map(\.name))
-        let offered = published + OpenCodeBackend.builtins.filter { !claimed.contains($0.name) }
+        let offered = published + OpenCodeCommon.builtins.filter { !claimed.contains($0.name) }
 
         #expect(offered.map(\.name) == ["init", "compact"])
         #expect(offered[1].source == .builtin)
@@ -60,18 +60,18 @@ import Testing
             [{"name":"compact","description":"mine","source":"command",
               "template":"...","hints":[]}]
             """
-        ).map { OpenCodeBackend.command(for: $0) }
+        ).map { OpenCodeV1Backend.command(for: $0) }
         let claimed = Set(published.map(\.name))
-        let offered = published + OpenCodeBackend.builtins.filter { !claimed.contains($0.name) }
+        let offered = published + OpenCodeCommon.builtins.filter { !claimed.contains($0.name) }
 
         #expect(offered.count == 1)
         #expect(offered[0].details == "mine")
     }
 
     @Test func opencodesOwnAliasReachesTheSameRoute() {
-        #expect(OpenCodeBackend.isCompaction("compact"))
-        #expect(OpenCodeBackend.isCompaction("summarize"))
-        #expect(!OpenCodeBackend.isCompaction("context"))
+        #expect(OpenCodeCommon.isCompaction("compact"))
+        #expect(OpenCodeCommon.isCompaction("summarize"))
+        #expect(!OpenCodeCommon.isCompaction("context"))
     }
 }
 
@@ -83,7 +83,7 @@ import Testing
     /// Read back as the server reads it — a substring assertion would be checking Foundation's
     /// slash escaping rather than the shape opencode validates.
     private func body(_ run: CommandRun) throws -> [String: String] {
-        let data = try JSONEncoder().encode(OpenCodeBackend.commandRequest(for: run))
+        let data = try JSONEncoder().encode(OpenCodeV1Backend.commandRequest(for: run))
         return try JSONDecoder().decode([String: String].self, from: data)
     }
 

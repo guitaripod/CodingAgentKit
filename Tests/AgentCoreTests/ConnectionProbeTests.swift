@@ -7,12 +7,13 @@ import Testing
 
 @testable import AgentCore
 
-private enum ProbeEndpoint: Equatable { case health, status, other }
+private enum ProbeEndpoint: Equatable { case info, health, status, other }
 
 /// Classifies a probe request by which endpoint it targets, robust to how
 /// Foundation encodes the appended path component.
 private func endpoint(of request: URLRequest) -> ProbeEndpoint {
     let target = request.url?.absoluteString ?? ""
+    if target.contains("api/info") { return .info }
     if target.contains("health") { return .health }
     if target.contains("status") { return .status }
     return .other
@@ -54,6 +55,54 @@ private func makeTransport(
             })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
         #expect(outcome == .ok(agentType: .openCode, version: "0.4.2"))
+    }
+
+    @Test func openCodeTwoAnswersInfoWithItsVersionAndPid() async {
+        let probe = ConnectionProbe(
+            transport: makeTransport { endpoint in
+                switch endpoint {
+                case .info: return Data(#"{"version":"2.0.11","pid":4242,"urls":["http://127.0.0.1:4096"]}"#.utf8)
+                default: return Data("<!doctype html><html></html>".utf8)
+                }
+            })
+        let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
+        #expect(outcome == .ok(agentType: .openCode, version: "2.0.11"))
+    }
+
+    @Test func aWebPageOnInfoIsNotAnOpenCodeTwo() async {
+        let recorder = ProbeRecorder()
+        let probe = ConnectionProbe(
+            transport: makeTransport(record: recorder) { endpoint in
+                switch endpoint {
+                case .info: return Data("<!doctype html>".utf8)
+                case .health: return Data(#"{"healthy":true,"version":"1.18.31"}"#.utf8)
+                default: return Data("{}".utf8)
+                }
+            })
+        let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
+        #expect(outcome == .ok(agentType: .openCode, version: "1.18.31"))
+        #expect(await recorder.count == 2)
+    }
+
+    @Test func aNotFoundOnInfoFallsThroughToTheOlderLegs() async {
+        let probe = ConnectionProbe(
+            transport: makeTransport { endpoint in
+                switch endpoint {
+                case .info: throw AgentError.http(status: 404, body: "")
+                case .health: throw AgentError.http(status: 404, body: "")
+                case .status: return Data(#"{"status":"ok","agent":"claude-code"}"#.utf8)
+                case .other: return Data("{}".utf8)
+                }
+            })
+        let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
+        #expect(outcome == .ok(agentType: .claudeCode, version: "claude-code"))
+    }
+
+    @Test func http401OnInfoClassifiesAsAuthFailed() async {
+        let probe = ConnectionProbe(
+            transport: makeTransport { _ in throw AgentError.http(status: 401, body: "") })
+        let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: false)
+        #expect(outcome == .authFailed(.password))
     }
 
     @Test func openCodeHealthyFalseStillClassifiesAsOpenCodeWithNilVersion() async {
@@ -226,6 +275,8 @@ private func makeTransport(
         })
         let outcome = await probe.probe(baseURL: Self.base, retryUnreachable: true)
         #expect(outcome == .ok(agentType: .openCode, version: "0.5.0"))
-        #expect(await recorder.count == 2)
+        /// One request before the retry, then the second attempt's two opencode legs: a version
+        /// without a pid is not a 2.x answer, so the older health route is asked as well.
+        #expect(await recorder.count == 3)
     }
 }

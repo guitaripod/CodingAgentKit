@@ -55,6 +55,8 @@ public struct ConnectionProbe: Sendable {
     }
 
     /// Probes a base URL and classifies it: which agent backend (if any) answers, or why it failed.
+    /// Three legs, newest API first: opencode 2's `/api/info`, opencode 1's `/global/health`,
+    /// then the bridges' `/status`.
     /// The unreachable retry smooths over transient flakiness for a single
     /// interactive connect; bulk scans must pass `retryUnreachable: false` —
     /// a blackholed host would otherwise cost two full timeouts plus the gap.
@@ -85,6 +87,25 @@ public struct ConnectionProbe: Sendable {
     ) async -> Outcome {
         let builder = RequestBuilder(
             config: ServerConfig(baseURL: baseURL, credentials: credentials, policy: policy))
+
+        do {
+            let data = try await transport(builder.request(.get, "/api/info"))
+            if let info = try? JSONCoding.decoder.decode(InfoProbe.self, from: data),
+                let version = info.version, info.pid != nil
+            {
+                return .ok(agentType: .openCode, version: version)
+            }
+        } catch let error as AgentError {
+            switch error {
+            case .http(let status, let body) where status == 401 || status == 403:
+                return .authFailed(AuthChallenge.read(body: body))
+            case .connection(let detail):
+                return .unreachable(detail)
+            default:
+                break
+            }
+        } catch {
+        }
 
         do {
             let data = try await transport(builder.request(.get, "/global/health"))
@@ -130,6 +151,14 @@ public struct ConnectionProbe: Sendable {
         }
 
         return .notAnAgentServer
+    }
+
+    /// opencode 2's `/api/info`: a version and the pid of the process answering. Only a 2.x
+    /// server answers the path with JSON at all — a 1.x server 404s it and the web UI a 2.x server
+    /// bundles answers every other path with HTML — so a version beside a pid is the fingerprint.
+    private struct InfoProbe: Decodable {
+        let version: String?
+        let pid: Int?
     }
 
     private struct HealthProbe: Decodable {

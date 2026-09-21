@@ -17,10 +17,39 @@ enum OpenCodeLedger {
     /// conversations; this is a guard against a pathological store, not a window.
     static let sessionCeiling = 2000
 
+    struct Tokens: Sendable {
+        var input = 0
+        var output = 0
+        var reasoning = 0
+        var cacheRead = 0
+        var cacheWrite = 0
+    }
+
+    /// What a session record says that a ledger can count, the same on both generations of the
+    /// wire: the conversation's running cost and tokens, the model that spent them, where it
+    /// ran, when it was last worked on, and whether it was a spawned agent's.
+    struct Record: Sendable {
+        var id: String
+        var title: String?
+        var parentID: String?
+        var directory: String?
+        var lastActive: Date?
+        var cost: Double?
+        var tokens: Tokens
+        var modelID: String?
+        var providerID: String?
+    }
+
+    static func report(
+        sessions: [OCSession], days: Int, now: Date = Date(), calendar: Calendar = .current
+    ) -> UsageAnalyticsReport {
+        report(records: sessions.map(Record.init), days: days, now: now, calendar: calendar)
+    }
+
     /// Aggregate the records into the account's report. Sessions outside the window, and sessions
     /// nobody ever prompted, are left out — an empty conversation is not a day's work.
     static func report(
-        sessions: [OCSession], days: Int, now: Date = Date(), calendar: Calendar = .current
+        records: [Record], days: Int, now: Date = Date(), calendar: Calendar = .current
     ) -> UsageAnalyticsReport {
         let since =
             calendar.startOfDay(
@@ -35,8 +64,8 @@ enum OpenCodeLedger {
         var subagents = UsageAnalyticsReport.Subagents()
         var priciest: UsageAnalyticsReport.Records.Session?
 
-        for session in sessions {
-            guard let at = lastActive(session), at >= since else { continue }
+        for session in records {
+            guard let at = session.lastActive, at >= since else { continue }
             let tokens = tokens(of: session.tokens)
             let cost = max(0, session.cost ?? 0)
             guard tokens.total > 0 || cost > 0 else { continue }
@@ -54,7 +83,7 @@ enum OpenCodeLedger {
             if !isChild { day.sessions += 1 }
             daily[key] = day
 
-            if let name = modelKey(session.model) {
+            if let name = modelKey(session) {
                 var row =
                     models[name]
                     ?? SessionSpendReport.ModelShare(
@@ -121,30 +150,21 @@ enum OpenCodeLedger {
         return lhs.name < rhs.name
     }
 
-    /// The record's own clock: when the conversation was last worked on, which is the day its
-    /// running total belongs to. A conversation that spanned midnight lands on the later day —
-    /// the imprecision ``UsageAnalyticsReport/Coverage/dailyPrecision`` exists to declare.
-    private static func lastActive(_ session: OCSession) -> Date? {
-        guard let milliseconds = session.time?.updated ?? session.time?.created else { return nil }
-        return Date(timeIntervalSince1970: milliseconds / 1000)
-    }
-
     /// Reasoning is billed as output and read as output everywhere else in the app, and opencode
     /// reports one cache write without a time-to-live, which is the five-minute tier's price.
-    private static func tokens(of tokens: OCTokens?) -> SessionSpendReport.Tokens {
-        guard let tokens else { return SessionSpendReport.Tokens() }
-        return SessionSpendReport.Tokens(
-            input: Int(tokens.input ?? 0),
-            output: Int(tokens.output ?? 0) + Int(tokens.reasoning ?? 0),
-            cacheRead: Int(tokens.cache?.read ?? 0),
-            cacheWrite5m: Int(tokens.cache?.write ?? 0))
+    private static func tokens(of tokens: Tokens) -> SessionSpendReport.Tokens {
+        SessionSpendReport.Tokens(
+            input: tokens.input,
+            output: tokens.output + tokens.reasoning,
+            cacheRead: tokens.cacheRead,
+            cacheWrite5m: tokens.cacheWrite)
     }
 
     /// `provider/model`, so a reader downstream can tell an Ollama model on the server's own GPU
     /// from a hosted one with the same name.
-    private static func modelKey(_ model: OCSessionModel?) -> String? {
-        guard let id = model?.id, !id.isEmpty else { return nil }
-        guard let provider = model?.providerID, !provider.isEmpty else { return id }
+    private static func modelKey(_ record: Record) -> String? {
+        guard let id = record.modelID, !id.isEmpty else { return nil }
+        guard let provider = record.providerID, !provider.isEmpty else { return id }
         return "\(provider)/\(id)"
     }
 
@@ -153,7 +173,7 @@ enum OpenCodeLedger {
         return name.isEmpty ? directory : name
     }
 
-    private static func title(_ session: OCSession) -> String {
+    private static func title(_ session: Record) -> String {
         let title = session.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return title.isEmpty ? session.id : title
     }
@@ -175,5 +195,27 @@ enum OpenCodeLedger {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
+    }
+}
+
+extension OpenCodeLedger.Record {
+    init(_ session: OCSession) {
+        self.init(
+            id: session.id,
+            title: session.title,
+            parentID: session.parentID,
+            directory: session.directory,
+            lastActive: (session.time?.updated ?? session.time?.created).map {
+                Date(timeIntervalSince1970: $0 / 1000)
+            },
+            cost: session.cost,
+            tokens: OpenCodeLedger.Tokens(
+                input: Int(session.tokens?.input ?? 0),
+                output: Int(session.tokens?.output ?? 0),
+                reasoning: Int(session.tokens?.reasoning ?? 0),
+                cacheRead: Int(session.tokens?.cache?.read ?? 0),
+                cacheWrite: Int(session.tokens?.cache?.write ?? 0)),
+            modelID: session.model?.id,
+            providerID: session.model?.providerID)
     }
 }

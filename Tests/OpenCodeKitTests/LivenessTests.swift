@@ -18,8 +18,8 @@ import Testing
 
     private func reading(
         running: [String] = [], scopes: [String] = ["/w"]
-    ) -> OpenCodeBackend.LivenessReading {
-        var reading = OpenCodeBackend.LivenessReading()
+    ) -> OpenCodeV1Backend.LivenessReading {
+        var reading = OpenCodeV1Backend.LivenessReading()
         for scope in scopes {
             reading.absorb(
                 Dictionary(
@@ -30,7 +30,7 @@ import Testing
     }
 
     @Test func aScopeThatAnsweredSettlesEveryRowItCovers() {
-        let applied = OpenCodeBackend.applying(
+        let applied = OpenCodeV1Backend.applying(
             reading(running: ["a"]), to: [session("a"), session("b")])
 
         #expect(applied[0].isActive == true)
@@ -38,7 +38,7 @@ import Testing
     }
 
     @Test func aScopeNobodyAskedLeavesItsRowsUnknown() {
-        let applied = OpenCodeBackend.applying(
+        let applied = OpenCodeV1Backend.applying(
             reading(running: ["a"], scopes: ["/w"]),
             to: [session("a"), session("elsewhere", directory: "/other")])
 
@@ -47,14 +47,14 @@ import Testing
     }
 
     @Test func nothingAskedAtAllChangesNothing() {
-        let applied = OpenCodeBackend.applying(
-            OpenCodeBackend.LivenessReading(), to: [session("a")])
+        let applied = OpenCodeV1Backend.applying(
+            OpenCodeV1Backend.LivenessReading(), to: [session("a")])
 
         #expect(applied[0].isActive == nil)
     }
 
     @Test func anEmptyAnswerIsSettledRatherThanUnknown() {
-        let applied = OpenCodeBackend.applying(reading(running: []), to: [session("a")])
+        let applied = OpenCodeV1Backend.applying(reading(running: []), to: [session("a")])
 
         #expect(applied[0].isActive == false)
     }
@@ -66,7 +66,7 @@ import Testing
     }
 
     @Test func busyChildrenAreCountedOntoTheParentThatSpawnedThem() {
-        let applied = OpenCodeBackend.applying(
+        let applied = OpenCodeV1Backend.applying(
             reading(running: ["kid1", "kid2"]),
             to: [
                 session("boss"), session("kid1", parent: "boss"),
