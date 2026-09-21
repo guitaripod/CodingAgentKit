@@ -371,9 +371,9 @@ final class OpenCodeNegotiation: Sendable {
 
         func ask(
             _ resolve: @escaping @Sendable () async throws -> any OpenCodeGeneration,
-            known: CapabilityBox
+            known: CapabilityBox, fresh: Bool
         ) -> Task<any OpenCodeGeneration, Error> {
-            if let inFlight { return inFlight }
+            if !fresh, let inFlight { return inFlight }
             let task = Task {
                 let generation = try await resolve()
                 known.write(generation.capabilities)
@@ -413,10 +413,12 @@ final class OpenCodeNegotiation: Sendable {
 
     func generation() async throws -> any OpenCodeGeneration {
         if let resolved = await state.current() { return resolved }
-        return try await state.ask(resolve, known: known).value
+        return try await state.ask(resolve, known: known, fresh: false).value
     }
 
+    /// Asks the machine again whatever is held or in flight; an older ask still settling cannot
+    /// overwrite the newer answer, because a settle only lands for the ask it belongs to.
     func refresh() async throws -> any OpenCodeGeneration {
-        try await state.ask(resolve, known: known).value
+        try await state.ask(resolve, known: known, fresh: true).value
     }
 }

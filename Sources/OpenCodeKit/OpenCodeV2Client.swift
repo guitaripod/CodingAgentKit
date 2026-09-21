@@ -91,19 +91,18 @@ public struct OpenCodeV2Client: Sendable {
     }
 
     /// The whole transcript, oldest first. The route pages — newest first by default, fifty at a
-    /// time — so it is walked with the cursor until a page comes back short.
+    /// time — so it is walked with the cursor until a page comes back short. A cursor is only
+    /// ever trusted beside a full page: the server hands one back on a page that already held
+    /// everything, and following it would ask for the same page forever.
     func messages(sessionID: String) async throws -> [OC2Message] {
         var collected: [OC2Message] = []
         var cursor: String?
         while true {
-            var query = [
-                URLQueryItem(name: "limit", value: "\(Self.messagePage)"),
-                URLQueryItem(name: "order", value: "asc"),
-            ]
-            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
             let page: OC2Page<OC2Message> = try decode(
                 await http.send(
-                    builder.request(.get, "/api/session/\(sessionID)/message", query: query)))
+                    builder.request(
+                        .get, "/api/session/\(sessionID)/message",
+                        query: Self.messageQuery(cursor: cursor))))
             collected.append(contentsOf: page.data)
             guard page.data.count >= Self.messagePage, let next = page.cursor?.next, next != cursor
             else { break }
@@ -113,6 +112,18 @@ public struct OpenCodeV2Client: Sendable {
     }
 
     static let messagePage = 200
+
+    /// The first page names its order; every page after it names only the cursor, which carries
+    /// the order inside it — the server refuses a cursor beside an order as a contradiction.
+    static func messageQuery(cursor: String?) -> [URLQueryItem] {
+        var query = [URLQueryItem(name: "limit", value: "\(messagePage)")]
+        if let cursor {
+            query.append(URLQueryItem(name: "cursor", value: cursor))
+        } else {
+            query.append(URLQueryItem(name: "order", value: "asc"))
+        }
+        return query
+    }
 
     func prompt(sessionID: String, request: OC2PromptRequest) async throws {
         let body = try JSONCoding.encoder.encode(request)

@@ -214,4 +214,14 @@ private func records(_ json: String) throws -> [OC2Message] {
         #expect(report.projects.first?.name == "proj")
         #expect(report.records.priciestSession?.title == "Fix the build")
     }
+
+    @Test func aTranscriptPageAfterTheFirstNamesOnlyItsCursor() {
+        let first = OpenCodeV2Client.messageQuery(cursor: nil)
+        #expect(first.contains(URLQueryItem(name: "order", value: "asc")))
+        #expect(!first.contains { $0.name == "cursor" })
+        let next = OpenCodeV2Client.messageQuery(cursor: "eyJ")
+        #expect(next.contains(URLQueryItem(name: "cursor", value: "eyJ")))
+        #expect(!next.contains { $0.name == "order" })
+        #expect(next.contains(URLQueryItem(name: "limit", value: "200")))
+    }
 }
