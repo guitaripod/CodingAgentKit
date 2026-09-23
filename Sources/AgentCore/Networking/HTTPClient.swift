@@ -27,16 +27,7 @@ public struct HTTPClient: Sendable {
     }
 
     public init(policy: ConnectionPolicy, logger: Logger = AgentLog.logger("http")) {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = policy.requestTimeout.timeInterval
-        configuration.timeoutIntervalForResource = policy.resourceTimeout.timeInterval
-        configuration.httpMaximumConnectionsPerHost = 4
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        #if !canImport(FoundationNetworking)
-            configuration.waitsForConnectivity = true
-        #endif
-        self.session = URLSession(configuration: configuration)
+        self.session = SessionPool.session(for: policy)
         self.policy = policy
         #if !canImport(FoundationNetworking)
             self.streamSession = Self.makeStreamSession()
@@ -53,6 +44,45 @@ public struct HTTPClient: Sendable {
     /// done — so the transport's idle budget must not be the one deciding their fate.
     @discardableResult
     public func send(_ request: URLRequest, timeout: Duration) async throws -> Data {
+        let (data, http) = try await exchange(request, timeout: timeout)
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError.http(
+                status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return data
+    }
+
+    /// What a conditional read came back with: a body and the validator the server gave it, or
+    /// the server's word that the copy already held is still the current one.
+    public enum ConditionalReply: Sendable {
+        case modified(Data, etag: String?)
+        case notModified
+    }
+
+    /// A read that carries the validator of the copy already held, so a server that has nothing
+    /// new answers in a header instead of in the whole body again. A transcript is re-read on
+    /// every open and every reconnect and is megabytes on a long conversation; most of those
+    /// re-reads find it exactly as it was.
+    ///
+    /// A 304 counts only when a validator went out: a server that answers one to an unconditional
+    /// request is reporting an error, and it is thrown as one.
+    public func sendConditional(_ request: URLRequest, ifNoneMatch etag: String?) async throws
+        -> ConditionalReply
+    {
+        var conditional = request
+        if let etag { conditional.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        let (data, http) = try await exchange(conditional, timeout: policy.requestTimeout)
+        if http.statusCode == 304, etag != nil { return .notModified }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AgentError.http(
+                status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return .modified(data, etag: http.value(forHTTPHeaderField: "ETag"))
+    }
+
+    private func exchange(_ request: URLRequest, timeout: Duration) async throws
+        -> (Data, HTTPURLResponse)
+    {
         logger.debug("→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?")")
         let data: Data
         let response: URLResponse
@@ -72,11 +102,7 @@ public struct HTTPClient: Sendable {
             throw AgentError.connection("Non-HTTP response")
         }
         logger.debug("← \(http.statusCode) \(request.url?.path ?? "")")
-        guard (200..<300).contains(http.statusCode) else {
-            throw AgentError.http(
-                status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
-        }
-        return data
+        return (data, http)
     }
 
     #if canImport(FoundationNetworking)
@@ -282,4 +308,40 @@ public struct HTTPClient: Sendable {
             return String(data: data, encoding: .utf8) ?? ""
         }
     #endif
+}
+
+/// One session per set of deadlines for the whole process, because a session is a connection pool.
+/// Backends are value types minted freely, one per chat, per health check, per quota read, and a
+/// pool per mint paid a fresh TCP handshake for each of them, through a relay when the device is a
+/// phone away from home, while the sessions before it stayed alive with sockets nobody would reuse.
+/// Streams keep sessions of their own: they hold their connections for hours, and in a pool shared
+/// with every short request they would take the slots the reads wait for.
+enum SessionPool {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var sessions: [ConnectionPolicy: URLSession] = [:]
+
+    static func session(for policy: ConnectionPolicy) -> URLSession {
+        lock.withLock {
+            if let existing = sessions[policy] { return existing }
+            let made = URLSession(configuration: configuration(for: policy))
+            sessions[policy] = made
+            return made
+        }
+    }
+
+    /// Eight connections to a host rather than four, because the four used to be per backend and
+    /// are now shared by every backend reaching that host: a chat opening fires five reads at once
+    /// while the list, the quotas and the health check are still asking theirs.
+    private static func configuration(for policy: ConnectionPolicy) -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = policy.requestTimeout.timeInterval
+        configuration.timeoutIntervalForResource = policy.resourceTimeout.timeInterval
+        configuration.httpMaximumConnectionsPerHost = 8
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        #if !canImport(FoundationNetworking)
+            configuration.waitsForConnectivity = true
+        #endif
+        return configuration
+    }
 }

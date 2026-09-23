@@ -74,15 +74,22 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     private let builder: RequestBuilder
     private let http: HTTPClient
     private let stream: BridgeStream
+    private let transcripts: BridgeTranscripts
 
     public init(config: ServerConfig, agentType: AgentType = .claudeCode) {
+        self.init(
+            config: config, agentType: agentType,
+            http: HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge")))
+    }
+
+    init(config: ServerConfig, agentType: AgentType, http: HTTPClient) {
         self.agentType = agentType
         let builder = RequestBuilder(config: config)
-        let http = HTTPClient(policy: config.policy, logger: AgentLog.logger("claude-bridge"))
         self.builder = builder
         self.http = http
         self.stream = BridgeStreamRegistry.stream(config: config, builder: builder, http: http)
         self.stream.agentType = agentType
+        self.transcripts = BridgeTranscriptRegistry.transcripts(config: config, agentType: agentType)
     }
 
     /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
@@ -184,15 +191,30 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// nil; a bridge that reports both the turn and the wider "something is moving" reading is
     /// read on the turn, since agents still working after the conversation settled keep a list
     /// row live but are not a turn a client should show as running.
+    ///
+    /// Read conditionally: the copy this process last read goes out as its validator, and a bridge
+    /// that has nothing newer answers 304 in place of the whole conversation, which is handed back
+    /// exactly as it was read. A bridge too old to validate simply answers in full every time.
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
-        let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
-        let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
-        return TranscriptSnapshot(
-            messages: session.messages.map { $0.chat(agentType: agentType) },
-            status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
-            backgroundWork: BackgroundWork.reported(
-                tasks: session.backgroundTasks, task: session.backgroundTask,
-                since: session.backgroundSince, stalled: session.backgroundStalled))
+        let held = transcripts.held(sessionID)
+        let reply = try await http.sendConditional(
+            builder.request(.get, "/sessions/\(sessionID)"), ifNoneMatch: held?.etag)
+        switch reply {
+        case .notModified:
+            if let held { return held.snapshot }
+            transcripts.forget(sessionID)
+            return try await transcript(for: sessionID)
+        case .modified(let data, let etag):
+            let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
+            let snapshot = TranscriptSnapshot(
+                messages: session.messages.map { $0.chat(agentType: agentType) },
+                status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
+                backgroundWork: BackgroundWork.reported(
+                    tasks: session.backgroundTasks, task: session.backgroundTask,
+                    since: session.backgroundSince, stalled: session.backgroundStalled))
+            transcripts.hold(sessionID, etag: etag, snapshot: snapshot)
+            return snapshot
+        }
     }
 
     /// Where the bridge's record of the session stands, in one small answer: when it last moved,

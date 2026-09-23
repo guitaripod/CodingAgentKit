@@ -1128,9 +1128,12 @@ public actor AgentConversation {
     /// answer. So the events are held instead and replayed on top of the snapshot; a fetch that
     /// failed installs nothing and replays them onto the transcript that was already there.
     ///
-    /// The three fetches ride concurrently: on a bridge answering a heavy machine each round trip
-    /// can cost real time, and paying them in sequence is what made a freshly opened chat sit on
-    /// its placeholder.
+    /// Every fetch rides concurrently: the transcript, the questions, the goal, the interruption and
+    /// the running compaction. On a bridge answering a heavy machine, or a phone reaching it through
+    /// a relay, each round trip can cost real time, and paying them in sequence is what made a
+    /// freshly opened chat sit on its placeholder. The interruption and the compaction used to wait
+    /// for the transcript before going out, two round trips on every open and every reconnect that
+    /// bought nothing.
     ///
     /// A message the stream is actively writing belongs to the stream, so the snapshot may not
     /// install its version of one — see ``restoreMessagesTheStreamIsWriting(from:)``.
@@ -1146,10 +1149,12 @@ public actor AgentConversation {
         do {
             async let questionsFetch = fetchQuestions()
             async let goalFetch = fetchGoal()
+            async let cutOffFetch = fetchInterruption()
+            async let compactingFetch = try? backend.runningCompaction(for: sessionID)
             let snapshot = try await backend.transcript(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
-            let cutOff = await fetchInterruption()
-            let compacting = try? await backend.runningCompaction(for: sessionID)
+            let cutOff = await cutOffFetch
+            let compacting = await compactingFetch
             guard gen == generation else { return nil }
             guard !reachedTerminal else {
                 drainBufferedEvents(generation: gen)

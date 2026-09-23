@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.2
+
+A conversation that has not changed costs a header to re-read, and every request rides a warm
+connection.
+
+### Changed
+- **Bridge transcripts are read conditionally.** `ClaudeCodeBackend.transcript(for:)` holds the last
+  copy each conversation read, with the tag claude-bridge 1.11 gives it, and sends that tag back as
+  `If-None-Match`. An unchanged conversation is answered 304 with no body and the held copy is
+  handed back, so the re-read on every open and every reconnect no longer resends megabytes. An
+  older bridge sends no tag and is read in full, as before. `HTTPClient.sendConditional(_:ifNoneMatch:)`
+  is the transport half.
+- **One connection pool per set of deadlines.** Every `HTTPClient(policy:)` with the same policy
+  shares one `URLSession`, eight connections to a host, instead of minting a session (and a fresh
+  TCP handshake) per backend. Streams keep their own sessions.
+- **A refresh sends every read at once.** The interruption and running-compaction reads go out
+  beside the transcript, questions and goal instead of after them.
+- **`JSONCoding` builds its decoder and encoder once** rather than on every access.
+
 ## 0.25.0
 
 The daemon says who it lets in.
