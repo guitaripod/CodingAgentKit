@@ -1215,6 +1215,12 @@ extension ClaudeCodeBackend: SelfUpdatingBackend {
         return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
     }
 
+    public func updateStatusFetchingNow() async throws -> ServerUpdate {
+        let data = try await http.send(
+            builder.request(.get, "/update", query: [URLQueryItem(name: "check", value: "now")]))
+        return try BridgeCoding.decoder.decode(ServerUpdate.self, from: data)
+    }
+
     public func startUpdate() async throws -> ServerUpdate {
         try await accepted("/update", refusal: "update itself")
     }

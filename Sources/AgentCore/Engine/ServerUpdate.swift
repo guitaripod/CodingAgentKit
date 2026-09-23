@@ -104,6 +104,149 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         }
     }
 
+    /// One update or restart as the machine ran it, from the press to the way it ended.
+    ///
+    /// The phase alone could never say whose job a `succeeded` was, or what it landed on: a client
+    /// following a press read the same word for its own update and for last week's. A job has an
+    /// identity, the step it is on, and an outcome written by the process that came back — so a
+    /// client can follow exactly the job it started, pick up one another device or the machine's
+    /// own automation started, and say what it became.
+    public struct Job: Sendable, Hashable, Codable {
+        public enum Kind: String, Sendable, Hashable, Codable {
+            /// Fetch, build and restart onto the new build.
+            case update
+            /// Load a build already on the machine's disk.
+            case restart
+        }
+
+        public enum Step: String, Sendable, Hashable, Codable {
+            case download
+            case build
+            /// Built, and holding until nothing is running that a restart would stop.
+            case waitForIdle
+            case restart
+            case done
+        }
+
+        public enum Outcome: String, Sendable, Hashable, Codable {
+            /// The process that came back is running the build the job made.
+            case succeeded
+            case failed
+            /// The build is on the machine and the loading of it is owed — nothing there would
+            /// start the bridge again, or the machine never went idle.
+            case deferred
+        }
+
+        public var id: String
+        public var kind: Kind
+        /// Started by the machine's own policy rather than by anybody's press.
+        public var automatic: Bool
+        /// Nil when the machine named a step this client has never heard of.
+        public var step: Step?
+        public var outcome: Outcome?
+        /// What the machine was running when the job began.
+        public var from: String?
+        /// What the job set out to install.
+        public var target: String?
+        /// What the machine was running once the job ended.
+        public var landed: String?
+        public var reason: String?
+        public var startedAt: Date?
+        public var stepStartedAt: Date?
+        public var finishedAt: Date?
+
+        public init(
+            id: String, kind: Kind = .update, automatic: Bool = false, step: Step? = nil,
+            outcome: Outcome? = nil, from: String? = nil, target: String? = nil,
+            landed: String? = nil, reason: String? = nil, startedAt: Date? = nil,
+            stepStartedAt: Date? = nil, finishedAt: Date? = nil
+        ) {
+            self.id = id
+            self.kind = kind
+            self.automatic = automatic
+            self.step = step
+            self.outcome = outcome
+            self.from = from
+            self.target = target
+            self.landed = landed
+            self.reason = reason
+            self.startedAt = startedAt
+            self.stepStartedAt = stepStartedAt
+            self.finishedAt = finishedAt
+        }
+
+        /// A job is over once the machine wrote how it ended — or once it stamped an end without a
+        /// word this client knows, which is still an end.
+        public var isFinished: Bool { outcome != nil || finishedAt != nil || step == .done }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+            kind =
+                (try? container.decodeIfPresent(String.self, forKey: .kind))
+                .flatMap(Kind.init(rawValue:)) ?? .update
+            automatic = (try? container.decodeIfPresent(Bool.self, forKey: .automatic)) ?? false
+            step =
+                (try? container.decodeIfPresent(String.self, forKey: .step))
+                .flatMap(Step.init(rawValue:))
+            outcome =
+                (try? container.decodeIfPresent(String.self, forKey: .outcome))
+                .flatMap(Outcome.init(rawValue:))
+            from = try? container.decodeIfPresent(String.self, forKey: .from)
+            target = try? container.decodeIfPresent(String.self, forKey: .target)
+            landed = try? container.decodeIfPresent(String.self, forKey: .landed)
+            reason = try? container.decodeIfPresent(String.self, forKey: .reason)
+            startedAt = try? container.decodeIfPresent(Date.self, forKey: .startedAt)
+            stepStartedAt = try? container.decodeIfPresent(Date.self, forKey: .stepStartedAt)
+            finishedAt = try? container.decodeIfPresent(Date.self, forKey: .finishedAt)
+        }
+    }
+
+    /// What the newer build is, in words a person reads rather than a count of commits.
+    public struct Release: Sendable, Hashable, Codable {
+        /// One release's worth of change, written for people — the project's own changelog where it
+        /// has one, and the headlines of its commits where it does not.
+        public struct Note: Sendable, Hashable, Codable {
+            /// Nil for changes past the newest release, which no version names yet.
+            public var version: String?
+            public var date: String?
+            public var items: [String]
+
+            public init(version: String?, date: String? = nil, items: [String]) {
+                self.version = version
+                self.date = date
+                self.items = items
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                version = try? container.decodeIfPresent(String.self, forKey: .version)
+                date = try? container.decodeIfPresent(String.self, forKey: .date)
+                items = (try? container.decodeIfPresent([String].self, forKey: .items)) ?? []
+            }
+        }
+
+        /// The newest release tag the project's head carries.
+        public var version: String?
+        /// Commits the head has past that tag.
+        public var commitsPastTag: Int?
+        /// Everything newer than what the machine runs, newest first.
+        public var notes: [Note]
+
+        public init(version: String?, commitsPastTag: Int? = nil, notes: [Note] = []) {
+            self.version = version
+            self.commitsPastTag = commitsPastTag
+            self.notes = notes
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            version = try? container.decodeIfPresent(String.self, forKey: .version)
+            commitsPastTag = try? container.decodeIfPresent(Int.self, forKey: .commitsPastTag)
+            notes = (try? container.decodeIfPresent([Note].self, forKey: .notes)) ?? []
+        }
+    }
+
     public var version: String
     /// The version of the binary that is executing, stamped when it was built.
     ///
@@ -149,6 +292,10 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
     public var automation: Automation?
     /// Which Swift would do the building there, so a module-format failure is readable.
     public var toolchain: String?
+    /// The job in flight, or the last one to finish. Absent from a bridge older than jobs.
+    public var job: Job?
+    /// What the newer build carries. Absent unless the answer consulted the project.
+    public var release: Release?
 
     public init(
         version: String, running: String? = nil, restartRequired: Bool = false,
@@ -159,8 +306,11 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         manager: String = "manual", source: String? = nil, phase: Phase = .idle,
         startedAt: Date? = nil, finishedAt: Date? = nil, log: String? = nil,
         obstacle: Obstacle? = nil, busy: Busy? = nil, waitingSince: Date? = nil,
-        canRestart: Bool = false, automation: Automation? = nil, toolchain: String? = nil
+        canRestart: Bool = false, automation: Automation? = nil, toolchain: String? = nil,
+        job: Job? = nil, release: Release? = nil
     ) {
+        self.job = job
+        self.release = release
         self.obstacle = obstacle
         self.busy = busy
         self.waitingSince = waitingSince
@@ -227,6 +377,8 @@ public struct ServerUpdate: Sendable, Hashable, Codable {
         canRestart = try container.decodeIfPresent(Bool.self, forKey: .canRestart) ?? false
         automation = try container.decodeIfPresent(Automation.self, forKey: .automation)
         toolchain = try container.decodeIfPresent(String.self, forKey: .toolchain)
+        job = (try? container.decodeIfPresent(Job.self, forKey: .job)) ?? nil
+        release = (try? container.decodeIfPresent(Release.self, forKey: .release)) ?? nil
     }
 }
 
@@ -240,6 +392,10 @@ public protocol SelfUpdatingBackend: CodingAgentBackend {
     /// Checking the remote costs the server a network round trip, so a client polling an update in
     /// flight should pass false.
     func updateStatus(checkingRemote: Bool) async throws -> ServerUpdate
+    /// The same answer, with the project fetched now rather than from the machine's own recent
+    /// fetch — what an explicit "Check now" means. A server too old to tell the two apart answers
+    /// the ordinary question.
+    func updateStatusFetchingNow() async throws -> ServerUpdate
     /// Asks the server to update itself. Returns as soon as the work has been handed off; the
     /// server will stop answering for a moment when it restarts.
     func startUpdate() async throws -> ServerUpdate
@@ -252,6 +408,10 @@ public protocol SelfUpdatingBackend: CodingAgentBackend {
 }
 
 extension SelfUpdatingBackend {
+    public func updateStatusFetchingNow() async throws -> ServerUpdate {
+        try await updateStatus(checkingRemote: true)
+    }
+
     public func restartServer() async throws -> ServerUpdate {
         throw AgentError.unsupported("This server cannot restart itself.")
     }
