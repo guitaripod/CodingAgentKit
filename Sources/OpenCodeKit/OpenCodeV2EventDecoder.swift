@@ -10,11 +10,13 @@ import Foundation
 /// mapping cuts from the stored record, so a stream and a re-read describe one conversation.
 ///
 /// A little is remembered between frames: what a tool call was named and given, because the
-/// result frame repeats neither and the reducer replaces a part whole.
+/// result frame repeats neither and the reducer replaces a part whole; and what a prompt said,
+/// because the frame that makes it part of the conversation carries only its id.
 struct OpenCodeV2EventDecoder {
     let sessionID: String
     private var toolNames: [String: String] = [:]
     private var toolInputs: [String: JSONValue] = [:]
+    private var prompts: [String: JSONValue] = [:]
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -268,8 +270,25 @@ struct OpenCodeV2EventDecoder {
             guard let formID = data?["id"]?.stringValue else { return [] }
             return [.questionResolved(requestID: formID)]
 
-        case "session.inbox.enqueued", "session.inbox.delivered", "session.inbox.cancelled",
-            "session.inbox.delivery.changed", "session.instructions.updated",
+        case "session.inbox.enqueued":
+            guard let inboxID = data?["inboxID"]?.stringValue, data?["item"]?["type"]?.stringValue == "user",
+                let payload = data?["item"]?["payload"]
+            else { return [] }
+            prompts[inboxID] = payload
+            return []
+
+        case "session.inbox.delivered":
+            guard let inboxID = data?["inboxID"]?.stringValue, let payload = prompts.removeValue(forKey: inboxID)
+            else { return [] }
+            return Self.prompt(id: inboxID, payload: payload, created: frame.created).map {
+                [.messageUpserted($0, replaceParts: true)]
+            } ?? []
+
+        case "session.inbox.cancelled":
+            if let inboxID = data?["inboxID"]?.stringValue { prompts[inboxID] = nil }
+            return []
+
+        case "session.inbox.delivery.changed", "session.instructions.updated",
             "session.usage.updated", "session.step.streamed", "session.created",
             "session.renamed", "session.deleted", "session.model.selected",
             "session.agent.selected", "session.viewed", "session.retry.scheduled",
@@ -298,6 +317,22 @@ struct OpenCodeV2EventDecoder {
     private func toolContent(_ value: JSONValue?) -> [OC2ToolContent] {
         guard let value, let data = try? JSONCoding.encoder.encode(value) else { return [] }
         return (try? JSONCoding.decoder.decode([OC2ToolContent].self, from: data)) ?? []
+    }
+
+    /// A delivered prompt as the user message a re-read of the transcript would show: opencode 2
+    /// announces a prompt only through its inbox, and the message's id is the inbox entry's.
+    private static func prompt(id: String, payload: JSONValue, created: Double?) -> ChatMessage? {
+        let record: JSONValue = .object([
+            "id": .string(id),
+            "type": .string("user"),
+            "text": payload["text"] ?? .null,
+            "files": payload["files"] ?? .null,
+            "time": created.map { .object(["created": .number($0)]) } ?? .null,
+        ])
+        guard let data = try? JSONCoding.encoder.encode(record),
+            let message = try? JSONCoding.decoder.decode(OC2Message.self, from: data)
+        else { return nil }
+        return OpenCodeV2Mapping.user(message)
     }
 
     private static func permission(from value: JSONValue) -> OC2Permission? {

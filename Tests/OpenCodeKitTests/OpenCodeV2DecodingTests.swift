@@ -36,6 +36,47 @@ private func decode(_ json: String) -> [BackendEvent] {
         #expect(events.isEmpty)
     }
 
+    @Test func aDeliveredPromptIsTheUserMessageATranscriptReadWouldShow() {
+        var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
+        let enqueued = decode(
+            #"{"type":"session.inbox.enqueued","created":1790181060112,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"Reply with just: ok","files":[{"uri":"file:///tmp/a.png","name":"a.png","mime":"image/png"}]},"delivery":"steer"}}}"#,
+            decoder: &decoder)
+        #expect(enqueued.isEmpty)
+
+        let delivered = decode(
+            #"{"type":"session.inbox.delivered","created":1790181060127,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
+            decoder: &decoder)
+        guard case .messageUpserted(let message, let replaceParts)? = delivered.first, delivered.count == 1 else {
+            Issue.record("expected one messageUpserted, got \(delivered)")
+            return
+        }
+        #expect(replaceParts)
+        #expect(message.id == "msg_U")
+        #expect(message.role == .user)
+        #expect(message.parts.map(\.id) == ["msg_U/text", "msg_U/file/0"])
+        #expect(message.parts.first?.text == "Reply with just: ok")
+        #expect(message.createdAt == Date(timeIntervalSince1970: 1_790_181_060.127))
+
+        let again = decode(
+            #"{"type":"session.inbox.delivered","created":1790181060130,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
+            decoder: &decoder)
+        #expect(again.isEmpty)
+    }
+
+    @Test func aCancelledPromptNeverBecomesAMessage() {
+        var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
+        _ = decode(
+            #"{"type":"session.inbox.enqueued","created":1,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"never mind"},"delivery":"queue"}}}"#,
+            decoder: &decoder)
+        _ = decode(
+            #"{"type":"session.inbox.cancelled","created":2,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
+            decoder: &decoder)
+        let delivered = decode(
+            #"{"type":"session.inbox.delivered","created":3,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
+            decoder: &decoder)
+        #expect(delivered.isEmpty)
+    }
+
     @Test func aStepOpensAStreamingAssistantMessageAndRunsTheTurn() {
         let events = decode(
             #"{"type":"session.step.started","created":1789999433600,"data":{"sessionID":"ses_S","agent":"build","model":{"id":"muse","providerID":"opencode","variant":"high"},"assistantMessageID":"msg_A","started":1789999433524}}"#
