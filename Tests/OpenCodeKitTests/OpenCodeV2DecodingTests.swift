@@ -39,7 +39,7 @@ private func decode(_ json: String) -> [BackendEvent] {
     @Test func aDeliveredPromptIsTheUserMessageATranscriptReadWouldShow() {
         var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
         let enqueued = decode(
-            #"{"type":"session.inbox.enqueued","created":1790181060112,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"Reply with just: ok","files":[{"uri":"file:///tmp/a.png","name":"a.png","mime":"image/png"}]},"delivery":"steer"}}}"#,
+            #"{"type":"session.inbox.enqueued","created":1790181060112,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"Reply with just: ok","files":[{"data":"AAAA","mime":"image/png","name":"a.png","source":{"type":"uri","uri":"file:///tmp/a.png"}}]},"delivery":"steer"}}}"#,
             decoder: &decoder)
         #expect(enqueued.isEmpty)
 
@@ -61,6 +61,58 @@ private func decode(_ json: String) -> [BackendEvent] {
             #"{"type":"session.inbox.delivered","created":1790181060130,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
             decoder: &decoder)
         #expect(again.isEmpty)
+    }
+
+    @Test func aShellRunBesideTheChatAppearsWhenItStartsAndSettlesWhenItEnds() {
+        var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
+        let started = decode(
+            #"{"id":"evt_0cf1SHELL","type":"session.shell.started","created":1000,"data":{"sessionID":"ses_S","shell":{"id":"sh_1","status":"running","command":"git status","cwd":"/tmp","shell":"bash","file":"/tmp/o","metadata":{},"time":{"started":1000}}}}"#,
+            decoder: &decoder)
+        guard case .messageUpserted(let running, true)? = started.first else {
+            Issue.record("expected messageUpserted, got \(started)")
+            return
+        }
+        #expect(running.id == "msg_0cf1SHELL")
+        #expect(running.isStreaming)
+        guard case .tool(let call) = running.parts.first?.kind else {
+            Issue.record("expected tool part")
+            return
+        }
+        #expect(call.status == .running)
+        #expect(call.input?["command"]?.stringValue == "git status")
+
+        let ended = decode(
+            #"{"id":"evt_0cf1SHELL2","type":"session.shell.ended","created":2500,"data":{"sessionID":"ses_S","shell":{"id":"sh_1","status":"exited","exit":1,"command":"git status","cwd":"/tmp","shell":"bash","file":"/tmp/o","metadata":{},"time":{"started":1000,"completed":2500}},"output":{"output":"fatal: not a git repository","cursor":28,"size":28,"truncated":false}}}"#,
+            decoder: &decoder)
+        guard case .messageUpserted(let settled, true)? = ended.first else {
+            Issue.record("expected messageUpserted, got \(ended)")
+            return
+        }
+        #expect(settled.id == running.id)
+        #expect(!settled.isStreaming)
+        #expect(settled.parts.map(\.id) == running.parts.map(\.id))
+        guard case .tool(let finished) = settled.parts.first?.kind else {
+            Issue.record("expected tool part")
+            return
+        }
+        #expect(finished.status == .error)
+        #expect(finished.output == "fatal: not a git repository")
+    }
+
+    @Test func aStepSomebodyStoppedClosesTheMessageWithoutAFailure() {
+        let events = decode(
+            #"{"type":"session.step.failed","created":5,"data":{"sessionID":"ses_S","assistantMessageID":"msg_A","error":{"type":"aborted","message":"Step interrupted"}}}"#
+        )
+        #expect(events.count == 1)
+        guard case .messageUpserted(let message, _)? = events.first else {
+            Issue.record("expected messageUpserted, got \(events)")
+            return
+        }
+        #expect(message.error == nil)
+        #expect(message.finishReason == "aborted")
+        #expect(
+            decode(#"{"type":"session.execution.failed","created":6,"data":{"sessionID":"ses_S","error":{"type":"aborted","message":"Step interrupted"}}}"#)
+                .allSatisfy { if case .failure = $0 { return false } else { return true } })
     }
 
     @Test func aCancelledPromptNeverBecomesAMessage() {

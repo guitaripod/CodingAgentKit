@@ -106,9 +106,10 @@ enum OpenCodeV2Mapping {
             source: .custom)
     }
 
-    static func fileNode(_ entry: OC2FSEntry) -> FileNode {
+    static func fileNode(_ entry: OC2FSEntry, root: String? = nil) -> FileNode {
         let isDirectory = entry.type == "directory" || entry.path.hasSuffix("/")
-        let path = entry.path.hasSuffix("/") ? String(entry.path.dropLast()) : entry.path
+        let relative = entry.path.hasSuffix("/") ? String(entry.path.dropLast()) : entry.path
+        let path = root.map { ($0.hasSuffix("/") ? $0 : $0 + "/") + relative } ?? relative
         let name = path.split(separator: "/").last.map(String.init) ?? path
         return FileNode(path: path, name: name, isDirectory: isDirectory)
     }
@@ -224,7 +225,7 @@ enum OpenCodeV2Mapping {
             createdAt: date(message.time?.created),
             completedAt: optionalDate(completed),
             isStreaming: completed == nil,
-            error: message.error?.message,
+            error: halted(message.error) ? nil : message.error?.message,
             costUSD: message.cost,
             providerID: message.model?.providerID,
             modelID: message.model?.id,
@@ -232,9 +233,15 @@ enum OpenCodeV2Mapping {
             totalTokens: usage(message.tokens).map(\.total),
             usage: usage(message.tokens),
             context: usage(message.tokens),
-            finishReason: message.finish
+            finishReason: halted(message.error) ? "aborted" : message.finish
         )
     }
+
+    /// A step somebody stopped — the turn interrupted, or a tool call they declined — which opencode
+    /// records as an error of type `aborted`. It is the person's own decision rather than a failure.
+    static func halted(_ error: OC2Error?) -> Bool { error?.type == "aborted" }
+
+    static func halted(_ error: JSONValue?) -> Bool { error?["type"]?.stringValue == "aborted" }
 
     static func textPartID(_ messageID: String, ordinal: Int) -> String {
         "\(messageID)/text/\(ordinal)"
@@ -288,6 +295,15 @@ enum OpenCodeV2Mapping {
                     FileReference(
                         path: nil, mime: file.mime, url: file.uri, filename: displayName(file.name))))
         }
+    }
+
+    /// Where a prompt's file can be read back: its bytes as a data URL, since they travel with the
+    /// message, or the uri it came from when the server kept none.
+    static func promptFileURL(_ file: OC2PromptFile) -> String? {
+        if let data = file.data, !data.isEmpty {
+            return "data:\(file.mime ?? "application/octet-stream");base64,\(data)"
+        }
+        return file.source?.uri
     }
 
     static func displayName(_ filename: String?) -> String? {
@@ -360,7 +376,7 @@ enum OpenCodeV2Mapping {
                     id: "\(message.id)/file/\(index)",
                     kind: .file(
                         FileReference(
-                            path: nil, mime: file.mime, url: file.uri,
+                            path: nil, mime: file.mime, url: promptFileURL(file),
                             filename: displayName(file.name)))))
         }
         return ChatMessage(
@@ -387,7 +403,7 @@ enum OpenCodeV2Mapping {
                         ToolCall(
                             id: callID,
                             name: "shell",
-                            status: running ? .running : ((message.exit ?? 0) == 0 ? .completed : .error),
+                            status: running ? .running : shellOutcome(message),
                             input: .object(["command": .string(message.command ?? "")]),
                             output: message.output?.output,
                             title: message.command)))
@@ -395,6 +411,13 @@ enum OpenCodeV2Mapping {
             createdAt: date(message.time?.created),
             completedAt: optionalDate(message.time?.completed),
             isStreaming: running)
+    }
+
+    /// A finished shell failed when it ran out of time, was killed, or exited non-zero; a killed or
+    /// timed-out shell may carry no exit code at all.
+    private static func shellOutcome(_ message: OC2Message) -> ToolStatus {
+        if message.status == "timeout" || message.status == "killed" { return .error }
+        return (message.exit ?? 0) == 0 ? .completed : .error
     }
 
     static func compactionSeam(_ message: OC2Message) -> ChatMessage {

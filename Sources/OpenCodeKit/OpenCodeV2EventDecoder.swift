@@ -10,13 +10,15 @@ import Foundation
 /// mapping cuts from the stored record, so a stream and a re-read describe one conversation.
 ///
 /// A little is remembered between frames: what a tool call was named and given, because the
-/// result frame repeats neither and the reducer replaces a part whole; and what a prompt said,
-/// because the frame that makes it part of the conversation carries only its id.
+/// result frame repeats neither and the reducer replaces a part whole; what a prompt said,
+/// because the frame that makes it part of the conversation carries only its id; and which
+/// message a running shell was given, because the frame that ends it names only the shell.
 struct OpenCodeV2EventDecoder {
     let sessionID: String
     private var toolNames: [String: String] = [:]
     private var toolInputs: [String: JSONValue] = [:]
     private var prompts: [String: JSONValue] = [:]
+    private var shells: [String: String] = [:]
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -69,11 +71,17 @@ struct OpenCodeV2EventDecoder {
 
         case "session.step.failed":
             guard let messageID = data?["assistantMessageID"]?.stringValue else { return [] }
+            let halted = OpenCodeV2Mapping.halted(data?["error"])
             let reason = OpenCodeV2Mapping.errorMessage(data?["error"]) ?? "step failed"
             var message = ChatMessage(
                 id: messageID, role: .assistant, agentType: .openCode, createdAt: at,
-                completedAt: at, isStreaming: false, error: reason)
-            message.finishReason = data?["finish"]?.stringValue ?? "error"
+                completedAt: at, isStreaming: false, error: halted ? nil : reason)
+            message.costUSD = data?["cost"]?.doubleValue
+            message.usage = usage(data?["tokens"])
+            message.context = message.usage
+            message.totalTokens = message.usage?.total
+            message.finishReason = halted ? "aborted" : data?["finish"]?.stringValue ?? "error"
+            guard !halted else { return [.messageUpserted(message, replaceParts: false)] }
             return [
                 .messageUpserted(message, replaceParts: false),
                 .failure(BackendFailure(message: reason)),
@@ -220,6 +228,7 @@ struct OpenCodeV2EventDecoder {
             return [.status(.idle)]
 
         case "session.execution.failed":
+            if OpenCodeV2Mapping.halted(data?["error"]) { return [.status(.idle)] }
             let reason = OpenCodeV2Mapping.errorMessage(data?["error"]) ?? "session error"
             return [.failure(BackendFailure(message: reason)), .status(.idle)]
 
@@ -284,6 +293,24 @@ struct OpenCodeV2EventDecoder {
                 [.messageUpserted($0, replaceParts: true)]
             } ?? []
 
+        case "session.shell.started":
+            guard let shell = data?["shell"], let shellID = shell["id"]?.stringValue,
+                let eventID = frame.id, eventID.hasPrefix("evt_")
+            else { return [] }
+            let messageID = "msg_" + eventID.dropFirst("evt_".count)
+            shells[shellID] = messageID
+            return Self.shell(id: messageID, shell: shell, output: nil, created: frame.created, completed: nil)
+                .map { [.messageUpserted($0, replaceParts: true)] } ?? []
+
+        case "session.shell.ended":
+            guard let shell = data?["shell"], let shellID = shell["id"]?.stringValue,
+                let messageID = shells.removeValue(forKey: shellID)
+            else { return [] }
+            return Self.shell(
+                id: messageID, shell: shell, output: data?["output"], created: shell["time"]?["started"]?.doubleValue,
+                completed: frame.created
+            ).map { [.messageUpserted($0, replaceParts: true)] } ?? []
+
         case "session.inbox.cancelled":
             if let inboxID = data?["inboxID"]?.stringValue { prompts[inboxID] = nil }
             return []
@@ -292,8 +319,7 @@ struct OpenCodeV2EventDecoder {
             "session.usage.updated", "session.step.streamed", "session.created",
             "session.renamed", "session.deleted", "session.model.selected",
             "session.agent.selected", "session.viewed", "session.retry.scheduled",
-            "session.synthetic", "session.skill.activated", "session.shell.started",
-            "session.shell.ended", "session.revert.staged", "session.revert.cleared",
+            "session.synthetic", "session.skill.activated", "session.revert.staged", "session.revert.cleared",
             "session.revert.committed", "session.moved", "session.forked",
             "session.permissions":
             return []
@@ -322,17 +348,38 @@ struct OpenCodeV2EventDecoder {
     /// A delivered prompt as the user message a re-read of the transcript would show: opencode 2
     /// announces a prompt only through its inbox, and the message's id is the inbox entry's.
     private static func prompt(id: String, payload: JSONValue, created: Double?) -> ChatMessage? {
-        let record: JSONValue = .object([
+        record([
             "id": .string(id),
             "type": .string("user"),
             "text": payload["text"] ?? .null,
             "files": payload["files"] ?? .null,
             "time": created.map { .object(["created": .number($0)]) } ?? .null,
-        ])
-        guard let data = try? JSONCoding.encoder.encode(record),
-            let message = try? JSONCoding.decoder.decode(OC2Message.self, from: data)
-        else { return nil }
-        return OpenCodeV2Mapping.user(message)
+        ]).map(OpenCodeV2Mapping.user)
+    }
+
+    /// A shell run beside the conversation as the message a re-read would show: opencode 2 keeps it
+    /// under the id of the frame that started it, and fills in its end when the shell exits.
+    private static func shell(
+        id: String, shell: JSONValue, output: JSONValue?, created: Double?, completed: Double?
+    ) -> ChatMessage? {
+        var time: [String: JSONValue] = [:]
+        if let created { time["created"] = .number(created) }
+        if let completed { time["completed"] = .number(completed) }
+        return record([
+            "id": .string(id),
+            "type": .string("shell"),
+            "shellID": shell["id"] ?? .null,
+            "command": shell["command"] ?? .null,
+            "status": shell["status"] ?? .null,
+            "exit": shell["exit"] ?? .null,
+            "output": output ?? .null,
+            "time": .object(time),
+        ]).map(OpenCodeV2Mapping.shellMessage)
+    }
+
+    private static func record(_ fields: [String: JSONValue]) -> OC2Message? {
+        guard let data = try? JSONCoding.encoder.encode(JSONValue.object(fields)) else { return nil }
+        return try? JSONCoding.decoder.decode(OC2Message.self, from: data)
     }
 
     private static func permission(from value: JSONValue) -> OC2Permission? {

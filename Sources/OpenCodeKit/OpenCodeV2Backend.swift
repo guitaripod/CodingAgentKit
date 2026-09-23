@@ -212,7 +212,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
             model: prompt.model, effort: prompt.reasoningEffort, agent: prompt.agent, to: sessionID)
         let files = prompt.attachments.compactMap { attachment -> OC2FileAttachment? in
             guard let uri = Self.attachmentURL(attachment) else { return nil }
-            return OC2FileAttachment(uri: uri, name: attachment.filename, mime: attachment.mime)
+            return OC2FileAttachment(uri: uri, name: attachment.filename)
         }
         try await client.prompt(
             sessionID: sessionID,
@@ -321,12 +321,24 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         try await client.pendingForms(sessionID: sessionID).compactMap(OpenCodeV2Mapping.question)
     }
 
+    /// opencode 2 answers every file route relative to a location, and its reader takes the path as
+    /// URL segments, so a leading slash is lost. An absolute path is therefore asked of the root
+    /// location, which reads it as written and lists entries that are absolute once rooted again.
+    private static let rootLocation = "/"
+
     public func listFiles(path: String?) async throws -> [FileNode] {
-        try await client.files(path: path ?? ".", directory: nil).map(OpenCodeV2Mapping.fileNode)
+        let requested = path ?? "."
+        guard requested.hasPrefix("/") else {
+            return try await client.files(path: requested, directory: nil).map { OpenCodeV2Mapping.fileNode($0) }
+        }
+        return try await client.files(path: requested, directory: Self.rootLocation).map {
+            OpenCodeV2Mapping.fileNode($0, root: Self.rootLocation)
+        }
     }
 
     public func fileContent(path: String) async throws -> String {
-        let bytes = try await client.fileBytes(path: path, directory: nil)
+        let bytes = try await client.fileBytes(
+            path: path, directory: path.hasPrefix("/") ? Self.rootLocation : nil)
         return String(decoding: bytes, as: UTF8.self)
     }
 
@@ -519,7 +531,8 @@ extension OpenCodeV2Backend: SessionListStreaming {
         else { return [] }
 
         switch frame.type {
-        case "session.created", "session.renamed", "session.model.selected", "session.forked":
+        case "session.created", "session.renamed", "session.model.selected", "session.agent.selected",
+            "session.forked":
             guard let record = try? await client.session(sessionID) else { return [] }
             await directories.record(sessionID: record.id, directory: record.location?.directory)
             let fresh = OpenCodeV2Mapping.session(record, running: nil)

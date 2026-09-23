@@ -128,16 +128,42 @@ private func records(_ json: String) throws -> [OC2Message] {
 
     @Test func aUsersPictureIsAFilePart() throws {
         let message = try records(#"""
-            [{"id":"msg_U","time":{"created":1},"text":"look","files":[{"uri":"data:image/png;base64,AAAA","name":"/Users/me/shot.png","mime":"image/png"}],"type":"user"}]
+            [{"id":"msg_U","time":{"created":1},"text":"look","files":[{"data":"AAAA","mime":"image/png","name":"/Users/me/shot.png","source":{"type":"inline"}},{"data":"QUJD","mime":"text/plain","name":"notes.txt","source":{"type":"uri","uri":"file:///home/me/notes.txt"}}],"type":"user"}]
             """#)
         let parts = OpenCodeV2Mapping.transcript(message)[0].parts
-        #expect(parts.count == 2)
-        guard case .file(let file) = parts[1].kind else {
-            Issue.record("expected file part")
+        #expect(parts.map(\.id) == ["msg_U/text", "msg_U/file/0", "msg_U/file/1"])
+        guard case .file(let file) = parts[1].kind, case .file(let notes) = parts[2].kind else {
+            Issue.record("expected file parts")
             return
         }
         #expect(file.filename == "shot.png")
+        #expect(file.mime == "image/png")
         #expect(file.url == "data:image/png;base64,AAAA")
+        #expect(notes.url == "data:text/plain;base64,QUJD")
+        #expect(try OpenCodeCommon.attachmentData(notes) == Data("ABC".utf8))
+    }
+
+    @Test func aShellThatRanOutOfTimeOrWasKilledFailedWithoutAnExitCode() throws {
+        for status in ["timeout", "killed"] {
+            let shell = try records(#"""
+                [{"id":"msg_S","time":{"created":1,"completed":2},"type":"shell","shellID":"sh_1","command":"sleep 99","status":"\#(status)"}]
+                """#)
+            guard case .tool(let call) = OpenCodeV2Mapping.transcript(shell)[0].parts[0].kind else {
+                Issue.record("expected tool part")
+                return
+            }
+            #expect(call.status == .error)
+        }
+    }
+
+    @Test func aStepSomebodyStoppedIsNotAnError() throws {
+        let stopped = try records(#"""
+            [{"id":"msg_A","time":{"created":1,"completed":2},"type":"assistant","agent":"build","model":{"id":"muse","providerID":"opencode"},"content":[],"error":{"type":"aborted","message":"Step interrupted"}}]
+            """#)
+        let message = OpenCodeV2Mapping.transcript(stopped)[0]
+        #expect(message.error == nil)
+        #expect(message.finishReason == "aborted")
+        #expect(!message.isAnswerless)
     }
 
     @Test func theSessionClockIsTheLaterOfWrittenAndSettled() throws {
@@ -173,6 +199,13 @@ private func records(_ json: String) throws -> [OC2Message] {
             OC2Form.self,
             from: Data(#"{"id":"frm_1","sessionID":"ses_S","fields":[{"key":"lang","type":"string","options":[{"value":"swift","label":"Swift"}],"custom":true}]}"#.utf8))
         #expect(OpenCodeV2Mapping.formAnswer(form, answers: [["Zig"]])["lang"] == .string("Zig"))
+    }
+
+    @Test func anEntryListedFromTheRootIsAbsolute() {
+        let entry = OpenCodeV2Mapping.fileNode(OC2FSEntry(path: "home/marcus/Dev/", type: "directory"), root: "/")
+        #expect(entry.path == "/home/marcus/Dev")
+        #expect(entry.name == "Dev")
+        #expect(entry.isDirectory)
     }
 
     @Test func aDirectoryEntryLosesItsSlashAndKeepsItsKind() {

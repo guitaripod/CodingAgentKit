@@ -107,7 +107,7 @@ struct OC2Message: Decodable, Sendable {
     let time: OC2MessageTime?
     let text: String?
     let description: String?
-    let files: [OC2FileAttachment]?
+    let files: [OC2PromptFile]?
     let agent: String?
     let model: OC2ModelRef?
     let content: [OC2Content]?
@@ -183,10 +183,24 @@ struct OC2ToolContent: Decodable, Sendable {
     let name: String?
 }
 
-struct OC2FileAttachment: Codable, Sendable {
+/// A file handed to a prompt: opencode reads the uri itself, so a name is all it takes beside it.
+struct OC2FileAttachment: Encodable, Sendable {
     let uri: String
     let name: String?
+}
+
+/// A file as a stored or queued prompt holds it: the bytes inline, whatever uri they came from
+/// recorded as their source.
+struct OC2PromptFile: Decodable, Sendable {
+    let data: String?
     let mime: String?
+    let name: String?
+    let source: OC2PromptFileSource?
+}
+
+struct OC2PromptFileSource: Decodable, Sendable {
+    let type: String
+    let uri: String?
 }
 
 struct OC2PromptRequest: Encodable, Sendable {
