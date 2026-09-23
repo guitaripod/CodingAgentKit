@@ -610,7 +610,8 @@ enum OpenCodeV2Mapping {
             prompt: prompt.text ?? "",
             startedAt: date(prompt.time?.created),
             detectedAt: detectedAt,
-            progress: TurnInterruption.Progress(reading: transcript(Array(records[start...end]))))
+            progress: TurnInterruption.Progress(reading: transcript(Array(records[start...end]))),
+            holdsUnattendedWork: false)
     }
 
     private static let turnRecords: Set<String> = ["user", "assistant", "idle"]

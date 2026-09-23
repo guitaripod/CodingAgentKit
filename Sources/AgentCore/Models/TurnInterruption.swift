@@ -79,10 +79,15 @@ public struct TurnInterruption: Sendable, Hashable, Codable {
     /// Set once the work has been picked back up, so the offer stops standing without the record
     /// being lost while the resumed turn is still running.
     public let resumedAt: Date?
+    /// Whether the server holds the session's unattended work until somebody decides, as a bridge
+    /// does that will not carry a conversation on by itself while a cut-off turn is undecided. A server
+    /// with no such hold leaves the price of waiting unsaid, because there is none to pay.
+    public let holdsUnattendedWork: Bool
 
     public init(
         turnID: String, prompt: String, startedAt: Date, detectedAt: Date,
-        progress: Progress = Progress(), queued: [String] = [], resumedAt: Date? = nil
+        progress: Progress = Progress(), queued: [String] = [], resumedAt: Date? = nil,
+        holdsUnattendedWork: Bool = true
     ) {
         self.turnID = turnID
         self.prompt = prompt
@@ -91,6 +96,7 @@ public struct TurnInterruption: Sendable, Hashable, Codable {
         self.progress = progress
         self.queued = queued
         self.resumedAt = resumedAt
+        self.holdsUnattendedWork = holdsUnattendedWork
     }
 
     public var isResumed: Bool { resumedAt != nil }

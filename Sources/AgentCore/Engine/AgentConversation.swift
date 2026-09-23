@@ -571,7 +571,7 @@ public actor AgentConversation {
             interruption = TurnInterruption(
                 turnID: cutOff.turnID, prompt: cutOff.prompt, startedAt: cutOff.startedAt,
                 detectedAt: cutOff.detectedAt, progress: cutOff.progress, queued: cutOff.queued,
-                resumedAt: Date())
+                resumedAt: Date(), holdsUnattendedWork: cutOff.holdsUnattendedWork)
         }
         emit()
     }

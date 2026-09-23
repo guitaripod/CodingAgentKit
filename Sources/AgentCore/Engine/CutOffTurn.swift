@@ -47,7 +47,8 @@ enum CutOffTurn {
             prompt: asked?.parts.compactMap(\.text).joined(separator: "\n") ?? "",
             startedAt: last.createdAt,
             detectedAt: detectedAt,
-            progress: progress(of: last))
+            progress: progress(of: last),
+            holdsUnattendedWork: false)
     }
 
     private static func unfinishedTurn(in messages: [ChatMessage]) -> ChatMessage? {
