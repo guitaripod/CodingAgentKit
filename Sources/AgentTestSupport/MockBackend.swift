@@ -66,6 +66,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var backgroundStops: [String] = []
         var reverts: [String] = []
         var restores: [String] = []
+        var standingReverts: [String: SessionRevert] = [:]
         var sessions: [AgentSession] = []
         var appendedEvents: [String: [MockScriptStep]] = [:]
         var cleared: Set<String> = []
@@ -235,11 +236,20 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         return reducer.snapshot
     }
 
+    /// The messages with the revert standing on the session, the way a server that keeps one on
+    /// its record answers a re-read.
+    public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
+        let messages = try await messages(for: sessionID)
+        return TranscriptSnapshot(
+            messages: messages, status: nil,
+            revert: mutable.withLock { $0.standingReverts[sessionID] })
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         let turn: [MockScriptStep]? = mutable.withLock { state in
             state.sentPrompts.append(prompt)
             guard interactive else { return nil }
-            var steps: [MockScriptStep] = []
+            var steps = commitStandingRevert(on: sessionID, in: &state)
             state.mintCounter += 1
             let suffix = "#\(state.mintCounter)"
             var parts = [MessagePart(id: "t", kind: .text(prompt.text))]
@@ -279,10 +289,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         stream([MockScriptStep(.status(.idle), delay: .zero)], to: sessionID)
     }
 
-    /// Winds the session back to `messageID`, putting back the files the demo's diffs name — so a
-    /// revert in the demo world says what it undid — and tells the session's stream.
+    /// Winds the session back to `messageID`, putting back the files the demo's diffs name so a
+    /// revert in the demo world says what it undid, and tells the session's stream. The revert
+    /// stands on the session until it is restored or the next message makes it final.
     public func revert(sessionID: String, to messageID: String) async throws -> SessionRevert {
-        mutable.withLock { $0.reverts.append(messageID) }
         let revert = SessionRevert(
             messageID: messageID,
             files: diffs.map {
@@ -290,14 +300,38 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                     path: $0.path, change: .modified, additions: $0.additions,
                     deletions: $0.deletions)
             })
+        mutable.withLock { state in
+            state.reverts.append(messageID)
+            state.standingReverts[sessionID] = revert
+        }
         if interactive { stream([MockScriptStep(.revert(revert), delay: .zero)], to: sessionID) }
         return revert
     }
 
     public func restoreRevert(sessionID: String) async throws {
-        mutable.withLock { $0.restores.append(sessionID) }
+        mutable.withLock { state in
+            state.restores.append(sessionID)
+            state.standingReverts[sessionID] = nil
+        }
         guard interactive else { return }
         stream([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
+    }
+
+    /// Makes the session's standing revert final the way a server does when the next message
+    /// arrives: the commit is announced, and the messages it set aside leave the log for good, so
+    /// a later re-read agrees with what the stream said.
+    private func commitStandingRevert(on sessionID: String, in state: inout Mutable)
+        -> [MockScriptStep]
+    {
+        guard let standing = state.standingReverts.removeValue(forKey: sessionID) else { return [] }
+        var reducer = MessageReducer(agentType: agentType)
+        let base = state.cleared.contains(sessionID) ? [] : baseScript(for: sessionID)
+        for step in base + (state.appendedEvents[sessionID] ?? []) { reducer.apply(step.event) }
+        let transcript = reducer.snapshot
+        let setAside =
+            transcript.firstIndex { $0.id == standing.messageID }.map { transcript[$0...] } ?? []
+        return [MockScriptStep(.revertCommitted(messageID: standing.messageID), delay: .zero)]
+            + setAside.map { MockScriptStep(.messageRemoved(messageID: $0.id), delay: .zero) }
     }
 
     /// Ends the mock's background work: the session is told the work is gone, and the request is

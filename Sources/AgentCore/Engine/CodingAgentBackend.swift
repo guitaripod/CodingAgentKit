@@ -811,9 +811,14 @@ public enum BackendEvent: Sendable {
     /// again or the turn ended. Distinct from ``status``: the turn is open throughout, and what
     /// changed is only whether anybody can say why nothing is arriving.
     case retry(TurnRetry?)
-    /// The conversation was wound back to a message, or `nil` once the revert was undone or made
-    /// final. A revert made final removes messages on the server, which arrives as a ``resync``.
+    /// The conversation was wound back to a message, or `nil` once the revert was undone and the
+    /// messages it set aside are back in effect.
     case revert(SessionRevert?)
+    /// The standing revert was made final, by the next message as a rule, and the messages from
+    /// `messageID` on are gone from the server for good. Distinct from a revert undone, which
+    /// brings those messages back: these leave the transcript at once, rather than returning
+    /// until a re-read finds them deleted.
+    case revertCommitted(messageID: String)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,

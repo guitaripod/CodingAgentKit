@@ -293,10 +293,11 @@ private func decode(_ json: String) -> [BackendEvent] {
         let committed = decode(
             #"{"type":"session.revert.committed","created":32,"data":{"sessionID":"ses_S","to":"msg_U2"}}"#)
         #expect(committed.count == 2)
-        guard case .revert(nil) = committed[0], case .resync = committed[1] else {
-            Issue.record("expected the revert to clear and the transcript to be re-read, got \(committed)")
+        guard case .revertCommitted(let boundary) = committed[0], case .resync = committed[1] else {
+            Issue.record("expected the revert made final at its boundary and a re-read, got \(committed)")
             return
         }
+        #expect(boundary == "msg_U2")
     }
 
     @Test func aCancelledPromptNeverBecomesAMessage() {

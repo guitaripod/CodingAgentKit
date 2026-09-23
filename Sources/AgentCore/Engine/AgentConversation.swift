@@ -200,6 +200,7 @@ public actor AgentConversation {
         // trips the stale-turn refresh (which re-reads the transcript) instead of sitting idle
         // forever while the server works.
         status = .running
+        if let standing = revert { commitRevert(at: standing.messageID) }
         emit()
     }
 
@@ -314,6 +315,30 @@ public actor AgentConversation {
         try await backend.restoreRevert(sessionID: sessionID)
         revert = nil
         emit()
+    }
+
+    /// Makes a revert final in the transcript held here, as the server makes it final in its own:
+    /// the messages from `messageID` on are dropped and the conversation reads whole again.
+    ///
+    /// A message sent while a revert stands is what makes it final, so the send makes it final here
+    /// at once rather than leaving the banner up until the stream says so, and the stream then
+    /// says so about a boundary already gone. Only the revert standing here is cut where it was
+    /// drawn; any other boundary is cut only at a message of that exact name, because by then the
+    /// message that made it final may already be in the transcript, sorting after the boundary as
+    /// every later message does.
+    private func commitRevert(at messageID: String) {
+        let transcript = reducer.snapshot
+        let boundary =
+            revert?.messageID == messageID
+            ? Self.revertBoundary(of: SessionRevert(messageID: messageID), in: transcript)
+            : transcript.firstIndex { $0.id == messageID }
+        if let boundary {
+            for message in transcript[boundary...] {
+                reducer.apply(.messageRemoved(messageID: message.id))
+            }
+        }
+        if revert?.messageID == messageID { revert = nil }
+        persist()
     }
 
     private static let revertBusyAttempts = 20
@@ -1020,6 +1045,8 @@ public actor AgentConversation {
             if value != nil { status = .running }
         case .revert(let value):
             revert = value
+        case .revertCommitted(let messageID):
+            commitRevert(at: messageID)
         case .attached:
             markLive(generation: gen)
         case .detached:

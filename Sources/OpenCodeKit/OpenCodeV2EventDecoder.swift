@@ -395,7 +395,8 @@ struct OpenCodeV2EventDecoder {
             return [.revert(nil)]
 
         case "session.revert.committed":
-            return [.revert(nil), .resync]
+            guard let boundary = data?["to"]?.stringValue else { return [.revert(nil), .resync] }
+            return [.revertCommitted(messageID: boundary), .resync]
 
         case "session.inbox.delivery.changed", "session.usage.updated", "session.step.streamed",
             "session.created", "session.renamed", "session.deleted", "session.viewed",

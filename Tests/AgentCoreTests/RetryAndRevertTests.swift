@@ -1,3 +1,4 @@
+import AgentTestSupport
 import Foundation
 import Testing
 
@@ -42,6 +43,7 @@ private final class RevertingServer: CodingAgentBackend, @unchecked Sendable {
 
     private let lock = NSLock()
     private var standing: SessionRevert?
+    private var held = conversation
     private var busyRefusals: Int
     private var continuation: AsyncThrowingStream<BackendEvent, Error>.Continuation?
     private(set) var aborts = 0
@@ -56,12 +58,19 @@ private final class RevertingServer: CodingAgentBackend, @unchecked Sendable {
             id: "s", agentType: agentType, title: title ?? "s", createdAt: fixedDate,
             updatedAt: fixedDate)
     }
-    func send(_ prompt: SendPrompt, to sessionID: String) async throws {}
+    func send(_ prompt: SendPrompt, to sessionID: String) async throws {
+        lock.withLock {
+            guard let boundary = standing?.messageID else { return }
+            held.removeAll { $0.id >= boundary }
+            standing = nil
+        }
+    }
+
     func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws {}
-    func messages(for sessionID: String) async throws -> [ChatMessage] { conversation }
+    func messages(for sessionID: String) async throws -> [ChatMessage] { lock.withLock { held } }
 
     func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
-        lock.withLock { TranscriptSnapshot(messages: conversation, status: .idle, revert: standing) }
+        lock.withLock { TranscriptSnapshot(messages: held, status: .idle, revert: standing) }
     }
 
     func abort(sessionID: String) async throws {
@@ -177,6 +186,68 @@ private func waitUntil(
         await waitUntil { await chat.state.revert == nil }
         #expect(await chat.state.messages.count == 4)
         _ = states
+    }
+
+    @Test func aRevertMadeFinalDropsWhatItSetAsideRatherThanBringingItBack() async {
+        let server = RevertingServer()
+        let chat = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        let states = await chat.states()
+        await waitUntil { server.isSubscribed }
+        await waitUntil { await chat.state.hasLoadedTranscript }
+
+        server.say(.revert(SessionRevert(messageID: "msg_03")))
+        await waitUntil { await chat.state.revert != nil }
+        server.say(.revertCommitted(messageID: "msg_03"))
+        await waitUntil { await chat.state.revert == nil }
+        let final = await chat.state
+        #expect(final.messages.map(\.id) == ["msg_01", "msg_02"])
+        #expect(final.revertedMessages.isEmpty)
+        #expect(await chat.messages.map(\.id) == ["msg_01", "msg_02"])
+        _ = states
+    }
+
+    @Test func aMessageSentOverARevertMakesItFinalAndOutlivesTheServerSayingSo() async throws {
+        let server = RevertingServer()
+        let chat = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        let states = await chat.states()
+        await waitUntil { server.isSubscribed }
+        await waitUntil { await chat.state.hasLoadedTranscript }
+
+        try await chat.revert(to: "msg_03")
+        try await chat.send("second, differently")
+        let sent = await chat.state
+        #expect(sent.revert == nil)
+        #expect(sent.messages.map(\.id) == ["msg_01", "msg_02"])
+
+        server.say(.messageUpserted(prompt("msg_05", "second, differently"), replaceParts: true))
+        server.say(.revertCommitted(messageID: "msg_03"))
+        server.say(.messageUpserted(answer("msg_06", "done"), replaceParts: true))
+        await waitUntil { await chat.state.messages.count == 4 }
+        #expect(await chat.state.messages.map(\.id) == ["msg_01", "msg_02", "msg_05", "msg_06"])
+        _ = states
+    }
+
+    @Test func theDemoServerHoldsARevertUntilTheNextMessageMakesItFinal() async throws {
+        let backend = MockBackend(
+            scripts: ["s": conversation.map { MockScriptStep(.messageUpserted($0, replaceParts: true)) }],
+            interactive: true,
+            sessions: [
+                AgentSession(
+                    id: "s", agentType: .openCode, title: "s", createdAt: fixedDate,
+                    updatedAt: fixedDate)
+            ],
+            diffs: [FileDiff(path: "a.swift", additions: 3, deletions: 1)])
+
+        let revert = try await backend.revert(sessionID: "s", to: "msg_03")
+        #expect(revert.files.map(\.path) == ["a.swift"])
+        #expect(try await backend.transcript(for: "s").revert?.messageID == "msg_03")
+
+        try await backend.send(SendPrompt(text: "again"), to: "s")
+        await waitUntil { (try? await backend.messages(for: "s").count) == 3 }
+        let reread = try await backend.transcript(for: "s")
+        #expect(reread.revert == nil)
+        #expect(reread.messages.prefix(2).map(\.id) == ["msg_01", "msg_02"])
+        #expect(reread.messages.last?.role == .user)
     }
 }
 
