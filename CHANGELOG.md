@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.32.0
+
+What opencode 2 writes for the reader, the provider waits a turn sits out, and a conversation wound
+back with the way back still open.
+
+### Added
+- **Transcript notes.** `MessagePart.Kind.note(TranscriptNote)` carries the lines a server writes for
+  the person reading rather than for the model: a model or agent changing hands once the
+  conversation is under way, a turn picked back up after a restart, background work reporting back,
+  instructions loaded partway, a move, a skill. opencode 2's records and descriptions arrive as
+  notes, live and on re-read under the same ids.
+- **Provider waits.** `TurnRetry` names the wait a turn is in between attempts: the attempt, the
+  provider's own words, when it asks again and the remedy it offers. It arrives as
+  `BackendEvent.retry`, stands on `ConversationState.retry` and `TranscriptSnapshot.retry`, and
+  clears on any status, an answering delta or the turn's end. opencode 1 and 2 both report it.
+- **Revert.** `BackendCapabilities.supportsRevert`, `CodingAgentBackend.revert(sessionID:to:)` and
+  `restoreRevert(sessionID:)`, `AgentConversation.revert(to:)` and `restoreRevert()`. While a revert
+  stands, `ConversationState.messages` is the conversation before the boundary and
+  `revertedMessages` holds what was set aside. `BackendEvent.revert` stages and clears it and
+  `BackendEvent.revertCommitted` makes it final, which a message sent over it also does at once.
+  opencode 2 supports it, and the mock backend holds one for the demo world.
+- **`TurnInterruption.holdsUnattendedWork`**, and `TurnInterruption.Progress(reading:)` for a turn
+  written across several messages.
+
+### Changed
+- **opencode 2 reports its own cut-off turns** (`reportsInterruptions`): offered back with
+  opencode's own restart line, and let go with a hidden line that settles the turn on every device.
+  It also reports session usage from the session record and serves usage analytics.
+- **A turn opencode gave up resuming is a failure** in its own words again, not a stop.
+
 ## 0.31.2
 
 A conversation that has not changed costs a header to re-read, and every request rides a warm
