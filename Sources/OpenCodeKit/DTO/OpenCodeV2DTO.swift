@@ -77,6 +77,37 @@ struct OC2Session: Decodable, Sendable {
     let time: OC2SessionTime?
     let title: String?
     let location: OC2Location?
+    let revert: OC2Revert?
+}
+
+/// A revert standing on a session: the first message set aside, and the files it put back.
+struct OC2Revert: Decodable, Sendable {
+    let messageID: String
+    let files: [OC2RevertFile]?
+}
+
+struct OC2RevertFile: Decodable, Sendable {
+    let file: String
+    let status: String?
+    let additions: Int?
+    let deletions: Int?
+    let patch: String?
+}
+
+/// Something waiting in a session's inbox for the session to take it up: a prompt queued behind
+/// the running turn, or a line written without waking the session.
+struct OC2InboxItem: Decodable, Sendable {
+    let id: String
+    let type: String
+    let payload: JSONValue?
+}
+
+/// The provider wait recorded on an assistant message: which attempt failed, when the next one
+/// goes, and why.
+struct OC2Retry: Decodable, Sendable {
+    let attempt: Int?
+    let at: Double?
+    let error: OC2Error?
 }
 
 /// What a session is doing right now, from the process-wide `/api/session/active` map. Only
@@ -124,6 +155,11 @@ struct OC2Message: Decodable, Sendable {
     let exit: Int?
     let output: OC2ShellOutput?
     let outcome: String?
+    let previous: JSONValue?
+    let metadata: JSONValue?
+    let retry: OC2Retry?
+    let name: String?
+    let location: OC2Location?
 }
 
 struct OC2ShellOutput: Decodable, Sendable {
@@ -206,6 +242,19 @@ struct OC2PromptFileSource: Decodable, Sendable {
 struct OC2PromptRequest: Encodable, Sendable {
     let text: String
     let files: [OC2FileAttachment]?
+}
+
+struct OC2RevertRequest: Encodable, Sendable {
+    let messageID: String
+}
+
+/// A line written into a session for the model, and for the reader where it has a description.
+/// `resume` wakes the session to act on it, which is how a turn is picked back up.
+struct OC2SyntheticRequest: Encodable, Sendable {
+    let text: String
+    let description: String?
+    let metadata: JSONValue?
+    let resume: Bool
 }
 
 struct OC2CommandRequest: Encodable, Sendable {

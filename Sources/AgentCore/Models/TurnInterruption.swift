@@ -32,6 +32,39 @@ public struct TurnInterruption: Sendable, Hashable, Codable {
         public var isEmpty: Bool {
             toolCount == 0 && filesTouched.isEmpty && commands.isEmpty && partialAnswer == nil
         }
+
+        /// What a turn had already done, read from the parts of the messages it wrote: every tool
+        /// call counted, the files and commands they name, and the answer as far as it got. A
+        /// turn a server writes one message per step is read across all of them.
+        public init(reading turn: [ChatMessage]) {
+            var toolCount = 0
+            var lastTool: String?
+            var files: [String] = []
+            var commands: [String] = []
+            var answer = ""
+            for message in turn where message.role == .assistant {
+                for part in message.parts {
+                    switch part.kind {
+                    case .text(let value):
+                        answer += value
+                    case .tool(let call):
+                        toolCount += 1
+                        let summary = ToolCallSummaryBuilder.build(call)
+                        lastTool = summary.title ?? call.name
+                        if let path = summary.filePath, !files.contains(path) { files.append(path) }
+                        if let command = summary.command, !commands.contains(command) {
+                            commands.append(command)
+                        }
+                    default:
+                        continue
+                    }
+                }
+            }
+            let partial = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.init(
+                toolCount: toolCount, lastTool: lastTool, filesTouched: files, commands: commands,
+                partialAnswer: partial.isEmpty ? nil : partial)
+        }
     }
 
     public let turnID: String

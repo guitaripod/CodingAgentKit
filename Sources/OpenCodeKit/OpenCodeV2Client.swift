@@ -153,6 +153,28 @@ public struct OpenCodeV2Client: Sendable {
             builder.request(.post, "/api/session/\(sessionID)/interrupt", body: Self.emptyBody))
     }
 
+    /// Sets aside `messageID` and everything after it, putting back the files changed since.
+    func stageRevert(sessionID: String, messageID: String) async throws -> OC2Revert {
+        let body = try JSONCoding.encoder.encode(OC2RevertRequest(messageID: messageID))
+        return try unwrap(
+            await http.send(
+                builder.request(.post, "/api/session/\(sessionID)/revert/stage", body: body)))
+    }
+
+    func clearRevert(sessionID: String) async throws {
+        try await http.send(builder.request(.delete, "/api/session/\(sessionID)/revert"))
+    }
+
+    func inbox(sessionID: String) async throws -> [OC2InboxItem] {
+        try unwrap(await http.send(builder.request(.get, "/api/session/\(sessionID)/inbox")))
+    }
+
+    func synthetic(sessionID: String, request: OC2SyntheticRequest) async throws {
+        let body = try JSONCoding.encoder.encode(request)
+        try await http.send(
+            builder.request(.post, "/api/session/\(sessionID)/synthetic", body: body))
+    }
+
     /// Admits a compaction to the session's inbox and returns at once; the stream reports the
     /// start, the summary and the seam.
     func compact(sessionID: String) async throws {

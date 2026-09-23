@@ -201,6 +201,139 @@ private func records(_ json: String) throws -> [OC2Message] {
         #expect(OpenCodeV2Mapping.formAnswer(form, answers: [["Zig"]])["lang"] == .string("Zig"))
     }
 
+    @Test func theServersNotesForTheReaderAreNotesAndTheModelsAreNot() throws {
+        let transcript = OpenCodeV2Mapping.transcript(
+            try records(#"""
+                [
+                  {"id":"msg_0","time":{"created":0},"type":"model-switched","model":{"id":"qwen38","providerID":"llama-server"}},
+                  {"id":"msg_1","time":{"created":0},"type":"agent-switched","agent":"build"},
+                  {"id":"msg_U","time":{"created":0},"type":"user","text":"go"},
+                  {"id":"msg_M","time":{"created":1},"type":"model-switched","model":{"id":"k3","providerID":"kimi-code","variant":"high"},"previous":{"id":"qwen38","providerID":"llama-server"}},
+                  {"id":"msg_A","time":{"created":2},"type":"agent-switched","agent":"plan","previous":"build"},
+                  {"id":"msg_B","time":{"created":3},"type":"agent-switched","agent":"plan","previous":"plan"},
+                  {"id":"msg_S","time":{"created":4},"type":"synthetic","text":"Plan mode is active."},
+                  {"id":"msg_R","time":{"created":5},"type":"synthetic","text":"The server restarted while you were working.","description":"Continuing after restart"},
+                  {"id":"msg_I","time":{"created":6},"type":"system","text":"...","description":"Instructions updated: AGENTS.md"},
+                  {"id":"msg_K","time":{"created":7},"type":"skill","skill":"skl_1","name":"review","text":"..."},
+                  {"id":"msg_L","time":{"created":8},"type":"location-switched","location":{"directory":"/work/other"}},
+                  {"id":"msg_D","time":{"created":9},"type":"idle","outcome":"succeeded"}
+                ]
+                """#))
+        #expect(transcript.map(\.id) == ["msg_U", "msg_M", "msg_A", "msg_R", "msg_K", "msg_L"])
+        #expect(transcript.dropFirst().allSatisfy { $0.role == .system })
+        let subjects = transcript.compactMap { message -> TranscriptNote.Subject? in
+            guard case .note(let note)? = message.parts.first?.kind else { return nil }
+            return note.subject
+        }
+        #expect(
+            subjects == [
+                .model(
+                    ModelSelection(providerID: "kimi-code", modelID: "k3"), effort: "high",
+                    previous: ModelSelection(providerID: "llama-server", modelID: "qwen38")),
+                .agent("plan", previous: "build"),
+                .resumedAfterRestart,
+                .skill("review"),
+                .moved("/work/other"),
+            ])
+        #expect(transcript[1].parts.map(\.id) == ["msg_M/note"])
+    }
+
+    @Test func anUnfinishedAnswerStillWaitingOnItsProviderIsTheWait() throws {
+        let waiting = try records(#"""
+            [
+              {"id":"msg_U","time":{"created":1},"text":"go","type":"user"},
+              {"id":"msg_A","time":{"created":2},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"content":[],"retry":{"attempt":3,"at":1790000090000,"error":{"type":"provider","message":"Overloaded"}}}
+            ]
+            """#)
+        let retry = OpenCodeV2Mapping.pendingRetry(waiting)
+        #expect(retry?.attempt == 3)
+        #expect(retry?.reason == "Overloaded")
+        #expect(retry?.nextAttemptAt == Date(timeIntervalSince1970: 1_790_000_090))
+        let settled = try records(#"""
+            [
+              {"id":"msg_A","time":{"created":2,"completed":9},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"content":[],"retry":{"attempt":3,"at":1790000090000,"error":{"type":"provider","message":"Overloaded"}}}
+            ]
+            """#)
+        #expect(OpenCodeV2Mapping.pendingRetry(settled) == nil)
+    }
+
+    @Test func aTurnNothingClosedIsCutOffAndOneThatEndedIsNot() throws {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        func cut(_ json: String) throws -> TurnInterruption? {
+            OpenCodeV2Mapping.cutOffTurn(try records(json), detectedAt: now)
+        }
+        let unfinished = try cut(#"""
+            [
+              {"id":"msg_U","time":{"created":1000},"text":"Refactor the parser","type":"user"},
+              {"id":"msg_A1","time":{"created":1100,"completed":1500},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"finish":"tool-calls","content":[{"type":"tool","id":"call_1","name":"shell","state":{"status":"completed","input":{"command":"swift build"},"content":[{"type":"text","text":"ok"}]}}]},
+              {"id":"msg_A2","time":{"created":1600},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"content":[{"type":"text","text":"Half way through"}]}
+            ]
+            """#)
+        #expect(unfinished?.turnID == "msg_A2")
+        #expect(unfinished?.prompt == "Refactor the parser")
+        #expect(unfinished?.startedAt == Date(timeIntervalSince1970: 1))
+        #expect(unfinished?.progress.toolCount == 1)
+        #expect(unfinished?.progress.partialAnswer == "Half way through")
+
+        let betweenSteps = try cut(#"""
+            [
+              {"id":"msg_U","time":{"created":1000},"text":"go","type":"user"},
+              {"id":"msg_A1","time":{"created":1100,"completed":1500},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"finish":"tool-calls","content":[]}
+            ]
+            """#)
+        #expect(betweenSteps?.turnID == "msg_A1")
+
+        let neverAnswered = try cut(#"""
+            [{"id":"msg_U","time":{"created":1000},"text":"go","type":"user"}]
+            """#)
+        #expect(neverAnswered?.turnID == "msg_U")
+
+        #expect(
+            try cut(#"""
+                [
+                  {"id":"msg_U","time":{"created":1000},"text":"go","type":"user"},
+                  {"id":"msg_A","time":{"created":1100},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"content":[]},
+                  {"id":"msg_D","time":{"created":1200},"type":"idle","outcome":"failed"}
+                ]
+                """#) == nil)
+        #expect(
+            try cut(#"""
+                [
+                  {"id":"msg_U","time":{"created":1000},"text":"go","type":"user"},
+                  {"id":"msg_A","time":{"created":1100,"completed":1200},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"finish":"stop","content":[]}
+                ]
+                """#) == nil)
+        #expect(
+            try cut(#"""
+                [
+                  {"id":"msg_U","time":{"created":1000},"text":"go","type":"user"},
+                  {"id":"msg_A","time":{"created":1100,"completed":1200},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"error":{"type":"aborted","message":"Step interrupted"},"content":[]}
+                ]
+                """#) == nil)
+        #expect(
+            try cut(#"""
+                [
+                  {"id":"msg_U","time":{"created":1000},"text":"go","type":"user"},
+                  {"id":"msg_A","time":{"created":1100},"type":"assistant","agent":"build","model":{"id":"m","providerID":"p"},"content":[]},
+                  {"id":"msg_S","time":{"created":1300},"type":"synthetic","text":"The previous turn stopped.","metadata":{"interruption":"dismissed"}}
+                ]
+                """#) == nil)
+    }
+
+    @Test func aRevertReadsItsBoundaryAndTheFilesItPutBack() {
+        let revert = OpenCodeV2Mapping.revert(
+            OC2Revert(
+                messageID: "msg_U",
+                files: [
+                    OC2RevertFile(file: "a.swift", status: "deleted", additions: 0, deletions: 4, patch: "-x"),
+                    OC2RevertFile(file: "b.swift", status: nil, additions: nil, deletions: nil, patch: nil),
+                ]))
+        #expect(revert.messageID == "msg_U")
+        #expect(revert.files.map(\.change) == [.deleted, .modified])
+        #expect(revert.files.last?.additions == 0)
+        #expect(revert.files.first?.patch == "-x")
+    }
+
     @Test func anEntryListedFromTheRootIsAbsolute() {
         let entry = OpenCodeV2Mapping.fileNode(OC2FSEntry(path: "home/marcus/Dev/", type: "directory"), root: "/")
         #expect(entry.path == "/home/marcus/Dev")

@@ -48,6 +48,15 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// apart from a phase that is stuck, so every surface that reports one reports how long it has
     /// been true.
     public var connectionChangedAt: Date = .distantPast
+    /// The provider wait the open turn is in: the last attempt failed and the server will try
+    /// again. `nil` whenever an attempt is answering, the turn is over, or the backend never says.
+    public var retry: TurnRetry?
+    /// The revert standing on the conversation. While one stands, ``messages`` is the conversation
+    /// as it was before the boundary and ``revertedMessages`` holds what was set aside, so every
+    /// surface that reads the transcript reads the one that is in effect.
+    public var revert: SessionRevert?
+    /// The messages a standing revert set aside, oldest first; empty when nothing is reverted.
+    public var revertedMessages: [ChatMessage] = []
 
     public init(
         messages: [ChatMessage] = [],
@@ -61,7 +70,10 @@ public struct ConversationState: Sendable, Hashable, Codable {
         compaction: CompactionActivity? = nil,
         interruption: TurnInterruption? = nil,
         connectionChangedAt: Date = .distantPast,
-        backgroundWork: BackgroundWork? = nil
+        backgroundWork: BackgroundWork? = nil,
+        retry: TurnRetry? = nil,
+        revert: SessionRevert? = nil,
+        revertedMessages: [ChatMessage] = []
     ) {
         self.messages = messages
         self.status = status
@@ -75,6 +87,9 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.interruption = interruption
         self.connectionChangedAt = connectionChangedAt
         self.backgroundWork = backgroundWork
+        self.retry = retry
+        self.revert = revert
+        self.revertedMessages = revertedMessages
     }
 
     public var isBusy: Bool { status == .running }

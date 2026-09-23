@@ -61,30 +61,6 @@ enum CutOffTurn {
     /// about itself — which is the only account available once the process that was writing it is
     /// gone.
     private static func progress(of message: ChatMessage) -> TurnInterruption.Progress {
-        var toolCount = 0
-        var lastTool: String?
-        var files: [String] = []
-        var commands: [String] = []
-        var answer = ""
-        for part in message.parts {
-            switch part.kind {
-            case .text(let value):
-                answer += value
-            case .tool(let call):
-                toolCount += 1
-                let summary = ToolCallSummaryBuilder.build(call)
-                lastTool = summary.title ?? call.name
-                if let path = summary.filePath, !files.contains(path) { files.append(path) }
-                if let command = summary.command, !commands.contains(command) {
-                    commands.append(command)
-                }
-            default:
-                continue
-            }
-        }
-        let partial = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        return TurnInterruption.Progress(
-            toolCount: toolCount, lastTool: lastTool, filesTouched: files, commands: commands,
-            partialAnswer: partial.isEmpty ? nil : partial)
+        TurnInterruption.Progress(reading: [message])
     }
 }

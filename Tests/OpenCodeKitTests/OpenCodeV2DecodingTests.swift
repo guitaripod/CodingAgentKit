@@ -110,9 +110,193 @@ private func decode(_ json: String) -> [BackendEvent] {
         }
         #expect(message.error == nil)
         #expect(message.finishReason == "aborted")
+    }
+
+    @Test func aTurnTheServerGaveUpResumingIsAFailureInItsOwnWords() {
+        let events = decode(
+            #"{"type":"session.execution.failed","created":6,"data":{"sessionID":"ses_S","error":{"type":"aborted","message":"Execution was interrupted repeatedly and will not be resumed automatically."}}}"#
+        )
+        guard case .failure(let failure)? = events.first else {
+            Issue.record("expected failure, got \(events)")
+            return
+        }
+        #expect(failure.message.hasPrefix("Execution was interrupted repeatedly"))
+    }
+
+    @Test func aProviderWaitCarriesItsReasonClockAndRemedyUntilAnAttemptAnswers() {
+        var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
+        let waiting = decode(
+            #"{"type":"session.status","created":10,"data":{"sessionID":"ses_S","status":{"type":"retry","attempt":2,"message":"Rate limit reached for requests","next":1790000060000,"action":{"reason":"usage","provider":"openai","title":"Usage limit","message":"You have used this plan's limit","label":"Upgrade","link":"https://example.com/upgrade"}}}}"#,
+            decoder: &decoder)
+        guard waiting.count == 2, case .status(.running) = waiting[0],
+            case .retry(let retry?) = waiting[1]
+        else {
+            Issue.record("expected running then retry, got \(waiting)")
+            return
+        }
+        #expect(retry.attempt == 2)
+        #expect(retry.reason == "Rate limit reached for requests")
+        #expect(retry.nextAttemptAt == Date(timeIntervalSince1970: 1_790_000_060))
+        #expect(retry.remedy?.label == "Upgrade")
+        #expect(retry.remedy?.link == "https://example.com/upgrade")
+
+        let scheduled = decode(
+            #"{"type":"session.retry.scheduled","created":11,"data":{"sessionID":"ses_S","assistantMessageID":"msg_A","attempt":2,"at":1790000061000,"error":{"type":"provider","message":"Rate limit reached for requests"}}}"#,
+            decoder: &decoder)
+        guard case .retry(let merged?)? = scheduled.first else {
+            Issue.record("expected retry, got \(scheduled)")
+            return
+        }
+        #expect(merged.remedy?.label == "Upgrade")
+        #expect(merged.nextAttemptAt == Date(timeIntervalSince1970: 1_790_000_061))
+
+        let answering = decode(
+            #"{"type":"session.step.started","created":12,"data":{"sessionID":"ses_S","agent":"build","model":{"id":"m","providerID":"p"},"assistantMessageID":"msg_A","started":12}}"#,
+            decoder: &decoder)
+        #expect(answering.contains { if case .retry(nil) = $0 { return true } else { return false } })
+        let quiet = decode(
+            #"{"type":"session.status","created":13,"data":{"sessionID":"ses_S","status":{"type":"busy"}}}"#,
+            decoder: &decoder)
+        #expect(!quiet.contains { if case .retry = $0 { return true } else { return false } })
+    }
+
+    @Test func aModelOrAgentChangingHandsIsANoteUnderTheRecordsOwnID() {
+        let model = decode(
+            #"{"id":"evt_0cf1MODEL","type":"session.model.selected","created":20,"data":{"sessionID":"ses_S","model":{"id":"glm-5.3-flash","providerID":"ollama-cloud","variant":"high"},"previous":{"id":"qwen38","providerID":"llama-server"}}}"#
+        )
+        guard case .messageUpserted(let note, true)? = model.first,
+            case .note(let value)? = note.parts.first?.kind,
+            case .model(let to, let effort, let previous) = value.subject
+        else {
+            Issue.record("expected a model note, got \(model)")
+            return
+        }
+        #expect(note.id == "msg_0cf1MODEL")
+        #expect(note.role == .system)
+        #expect(to == ModelSelection(providerID: "ollama-cloud", modelID: "glm-5.3-flash"))
+        #expect(effort == "high")
+        #expect(previous == ModelSelection(providerID: "llama-server", modelID: "qwen38"))
+
+        let agent = decode(
+            #"{"id":"evt_0cf1AGENT","type":"session.agent.selected","created":21,"data":{"sessionID":"ses_S","agent":"plan","previous":"build"}}"#
+        )
+        guard case .messageUpserted(let agentNote, _)? = agent.first,
+            case .note(let agentValue)? = agentNote.parts.first?.kind,
+            case .agent("plan", previous: "build") = agentValue.subject
+        else {
+            Issue.record("expected an agent note, got \(agent)")
+            return
+        }
+        let unchanged = decode(
+            #"{"id":"evt_0cf1SAME","type":"session.agent.selected","created":22,"data":{"sessionID":"ses_S","agent":"build","previous":"build"}}"#
+        )
+        #expect(unchanged.isEmpty)
+        let first = decode(
+            #"{"id":"evt_0cf1FIRST","type":"session.model.selected","created":23,"data":{"sessionID":"ses_S","model":{"id":"glm","providerID":"ollama-cloud"}}}"#
+        )
+        #expect(first.isEmpty)
+
+        var underway = OpenCodeV2EventDecoder(sessionID: sessionID)
+        _ = decode(
+            #"{"type":"session.inbox.enqueued","created":1,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"go"},"delivery":"steer"}}}"#,
+            decoder: &underway)
+        let chosen = decode(
+            #"{"id":"evt_0cf1PLAN","type":"session.agent.selected","created":24,"data":{"sessionID":"ses_S","agent":"plan"}}"#,
+            decoder: &underway)
+        guard case .messageUpserted(let planned, _)? = chosen.first,
+            case .note(let plan)? = planned.parts.first?.kind,
+            case .agent("plan", previous: nil) = plan.subject
+        else {
+            Issue.record("expected the first agent choice mid-conversation to be a note, got \(chosen)")
+            return
+        }
+    }
+
+    @Test func aLineWrittenThroughTheInboxIsANoteWhenItIsDelivered() {
+        var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
+        let enqueued = decode(
+            #"{"type":"session.inbox.enqueued","created":1,"data":{"inboxID":"msg_R","sessionID":"ses_S","item":{"type":"synthetic","payload":{"text":"The server restarted while you were working.","description":"Continuing after restart"},"delivery":"steer"}}}"#,
+            decoder: &decoder)
+        #expect(enqueued.isEmpty)
+        let delivered = decode(
+            #"{"type":"session.inbox.delivered","created":2,"data":{"sessionID":"ses_S","inboxID":"msg_R"}}"#,
+            decoder: &decoder)
+        guard case .messageUpserted(let note, true)? = delivered.first,
+            case .note(let value)? = note.parts.first?.kind
+        else {
+            Issue.record("expected a note, got \(delivered)")
+            return
+        }
+        #expect(note.id == "msg_R")
+        #expect(value.subject == .resumedAfterRestart)
+
+        _ = decode(
+            #"{"type":"session.inbox.enqueued","created":3,"data":{"inboxID":"msg_H","sessionID":"ses_S","item":{"type":"synthetic","payload":{"text":"The previous turn stopped.","metadata":{"interruption":"dismissed"}},"delivery":"steer"}}}"#,
+            decoder: &decoder)
         #expect(
-            decode(#"{"type":"session.execution.failed","created":6,"data":{"sessionID":"ses_S","error":{"type":"aborted","message":"Step interrupted"}}}"#)
-                .allSatisfy { if case .failure = $0 { return false } else { return true } })
+            decode(
+                #"{"type":"session.inbox.delivered","created":4,"data":{"sessionID":"ses_S","inboxID":"msg_H"}}"#,
+                decoder: &decoder
+            ).isEmpty)
+    }
+
+    @Test func aLineWrittenForTheReaderIsANoteAndOneForTheModelAloneIsNot() {
+        func subject(_ json: String) -> TranscriptNote.Subject? {
+            guard case .messageUpserted(let message, _)? = decode(json).first,
+                case .note(let note)? = message.parts.first?.kind
+            else { return nil }
+            return note.subject
+        }
+        #expect(
+            subject(#"{"id":"evt_1","type":"session.synthetic","created":1,"data":{"sessionID":"ses_S","text":"The server restarted while you were working.","description":"Continuing after restart"}}"#)
+                == .resumedAfterRestart)
+        #expect(
+            subject(#"{"id":"evt_2","type":"session.synthetic","created":1,"data":{"sessionID":"ses_S","text":"<shell ...>","description":"cargo test","metadata":{"source":"shell","shellID":"sh_1","state":"error"}}}"#)
+                == .workFinished("cargo test", work: .command, outcome: .failed))
+        #expect(
+            subject(#"{"id":"evt_3","type":"session.synthetic","created":1,"data":{"sessionID":"ses_S","text":"<subagent ...>","description":"Audit the parser","metadata":{"source":"subagent","childID":"ses_C","state":"completed"}}}"#)
+                == .workFinished("Audit the parser", work: .agent, outcome: .completed))
+        #expect(
+            subject(#"{"id":"evt_4","type":"session.synthetic","created":1,"data":{"sessionID":"ses_S","text":"Instructions from: /a/AGENTS.md","description":"Loaded src/AGENTS.md","metadata":{"instruction":{"paths":["/a/AGENTS.md"]}}}}"#)
+                == .instructions("Loaded src/AGENTS.md"))
+        #expect(
+            decode(#"{"id":"evt_5","type":"session.instructions.updated","created":1,"data":{"sessionID":"ses_S","delta":{"core/codemode":{}},"text":"updated"}}"#)
+                .isEmpty)
+        #expect(
+            subject(#"{"id":"evt_6","type":"session.skill.activated","created":1,"data":{"sessionID":"ses_S","id":"skl_1","name":"review","text":"..."}}"#)
+                == .skill("review"))
+        #expect(
+            decode(#"{"id":"evt_7","type":"session.synthetic","created":1,"data":{"sessionID":"ses_S","text":"Plan mode is active."}}"#)
+                .isEmpty)
+        #expect(
+            decode(#"{"id":"evt_8","type":"session.instructions.updated","created":1,"data":{"sessionID":"ses_S","delta":{"AGENTS.md":{}}}}"#)
+                .isEmpty)
+    }
+
+    @Test func aRevertStandsUntilItIsUndoneOrMadeFinal() {
+        let staged = decode(
+            #"{"type":"session.revert.staged","created":30,"data":{"sessionID":"ses_S","revert":{"messageID":"msg_U2","snapshot":"abc","files":[{"file":"src/a.swift","status":"modified","additions":3,"deletions":1},{"file":"src/new.swift","status":"added","additions":10,"deletions":0}]}}}"#
+        )
+        guard case .revert(let revert?)? = staged.first else {
+            Issue.record("expected a revert, got \(staged)")
+            return
+        }
+        #expect(revert.messageID == "msg_U2")
+        #expect(revert.files.map(\.path) == ["src/a.swift", "src/new.swift"])
+        #expect(revert.files.map(\.change) == [.modified, .added])
+        #expect(revert.files.first?.additions == 3)
+        guard case .revert(nil)? = decode(#"{"type":"session.revert.cleared","created":31,"data":{"sessionID":"ses_S"}}"#).first
+        else {
+            Issue.record("expected the revert to clear")
+            return
+        }
+        let committed = decode(
+            #"{"type":"session.revert.committed","created":32,"data":{"sessionID":"ses_S","to":"msg_U2"}}"#)
+        #expect(committed.count == 2)
+        guard case .revert(nil) = committed[0], case .resync = committed[1] else {
+            Issue.record("expected the revert to clear and the transcript to be re-read, got \(committed)")
+            return
+        }
     }
 
     @Test func aCancelledPromptNeverBecomesAMessage() {

@@ -64,6 +64,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var subscriptions = 0
         var sentPrompts: [SendPrompt] = []
         var backgroundStops: [String] = []
+        var reverts: [String] = []
+        var restores: [String] = []
         var sessions: [AgentSession] = []
         var appendedEvents: [String: [MockScriptStep]] = [:]
         var cleared: Set<String> = []
@@ -155,6 +157,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     public var recordedPrompts: [SendPrompt] { mutable.withLock { $0.sentPrompts } }
     /// Every session whose background work a client asked to stop, in order.
     public var backgroundStops: [String] { mutable.withLock { $0.backgroundStops } }
+    /// Every message a client asked to revert to, in order.
+    public var reverts: [String] { mutable.withLock { $0.reverts } }
+    /// Every session a client asked to bring a revert back on, in order.
+    public var restores: [String] { mutable.withLock { $0.restores } }
 
     public func availableCommands(directory: String?) async throws -> [AgentCommand] { commands }
 
@@ -271,6 +277,27 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     public func abort(sessionID: String) async throws {
         guard interactive else { return }
         stream([MockScriptStep(.status(.idle), delay: .zero)], to: sessionID)
+    }
+
+    /// Winds the session back to `messageID`, putting back the files the demo's diffs name — so a
+    /// revert in the demo world says what it undid — and tells the session's stream.
+    public func revert(sessionID: String, to messageID: String) async throws -> SessionRevert {
+        mutable.withLock { $0.reverts.append(messageID) }
+        let revert = SessionRevert(
+            messageID: messageID,
+            files: diffs.map {
+                SessionRevert.File(
+                    path: $0.path, change: .modified, additions: $0.additions,
+                    deletions: $0.deletions)
+            })
+        if interactive { stream([MockScriptStep(.revert(revert), delay: .zero)], to: sessionID) }
+        return revert
+    }
+
+    public func restoreRevert(sessionID: String) async throws {
+        mutable.withLock { $0.restores.append(sessionID) }
+        guard interactive else { return }
+        stream([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
     }
 
     /// Ends the mock's background work: the session is told the work is gone, and the request is

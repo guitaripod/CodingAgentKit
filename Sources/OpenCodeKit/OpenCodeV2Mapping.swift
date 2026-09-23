@@ -438,15 +438,18 @@ enum OpenCodeV2Mapping {
             completedAt: optionalDate(message.time?.created))
     }
 
-    /// The whole message list read as a transcript. The bookkeeping kinds — a model or agent
-    /// switched, a location moved, the idle marker that closes a turn, the instructions the
-    /// server refreshed — are the server's own notes and draw nothing; a compaction still running
-    /// is the activity rather than a row, and one that failed left no seam to show.
+    /// The whole message list read as a transcript. The server's notes for the reader (a model or
+    /// agent switched, a location moved, a skill taken up, and every line it wrote with a
+    /// description for display) are drawn as notes; what it wrote for the model alone and the idle
+    /// marker that closes a turn draw nothing; a compaction still running is the activity rather
+    /// than a row, and one that failed left no seam to show.
     static func transcript(_ messages: [OC2Message]) -> [ChatMessage] {
         var result: [ChatMessage] = []
+        var prompted = false
         for message in messages {
             switch message.type {
             case "user":
+                prompted = true
                 result.append(user(message))
             case "assistant":
                 result.append(assistant(message))
@@ -456,10 +459,209 @@ enum OpenCodeV2Mapping {
             case "shell":
                 result.append(shellMessage(message))
             default:
-                continue
+                guard let subject = noteSubject(message) else { continue }
+                if !prompted, subject.isSelection { continue }
+                result.append(note(id: message.id, created: message.time?.created, subject: subject))
             }
         }
         return result
+    }
+
+    /// What a stored bookkeeping record says to the reader, or nil when it says nothing to them.
+    static func noteSubject(_ message: OC2Message) -> TranscriptNote.Subject? {
+        switch message.type {
+        case "model-switched":
+            return modelNote(
+                message.model.flatMap(modelSelection), effort: message.model?.variant,
+                previous: modelSelection(message.previous))
+        case "agent-switched":
+            return agentNote(message.agent, previous: message.previous?.stringValue)
+        case "location-switched":
+            guard let directory = message.location?.directory, !directory.isEmpty else { return nil }
+            return .moved(directory)
+        case "skill":
+            guard let name = message.name, !name.isEmpty else { return nil }
+            return .skill(name)
+        case "synthetic":
+            return syntheticSubject(description: message.description, metadata: message.metadata)
+        default:
+            return nil
+        }
+    }
+
+    /// A change of model. The model a conversation is set up with before anybody has written in
+    /// it is where it starts rather than a switch, which the transcript and the stream each drop.
+    static func modelNote(_ model: ModelSelection?, effort: String?, previous: ModelSelection?)
+        -> TranscriptNote.Subject?
+    {
+        guard let model, previous != model else { return nil }
+        return .model(model, effort: effort, previous: previous)
+    }
+
+    /// A change of agent. opencode also records a switch to the agent already answering, which
+    /// changed nothing and is no note.
+    static func agentNote(_ agent: String?, previous: String?) -> TranscriptNote.Subject? {
+        guard let agent, !agent.isEmpty, previous != agent else { return nil }
+        return .agent(agent, previous: previous)
+    }
+
+    /// A line written for the model is shown only when the server gave it a description, which is
+    /// the server saying it is for the reader too; what kind of line it is comes from what the
+    /// server attached to it, and the description is the words.
+    static func syntheticSubject(description: String?, metadata: JSONValue?)
+        -> TranscriptNote.Subject?
+    {
+        guard let description = described(description) else { return nil }
+        if description == restartDescription { return .resumedAfterRestart }
+        let outcome = workOutcome(metadata?["state"]?.stringValue)
+        switch metadata?["source"]?.stringValue {
+        case "shell":
+            return outcome.map { .workFinished(description, work: .command, outcome: $0) }
+                ?? .remark(description)
+        case "subagent":
+            return outcome.map { .workFinished(description, work: .agent, outcome: $0) }
+                ?? .remark(description)
+        default:
+            if metadata?["instruction"] != nil { return .instructions(description) }
+            return .remark(description)
+        }
+    }
+
+    /// The description opencode gives the line that picks a turn back up after a restart.
+    static let restartDescription = "Continuing after restart"
+
+    private static func described(_ description: String?) -> String? {
+        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func workOutcome(_ state: String?) -> TranscriptNote.Outcome? {
+        switch state {
+        case "completed": return .completed
+        case "cancelled": return .cancelled
+        case "error": return .failed
+        default: return nil
+        }
+    }
+
+    static func modelSelection(_ ref: OC2ModelRef) -> ModelSelection? {
+        guard let id = ref.id, !id.isEmpty, let provider = ref.providerID, !provider.isEmpty else {
+            return nil
+        }
+        return ModelSelection(providerID: provider, modelID: id)
+    }
+
+    static func modelSelection(_ value: JSONValue?) -> ModelSelection? {
+        guard let id = value?["id"]?.stringValue, !id.isEmpty,
+            let provider = value?["providerID"]?.stringValue, !provider.isEmpty
+        else { return nil }
+        return ModelSelection(providerID: provider, modelID: id)
+    }
+
+    static func note(id: String, created: Double?, subject: TranscriptNote.Subject) -> ChatMessage {
+        ChatMessage(
+            id: id,
+            role: .system,
+            agentType: .openCode,
+            parts: [MessagePart(id: "\(id)/note", kind: .note(TranscriptNote(subject)))],
+            createdAt: date(created),
+            completedAt: optionalDate(created))
+    }
+
+    /// The provider wait an unfinished answer is in, where the server recorded one.
+    static func retry(_ record: OC2Retry) -> TurnRetry {
+        TurnRetry(
+            attempt: record.attempt ?? 1,
+            reason: record.error?.message ?? record.error?.type ?? "",
+            nextAttemptAt: optionalDate(record.at))
+    }
+
+    /// The wait the transcript leaves the conversation in: the newest answer's, while it is still
+    /// unfinished. A retry recorded on an answer that later finished is history, not a wait.
+    static func pendingRetry(_ messages: [OC2Message]) -> TurnRetry? {
+        guard let last = messages.last(where: { $0.type == "assistant" }),
+            last.time?.completed == nil, let record = last.retry
+        else { return nil }
+        return retry(record)
+    }
+
+    /// The turn a server left unfinished, read from its records: an answer that never completed,
+    /// a step that ended calling tools with nothing after it, or a prompt nothing ever answered,
+    /// with no idle marker closing the turn and no word from this app that the person let it go.
+    /// Only a server with nothing open for the session can have left one, which the caller checks.
+    static func cutOffTurn(_ records: [OC2Message], detectedAt: Date) -> TurnInterruption? {
+        guard let end = records.lastIndex(where: { turnRecords.contains($0.type) }) else { return nil }
+        let last = records[end]
+        switch last.type {
+        case "assistant":
+            guard last.error == nil else { return nil }
+            if last.time?.completed != nil, last.finish != "tool-calls" { return nil }
+        case "user":
+            break
+        default:
+            return nil
+        }
+        let after = records[records.index(after: end)...]
+        guard !after.contains(where: isDismissal) else { return nil }
+        guard let start = records[...end].lastIndex(where: { $0.type == "user" }) else { return nil }
+        let prompt = records[start]
+        return TurnInterruption(
+            turnID: last.id,
+            prompt: prompt.text ?? "",
+            startedAt: date(prompt.time?.created),
+            detectedAt: detectedAt,
+            progress: TurnInterruption.Progress(reading: transcript(Array(records[start...end]))))
+    }
+
+    private static let turnRecords: Set<String> = ["user", "assistant", "idle"]
+
+    /// The line this app writes when somebody lets an interrupted turn go: hidden from the reader,
+    /// telling the model what happened, and marking the turn as settled for every device.
+    static func isDismissal(_ record: OC2Message) -> Bool {
+        record.type == "synthetic" && isDismissal(metadata: record.metadata)
+    }
+
+    /// The same line while it is still waiting in the session's inbox for the next turn, which is
+    /// where it sits until something runs: written without waking the session, it is delivered
+    /// only when the next prompt is.
+    static func isDismissal(_ item: OC2InboxItem) -> Bool {
+        item.type == "synthetic" && isDismissal(metadata: item.payload?["metadata"])
+    }
+
+    private static func isDismissal(metadata: JSONValue?) -> Bool {
+        metadata?[dismissalKey]?.stringValue == dismissalValue
+    }
+
+    static let dismissalKey = "interruption"
+    static let dismissalValue = "dismissed"
+
+    /// The newest moment anything in the records says was written, which is how long a turn has
+    /// been silent: a turn another process is still writing moves this, and one whose process is
+    /// gone never will again.
+    static func lastWritten(_ records: [OC2Message], session: OC2Session?) -> Date {
+        var newest = session?.time?.updated ?? 0
+        for record in records.suffix(8) {
+            let stamps = [record.time?.created, record.time?.streamed, record.time?.completed]
+            newest = max(newest, stamps.compactMap { $0 }.max() ?? 0)
+            for content in record.content ?? [] {
+                let ran = [content.time?.created, content.time?.ran, content.time?.completed]
+                newest = max(newest, ran.compactMap { $0 }.max() ?? 0)
+            }
+        }
+        return date(newest)
+    }
+
+    static func revert(_ record: OC2Revert) -> SessionRevert {
+        SessionRevert(
+            messageID: record.messageID,
+            files: (record.files ?? []).map { file in
+                SessionRevert.File(
+                    path: file.file,
+                    change: SessionRevert.File.Change(rawValue: file.status ?? "") ?? .modified,
+                    additions: file.additions ?? 0,
+                    deletions: file.deletions ?? 0,
+                    patch: file.patch)
+            })
     }
 
     /// When the transcript itself says a compaction is still running, and since when. The record

@@ -58,6 +58,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// started and stepped back from that is never going to finish. Distinct from
     /// ``supportsAbort``, which stops a turn: the work this ends is what goes on after the turn.
     public var supportsBackgroundStop: Bool
+    /// Whether the backend can wind a conversation back to a message (setting aside what came
+    /// after it and the file changes the agent made since) and bring it back again
+    /// (``CodingAgentBackend/revert(sessionID:to:)``, ``CodingAgentBackend/restoreRevert(sessionID:)``).
+    public var supportsRevert: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -84,7 +88,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         reportsMessageCompletion: Bool = true,
         reportsInterruptions: Bool = false,
         supportsTranscriptSearch: Bool = false,
-        supportsBackgroundStop: Bool = false
+        supportsBackgroundStop: Bool = false,
+        supportsRevert: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -111,6 +116,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.reportsInterruptions = reportsInterruptions
         self.supportsTranscriptSearch = supportsTranscriptSearch
         self.supportsBackgroundStop = supportsBackgroundStop
+        self.supportsRevert = supportsRevert
     }
 }
 
@@ -801,6 +807,13 @@ public enum BackendEvent: Sendable {
     /// running. Distinct from ``status`` because no turn is open either way — the prompt is free
     /// and the machine is still busy for this chat, which is a state of its own rather than idle.
     case backgroundWork(BackgroundWork?)
+    /// The turn is waiting on its provider between attempts, or `nil` once an attempt is answering
+    /// again or the turn ended. Distinct from ``status``: the turn is open throughout, and what
+    /// changed is only whether anybody can say why nothing is arriving.
+    case retry(TurnRetry?)
+    /// The conversation was wound back to a message, or `nil` once the revert was undone or made
+    /// final. A revert made final removes messages on the server, which arrives as a ``resync``.
+    case revert(SessionRevert?)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,
@@ -821,14 +834,21 @@ public struct TranscriptSnapshot: Sendable {
     /// Work the agent's process is carrying with no turn open, where the server can say; `nil`
     /// from one that reports none or has no such notion.
     public var backgroundWork: BackgroundWork?
+    /// The provider wait the open turn is in, where the server records one; `nil` otherwise.
+    public var retry: TurnRetry?
+    /// The revert standing on the conversation, where the server holds one; `nil` otherwise.
+    public var revert: SessionRevert?
 
     public init(
         messages: [ChatMessage], status: BackendStatus? = nil,
-        backgroundWork: BackgroundWork? = nil
+        backgroundWork: BackgroundWork? = nil, retry: TurnRetry? = nil,
+        revert: SessionRevert? = nil
     ) {
         self.messages = messages
         self.status = status
         self.backgroundWork = backgroundWork
+        self.retry = retry
+        self.revert = revert
     }
 }
 
@@ -1008,9 +1028,25 @@ public protocol CodingAgentBackend: Sendable {
     /// before offering it, and treat a server that lacks it as one that cannot answer rather than
     /// one that found nothing.
     func searchTranscripts(_ query: String, limit: Int) async throws -> TranscriptSearchResult
+    /// Winds the conversation back to `messageID`: that message and everything after it are set
+    /// aside and the files the agent changed since are put back, until ``restoreRevert(sessionID:)``
+    /// undoes it or the next prompt makes it final. The server refuses while a turn is running.
+    /// Throws ``AgentError/unsupported(_:)`` by default; check ``BackendCapabilities/supportsRevert``.
+    func revert(sessionID: String, to messageID: String) async throws -> SessionRevert
+    /// Undoes the revert standing on the conversation: the messages come back into effect and the
+    /// files return to how the agent left them.
+    func restoreRevert(sessionID: String) async throws
 }
 
 extension CodingAgentBackend {
+    public func revert(sessionID: String, to messageID: String) async throws -> SessionRevert {
+        throw AgentError.unsupported("revert")
+    }
+
+    public func restoreRevert(sessionID: String) async throws {
+        throw AgentError.unsupported("revert")
+    }
+
     public func abort(sessionID: String) async throws {
         throw AgentError.unsupported("abort")
     }

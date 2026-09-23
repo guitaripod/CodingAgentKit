@@ -11,14 +11,20 @@ import Foundation
 ///
 /// A little is remembered between frames: what a tool call was named and given, because the
 /// result frame repeats neither and the reducer replaces a part whole; what a prompt said,
-/// because the frame that makes it part of the conversation carries only its id; and which
-/// message a running shell was given, because the frame that ends it names only the shell.
+/// because the frame that makes it part of the conversation carries only its id; which message
+/// a running shell was given, because the frame that ends it names only the shell; and the wait
+/// the turn is in, because the provider's remedy arrives on one frame and the next attempt's
+/// clock on another.
 struct OpenCodeV2EventDecoder {
     let sessionID: String
     private var toolNames: [String: String] = [:]
     private var toolInputs: [String: JSONValue] = [:]
     private var prompts: [String: JSONValue] = [:]
     private var shells: [String: String] = [:]
+    private var retry: TurnRetry?
+    /// Whether this stream has seen the conversation under way, which is what makes a first
+    /// model or agent choice a switch rather than the setup of a conversation about to start.
+    private var underway = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -44,6 +50,7 @@ struct OpenCodeV2EventDecoder {
 
         switch frame.type {
         case "session.step.started":
+            underway = true
             guard let messageID = data?["assistantMessageID"]?.stringValue else { return [] }
             let model = data?["model"]
             let message = ChatMessage(
@@ -55,7 +62,7 @@ struct OpenCodeV2EventDecoder {
                 providerID: model?["providerID"]?.stringValue,
                 modelID: model?["id"]?.stringValue,
                 reasoningEffort: model?["variant"]?.stringValue)
-            return [.messageUpserted(message, replaceParts: false), .status(.running)]
+            return [.messageUpserted(message, replaceParts: false), .status(.running)] + settleRetry()
 
         case "session.step.ended":
             guard let messageID = data?["assistantMessageID"]?.stringValue else { return [] }
@@ -225,23 +232,28 @@ struct OpenCodeV2EventDecoder {
             return [.status(.running)]
 
         case "session.execution.succeeded", "session.execution.interrupted", "session.idle":
-            return [.status(.idle)]
+            return settleRetry() + [.status(.idle)]
 
         case "session.execution.failed":
-            if OpenCodeV2Mapping.halted(data?["error"]) { return [.status(.idle)] }
             let reason = OpenCodeV2Mapping.errorMessage(data?["error"]) ?? "session error"
-            return [.failure(BackendFailure(message: reason)), .status(.idle)]
+            return settleRetry() + [.failure(BackendFailure(message: reason)), .status(.idle)]
 
         case "session.status":
-            guard let type = data?["status"]?["type"]?.stringValue else { return [] }
+            guard let status = data?["status"], let type = status["type"]?.stringValue else {
+                return []
+            }
             switch type {
             case "idle":
-                return [.status(.idle)]
-            case "busy", "running", "retry":
+                return settleRetry() + [.status(.idle)]
+            case "busy", "running":
+                return settleRetry() + [.status(.running)]
+            case "retry":
                 /// A turn waiting on the provider between attempts is a turn in flight: the
                 /// server has not given up on it, and a wall it does give up on arrives as a
-                /// failure of its own.
-                return [.status(.running)]
+                /// failure of its own. What it is waiting on is the news.
+                let waiting = Self.waiting(status, remembered: retry)
+                retry = waiting
+                return [.status(.running), .retry(waiting)]
             default:
                 return [.unknown(type: "session.status.\(type)")]
             }
@@ -280,15 +292,30 @@ struct OpenCodeV2EventDecoder {
             return [.questionResolved(requestID: formID)]
 
         case "session.inbox.enqueued":
-            guard let inboxID = data?["inboxID"]?.stringValue, data?["item"]?["type"]?.stringValue == "user",
-                let payload = data?["item"]?["payload"]
+            guard let inboxID = data?["inboxID"]?.stringValue, let item = data?["item"],
+                let kind = item["type"]?.stringValue, kind == "user" || kind == "synthetic",
+                let payload = item["payload"]
             else { return [] }
-            prompts[inboxID] = payload
+            prompts[inboxID] = .object(["type": .string(kind), "payload": payload])
+            if kind == "user" { underway = true }
             return []
 
         case "session.inbox.delivered":
-            guard let inboxID = data?["inboxID"]?.stringValue, let payload = prompts.removeValue(forKey: inboxID)
+            guard let inboxID = data?["inboxID"]?.stringValue,
+                let held = prompts.removeValue(forKey: inboxID), let payload = held["payload"]
             else { return [] }
+            if held["type"]?.stringValue == "synthetic" {
+                guard
+                    let subject = OpenCodeV2Mapping.syntheticSubject(
+                        description: payload["description"]?.stringValue,
+                        metadata: payload["metadata"])
+                else { return [] }
+                return [
+                    .messageUpserted(
+                        OpenCodeV2Mapping.note(id: inboxID, created: frame.created, subject: subject),
+                        replaceParts: true)
+                ]
+            }
             return Self.prompt(id: inboxID, payload: payload, created: frame.created).map {
                 [.messageUpserted($0, replaceParts: true)]
             } ?? []
@@ -315,13 +342,64 @@ struct OpenCodeV2EventDecoder {
             if let inboxID = data?["inboxID"]?.stringValue { prompts[inboxID] = nil }
             return []
 
-        case "session.inbox.delivery.changed", "session.instructions.updated",
-            "session.usage.updated", "session.step.streamed", "session.created",
-            "session.renamed", "session.deleted", "session.model.selected",
-            "session.agent.selected", "session.viewed", "session.retry.scheduled",
-            "session.synthetic", "session.skill.activated", "session.revert.staged", "session.revert.cleared",
-            "session.revert.committed", "session.moved", "session.forked",
-            "session.permissions":
+        case "session.retry.scheduled":
+            let attempt = data?["attempt"]?.intValue.map(Int.init) ?? 1
+            let reason = OpenCodeV2Mapping.errorMessage(data?["error"]) ?? ""
+            let next = OpenCodeV2Mapping.optionalDate(data?["at"]?.doubleValue)
+            var waiting = TurnRetry(attempt: attempt, reason: reason, nextAttemptAt: next)
+            if let held = retry, held.attempt == attempt {
+                waiting.remedy = held.remedy
+                if waiting.reason.isEmpty { waiting.reason = held.reason }
+                if waiting.nextAttemptAt == nil { waiting.nextAttemptAt = held.nextAttemptAt }
+            }
+            retry = waiting
+            return [.retry(waiting)]
+
+        case "session.model.selected":
+            guard underway || data?["previous"] != nil,
+                let subject = OpenCodeV2Mapping.modelNote(
+                    OpenCodeV2Mapping.modelSelection(data?["model"]),
+                    effort: data?["model"]?["variant"]?.stringValue,
+                    previous: OpenCodeV2Mapping.modelSelection(data?["previous"]))
+            else { return [] }
+            return noted(frame, subject)
+
+        case "session.agent.selected":
+            guard underway || data?["previous"] != nil,
+                let subject = OpenCodeV2Mapping.agentNote(
+                    data?["agent"]?.stringValue, previous: data?["previous"]?.stringValue)
+            else { return [] }
+            return noted(frame, subject)
+
+        case "session.moved":
+            guard let directory = data?["location"]?["directory"]?.stringValue, !directory.isEmpty
+            else { return [] }
+            return noted(frame, .moved(directory))
+
+        case "session.skill.activated":
+            guard let name = data?["name"]?.stringValue, !name.isEmpty else { return [] }
+            return noted(frame, .skill(name))
+
+        case "session.synthetic":
+            guard
+                let subject = OpenCodeV2Mapping.syntheticSubject(
+                    description: data?["description"]?.stringValue, metadata: data?["metadata"])
+            else { return [] }
+            return noted(frame, subject)
+
+        case "session.revert.staged":
+            guard let value = data?["revert"], let revert = Self.revert(from: value) else { return [] }
+            return [.revert(OpenCodeV2Mapping.revert(revert))]
+
+        case "session.revert.cleared":
+            return [.revert(nil)]
+
+        case "session.revert.committed":
+            return [.revert(nil), .resync]
+
+        case "session.inbox.delivery.changed", "session.usage.updated", "session.step.streamed",
+            "session.created", "session.renamed", "session.deleted", "session.viewed",
+            "session.forked", "session.permissions", "session.instructions.updated":
             return []
 
         default:
@@ -380,6 +458,53 @@ struct OpenCodeV2EventDecoder {
     private static func record(_ fields: [String: JSONValue]) -> OC2Message? {
         guard let data = try? JSONCoding.encoder.encode(JSONValue.object(fields)) else { return nil }
         return try? JSONCoding.decoder.decode(OC2Message.self, from: data)
+    }
+
+    /// Ends the wait the turn was in, announcing it only when there was one.
+    private mutating func settleRetry() -> [BackendEvent] {
+        guard retry != nil else { return [] }
+        retry = nil
+        return [.retry(nil)]
+    }
+
+    /// The wait a `retry` status describes: which attempt, the provider's words, when the next
+    /// attempt goes, and what the provider says would end it. A status that names the attempt
+    /// already held keeps the clock the schedule gave it where the status carries none.
+    private static func waiting(_ status: JSONValue, remembered: TurnRetry?) -> TurnRetry {
+        let attempt = status["attempt"]?.intValue.map(Int.init) ?? remembered?.attempt ?? 1
+        var waiting = TurnRetry(
+            attempt: attempt,
+            reason: status["message"]?.stringValue ?? "",
+            nextAttemptAt: OpenCodeV2Mapping.optionalDate(status["next"]?.doubleValue))
+        if let action = status["action"], let title = action["title"]?.stringValue,
+            let message = action["message"]?.stringValue, let label = action["label"]?.stringValue
+        {
+            waiting.remedy = TurnRetry.Remedy(
+                title: title, message: message, label: label, link: action["link"]?.stringValue)
+        }
+        if let remembered, remembered.attempt == attempt {
+            if waiting.nextAttemptAt == nil { waiting.nextAttemptAt = remembered.nextAttemptAt }
+            if waiting.reason.isEmpty { waiting.reason = remembered.reason }
+            if waiting.remedy == nil { waiting.remedy = remembered.remedy }
+        }
+        return waiting
+    }
+
+    /// A note the server wrote, under the id opencode derives from the frame that wrote it: the
+    /// same id a re-read of the transcript gives the record.
+    private func noted(_ frame: OC2Event, _ subject: TranscriptNote.Subject) -> [BackendEvent] {
+        guard let eventID = frame.id, eventID.hasPrefix("evt_") else { return [] }
+        let messageID = "msg_" + eventID.dropFirst("evt_".count)
+        return [
+            .messageUpserted(
+                OpenCodeV2Mapping.note(id: messageID, created: frame.created, subject: subject),
+                replaceParts: true)
+        ]
+    }
+
+    private static func revert(from value: JSONValue) -> OC2Revert? {
+        guard let data = try? JSONCoding.encoder.encode(value) else { return nil }
+        return try? JSONCoding.decoder.decode(OC2Revert.self, from: data)
     }
 
     private static func permission(from value: JSONValue) -> OC2Permission? {

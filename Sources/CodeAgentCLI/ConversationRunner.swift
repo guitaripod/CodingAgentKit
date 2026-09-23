@@ -126,7 +126,7 @@ enum ConversationRunner {
                     let detail = sizes.count == 2 ? " \(sizes[0]) → \(sizes[1]) tokens" : ""
                     print("\n[compacted]\(detail)")
                     flush()
-                case .file, .unknown:
+                case .file, .note, .unknown:
                     break
                 }
             }

@@ -24,6 +24,8 @@ public actor AgentConversation {
     private var seamsWhenCompactionBegan: Int?
     private var interruption: TurnInterruption?
     private var backgroundWork: BackgroundWork?
+    private var retry: TurnRetry?
+    private var revert: SessionRevert?
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -63,8 +65,10 @@ public actor AgentConversation {
     public var messages: [ChatMessage] { reducer.snapshot }
 
     public var state: ConversationState {
-        ConversationState(
-            messages: reducer.snapshot,
+        let transcript = reducer.snapshot
+        let boundary = revert.flatMap { Self.revertBoundary(of: $0, in: transcript) }
+        return ConversationState(
+            messages: boundary.map { Array(transcript[..<$0]) } ?? transcript,
             status: status,
             pendingPermissions: pendingPermissions,
             pendingQuestions: openQuestions,
@@ -75,8 +79,22 @@ public actor AgentConversation {
             compaction: compaction,
             interruption: interruption,
             connectionChangedAt: connectionChangedAt,
-            backgroundWork: backgroundWork
+            backgroundWork: backgroundWork,
+            retry: retry,
+            revert: revert,
+            revertedMessages: boundary.map { Array(transcript[$0...]) } ?? []
         )
+    }
+
+    /// Where a standing revert cuts the transcript: at the message it names, or, when that record
+    /// is one this transcript does not draw, at the first message written after it. Ids that sort
+    /// by time share a prefix, and only then is "after" a comparison of names.
+    static func revertBoundary(of revert: SessionRevert, in transcript: [ChatMessage]) -> Int? {
+        if let exact = transcript.firstIndex(where: { $0.id == revert.messageID }) { return exact }
+        guard let underscore = revert.messageID.firstIndex(of: "_") else { return nil }
+        let prefix = revert.messageID[...underscore]
+        guard transcript.allSatisfy({ $0.id.hasPrefix(prefix) }) else { return nil }
+        return transcript.firstIndex { $0.id > revert.messageID }
     }
 
     /// A stream of full conversation snapshots, updated as events arrive and the connection
@@ -258,6 +276,48 @@ public actor AgentConversation {
     public func cancelCurrentTurn() async throws {
         try await backend.abort(sessionID: sessionID)
     }
+
+    /// Winds the conversation back to `messageID`: that message and everything after it are set
+    /// aside, and the files the agent changed since are put back. A running turn is stopped first,
+    /// because a server will not rewrite a conversation it is still writing; the stop takes a
+    /// moment to land, so a refusal for being busy is asked again for as long as the stop could
+    /// plausibly take rather than handed to the person as if their press had failed.
+    public func revert(to messageID: String) async throws {
+        var stopped = status == .running
+        if stopped { try? await backend.abort(sessionID: sessionID) }
+        var attempt = 0
+        while true {
+            do {
+                revert = try await backend.revert(sessionID: sessionID, to: messageID)
+                status = .idle
+                retry = nil
+                emit()
+                return
+            } catch let error as AgentError {
+                guard case .http(status: 409, _) = error, attempt < Self.revertBusyAttempts else {
+                    throw error
+                }
+                if !stopped {
+                    stopped = true
+                    try? await backend.abort(sessionID: sessionID)
+                }
+                attempt += 1
+                try await Task.sleep(for: Self.revertBusyPause)
+            }
+        }
+    }
+
+    /// Undoes the standing revert: the messages it set aside come back into effect and the files
+    /// return to how the agent left them. The card comes down on the server's word, so a refusal
+    /// leaves the revert standing and says why.
+    public func restoreRevert() async throws {
+        try await backend.restoreRevert(sessionID: sessionID)
+        revert = nil
+        emit()
+    }
+
+    private static let revertBusyAttempts = 20
+    private static let revertBusyPause: Duration = .milliseconds(250)
 
     /// Runs a server-side slash command. Like ``send(_:model:reasoningEffort:agent:attachments:)``
     /// this starts a fresh turn, so a previous failure stops being current state and the run
@@ -903,7 +963,7 @@ public actor AgentConversation {
     /// answers to one question is how a card ends up contradicting itself.
     private func noticeCutOffTurn(matching before: CutOffTurn.Fingerprint?, generation gen: Int) {
         guard gen == generation, !backend.capabilities.reportsInterruptions, interruption == nil,
-            status == .running, connection == .live, !refreshInFlight, let before,
+            retry == nil, status == .running, connection == .live, !refreshInFlight, let before,
             CutOffTurn.fingerprint(reducer.snapshot) == before,
             let cutOff = CutOffTurn.read(reducer.snapshot, detectedAt: Date())
         else { return }
@@ -927,6 +987,7 @@ public actor AgentConversation {
                 scheduleRecoveryRefresh(generation: gen)
             }
             if status != .running, impliesRunning(event) { status = .running }
+            retry = nil
         case .messageUpserted, .partUpserted, .partRemoved, .messageRemoved:
             reducer.apply(event)
             syncTranscriptQuestions()
@@ -935,6 +996,7 @@ public actor AgentConversation {
             persistDuringStream()
         case .status(let value):
             status = value
+            retry = nil
             if value == .idle || value == .stable { persist() }
         case .goal(let value):
             goal = value
@@ -953,6 +1015,11 @@ public actor AgentConversation {
             interruption = value
         case .backgroundWork(let value):
             backgroundWork = value
+        case .retry(let value):
+            retry = value
+            if value != nil { status = .running }
+        case .revert(let value):
+            revert = value
         case .attached:
             markLive(generation: gen)
         case .detached:
@@ -977,6 +1044,7 @@ public actor AgentConversation {
             transcriptQuestions.removeAll { $0.id == requestID }
         case .failure(let failure):
             lastFailure = failure
+            retry = nil
             if status == .running { status = .idle }
         case .unknown:
             break
@@ -1165,6 +1233,8 @@ public actor AgentConversation {
             loadedTranscript = true
             deriveStatusFromTranscript(reported: snapshot.status)
             backgroundWork = snapshot.backgroundWork
+            retry = status == .running ? snapshot.retry : nil
+            revert = snapshot.revert
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }

@@ -18,18 +18,22 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         supportsReasoningEffort: true,
         supportsForking: true,
         supportsAbort: true,
-        supportsSessionUsage: false,
+        supportsSessionUsage: true,
+        supportsUsageAnalytics: true,
         supportsQuestions: true,
         supportsRenaming: true,
         supportsSubagents: true,
         supportsCommands: true,
-        supportsCompaction: true
+        supportsCompaction: true,
+        reportsInterruptions: true,
+        supportsRevert: true
     )
 
     let client: OpenCodeV2Client
     let compactions = CompactionWatch()
     let directories = DirectoryCache()
     let local = OpenCodeLocalEvents()
+    let cutOffs = CutOffWatch()
 
     public init(config: ServerConfig) {
         self.client = OpenCodeV2Client(config: config)
@@ -47,6 +51,22 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         func record(_ moment: Date?, for sessionID: String) { startedAt[sessionID] = moment }
 
         func value(for sessionID: String) -> Date? { startedAt[sessionID] }
+    }
+
+    /// What each session's last transcript read said about a turn left unfinished, so asking right
+    /// after a read costs nothing; a read that is older than a moment is asked afresh.
+    actor CutOffWatch {
+        private var readings: [String: (turn: TurnInterruption?, at: Date)] = [:]
+
+        func record(_ turn: TurnInterruption?, for sessionID: String) {
+            readings[sessionID] = (turn, Date())
+        }
+
+        func fresh(for sessionID: String, within: TimeInterval) -> TurnInterruption?? {
+            guard let reading = readings[sessionID], Date().timeIntervalSince(reading.at) < within
+            else { return nil }
+            return .some(reading.turn)
+        }
     }
 
     /// Where each session runs, read once off its record: the scoped routes — the command
@@ -157,12 +177,105 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     }
 
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
+        async let record = try? client.session(sessionID)
         let records = try await client.messages(sessionID: sessionID)
         await compactions.record(OpenCodeV2Mapping.compactionInFlight(records), for: sessionID)
         let running = await liveness()
+        let session = await record
+        let isRunning = running.map { $0.contains(sessionID) }
+        await cutOffs.record(
+            await settled(Self.cutOff(records, session: session, running: isRunning), sessionID),
+            for: sessionID)
         return TranscriptSnapshot(
             messages: OpenCodeV2Mapping.transcript(records),
-            status: running.map { $0.contains(sessionID) ? .running : .idle })
+            status: isRunning.map { $0 ? .running : .idle },
+            retry: isRunning == true ? OpenCodeV2Mapping.pendingRetry(records) : nil,
+            revert: session?.revert.map(OpenCodeV2Mapping.revert))
+    }
+
+    /// A turn is only cut off when nothing on this server is running it and it has been silent
+    /// long enough that no other process is writing it either. A managed server picks such a turn
+    /// back up by itself when it starts, and that first moment of a restart is inside the quiet.
+    static func cutOff(_ records: [OC2Message], session: OC2Session?, running: Bool?)
+        -> TurnInterruption?
+    {
+        guard running == false else { return nil }
+        let now = Date()
+        guard now.timeIntervalSince(OpenCodeV2Mapping.lastWritten(records, session: session))
+            >= orphanQuiet
+        else { return nil }
+        return OpenCodeV2Mapping.cutOffTurn(records, detectedAt: now)
+    }
+
+    static let orphanQuiet: TimeInterval = 120
+
+    public func interruption(for sessionID: String) async throws -> TurnInterruption? {
+        if let held = await cutOffs.fresh(for: sessionID, within: 5) { return held }
+        async let record = try? client.session(sessionID)
+        let records = try await client.messages(sessionID: sessionID)
+        let running = try await client.activeSessions()
+        let turn = await settled(
+            Self.cutOff(
+                records, session: await record,
+                running: running[sessionID].map(OpenCodeV2Mapping.isRunning) ?? false),
+            sessionID)
+        await cutOffs.record(turn, for: sessionID)
+        return turn
+    }
+
+    /// A cut-off turn somebody already let go is not an offer any more. The line saying so waits in
+    /// the session's inbox until the next turn delivers it, so the inbox is asked, though only when
+    /// the records say a turn was cut off, which is rare, rather than on every read.
+    private func settled(_ turn: TurnInterruption?, _ sessionID: String) async -> TurnInterruption? {
+        guard let turn else { return nil }
+        guard let waiting = try? await client.inbox(sessionID: sessionID) else { return turn }
+        return waiting.contains(where: OpenCodeV2Mapping.isDismissal) ? nil : turn
+    }
+
+    /// Picks a cut-off turn back up the way opencode's own restart does: a line that tells the
+    /// model the server restarted and to carry on without repeating what is done, written into the
+    /// session with the turn woken to act on it.
+    public func resumeInterruption(sessionID: String) async throws {
+        try await client.synthetic(
+            sessionID: sessionID,
+            request: OC2SyntheticRequest(
+                text: Self.resumeText, description: OpenCodeV2Mapping.restartDescription,
+                metadata: nil, resume: true))
+        await cutOffs.record(nil, for: sessionID)
+    }
+
+    /// Lets a cut-off turn go. The line it writes is for the model, so the next turn knows the
+    /// last one stopped short, and it settles the turn for every device without waking anything.
+    public func dismissInterruption(sessionID: String) async throws {
+        try await client.synthetic(
+            sessionID: sessionID,
+            request: OC2SyntheticRequest(
+                text: Self.dismissText, description: nil,
+                metadata: .object([
+                    OpenCodeV2Mapping.dismissalKey: .string(OpenCodeV2Mapping.dismissalValue)
+                ]),
+                resume: false))
+        await cutOffs.record(nil, for: sessionID)
+    }
+
+    static let resumeText =
+        "The server restarted while you were working. Continue from where you left off without repeating completed work."
+    static let dismissText =
+        "The previous turn stopped when the server restarted, and the user chose not to continue it. Do not resume that work unless asked."
+
+    public func sessionUsage(_ sessionID: String) async throws -> AgentUsage? {
+        let record = try await client.session(sessionID)
+        let tokens = OpenCodeV2Mapping.usage(record.tokens)
+        guard record.cost != nil || tokens != nil else { return nil }
+        return AgentUsage(costUSD: record.cost, tokens: tokens.map(\.total))
+    }
+
+    public func revert(sessionID: String, to messageID: String) async throws -> SessionRevert {
+        OpenCodeV2Mapping.revert(try await client.stageRevert(sessionID: sessionID, messageID: messageID))
+    }
+
+    public func restoreRevert(sessionID: String) async throws {
+        try await client.clearRevert(sessionID: sessionID)
     }
 
     public func revision(for sessionID: String) async throws -> SessionRevision? {

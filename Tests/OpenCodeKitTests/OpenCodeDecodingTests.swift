@@ -123,17 +123,21 @@ private func decode(_ json: String) -> BackendEvent? {
     }
 
     /// A turn waiting on the provider between attempts is a turn still running: opencode has not
-    /// given up on it, so the client must not end it — spinner off, queue held, the next prompt
-    /// sent behind a turn still in flight — for a wait the server itself is sitting out.
-    @Test func decodesSessionStatusRetryAsATurnStillRunning() {
+    /// given up on it, so the client must not end it (spinner off, queue held, the next prompt
+    /// sent behind a turn still in flight) for a wait the server itself is sitting out. The wait
+    /// is carried with the provider's reason, and a conversation reads a wait as a running turn.
+    @Test func decodesSessionStatusRetryAsAWaitInARunningTurn() {
         guard
-            case .status(.running)? = decode(
-                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"retry","attempt":1,"message":"monthly usage limit reached. It will reset in 3 days 5 hours.","action":{"reason":"account_rate_limit","provider":"opencode-go","title":"Go limit reached"}}}}"#
+            case .retry(let retry?)? = decode(
+                #"{"type":"session.status","properties":{"sessionID":"ses_S","status":{"type":"retry","attempt":1,"message":"monthly usage limit reached. It will reset in 3 days 5 hours.","next":1790000060000,"action":{"reason":"account_rate_limit","provider":"opencode-go","title":"Go limit reached"}}}}"#
             )
         else {
-            Issue.record("expected running")
+            Issue.record("expected a retry")
             return
         }
+        #expect(retry.attempt == 1)
+        #expect(retry.reason.hasPrefix("monthly usage limit reached"))
+        #expect(retry.nextAttemptAt == Date(timeIntervalSince1970: 1_790_000_060))
     }
 
     /// The server's keepalive is the transport proving itself, never the session speaking: read

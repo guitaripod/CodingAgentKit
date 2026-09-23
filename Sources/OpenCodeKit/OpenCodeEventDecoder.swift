@@ -90,8 +90,14 @@ public enum OpenCodeEventDecoder {
                 /// is still working the prompt and will answer or fail it in its own time. Read as
                 /// a failure this ended the turn on the client — spinner off, queue held, the
                 /// next prompt sent behind a turn still running — for a wait the server had not
-                /// given up on. A wall it does give up on arrives as its own error.
-                return .status(.running)
+                /// given up on. A wall it does give up on arrives as its own error. The wait is
+                /// carried with the provider's reason, which is the one thing that explains it.
+                let attempt = status["attempt"]?.intValue.map(Int.init) ?? 1
+                let next = status["next"]?.doubleValue.flatMap { $0 > 0 ? $0 : nil }
+                return .retry(
+                    TurnRetry(
+                        attempt: attempt, reason: status["message"]?.stringValue ?? "",
+                        nextAttemptAt: next.map { Date(timeIntervalSince1970: $0 / 1000) }))
             default:
                 return .unknown(type: "session.status.\(type)")
             }
