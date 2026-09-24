@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.33.0
+
+What a Mac server is allowed to touch, and passwords that stay put on an ad-hoc Mac build.
+
+### Added
+- **Machine permissions.** `MachinePermissions` carries the operating-system grants a server's
+  agents run under — on a Mac, Full Disk Access, on or off — with the machine's name and the
+  server's binary. `PermissionReportingBackend.machinePermissions()` reads them and
+  `requestMachinePermission(_:)` asks the machine to open the pane that gives one. claude-bridge
+  1.12 answers both; an older bridge answers nil, and a grant or state this build cannot explain
+  is left out rather than failing the answer.
+
+### Fixed
+- A Mac build signed ad hoc keeps its passwords: the data-protection keychain refuses a process with
+  no application identifier, so saves, reads and removals fall back to the login keychain there.
+
 ## 0.32.0
 
 What opencode 2 writes for the reader, the provider waits a turn sits out, and a conversation wound
