@@ -76,13 +76,18 @@
         private enum Keychain { case dataProtection, file }
 
         /// A Mac build signed ad hoc carries no application identifier, and the data-protection
-        /// keychain refuses such a process outright (`errSecMissingEntitlement`) — every save of a
-        /// password and every removal of a server would fail. The login keychain accepts it, so the
-        /// operation is run there instead; a signed app never reaches the second attempt.
+        /// keychain refuses such a process — but only an add says so (`errSecMissingEntitlement`);
+        /// a read, an update or a removal answers `errSecItemNotFound`, as if the keychain were
+        /// merely empty. Taking that at its word saved a password into the login keychain and then
+        /// never found it again, so every server that needs one was unreachable. Either answer
+        /// runs the operation against the login keychain instead; a signed app only reaches the
+        /// second attempt for an item that exists in neither.
         private func reaching(_ operation: (Keychain) -> OSStatus) -> OSStatus {
             let status = operation(.dataProtection)
             #if os(macOS)
-                if status == errSecMissingEntitlement { return operation(.file) }
+                if status == errSecMissingEntitlement || status == errSecItemNotFound {
+                    return operation(.file)
+                }
             #endif
             return status
         }

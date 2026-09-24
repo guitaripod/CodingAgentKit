@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.33.1
+
+### Fixed
+- A password saved on an ad-hoc Mac build is found again. The data-protection keychain refuses such
+  a process only on an add (`errSecMissingEntitlement`); a read, update or removal answers
+  `errSecItemNotFound` as if it were empty, so the password went into the login keychain and was
+  never read back, and every server that needs one was unreachable. Both answers now fall back to
+  the login keychain.
+
 ## 0.33.0
 
 What a Mac server is allowed to touch, and passwords that stay put on an ad-hoc Mac build.
