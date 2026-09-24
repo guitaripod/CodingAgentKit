@@ -1218,6 +1218,39 @@ extension ClaudeCodeBackend: AuthenticatingBackend {
     }
 }
 
+/// The bridge reads its own grants by opening the privacy database from a child process, which
+/// only Full Disk Access allows and which never raises a prompt; asking for one opens System
+/// Settings at that list on the Mac and shows the binary in Finder beside it.
+extension ClaudeCodeBackend: PermissionReportingBackend {
+    public func machinePermissions() async throws -> MachinePermissions? {
+        do {
+            return try decodePermissions(await http.send(builder.request(.get, "/permissions")))
+        } catch AgentError.http(let status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    public func requestMachinePermission(_ kind: MachinePermissions.Grant.Kind) async throws
+        -> MachinePermissions?
+    {
+        let body = try BridgeCoding.encoder.encode(BRPermissionRequest(id: kind.rawValue))
+        do {
+            return try decodePermissions(
+                await http.send(builder.request(.post, "/permissions/request", body: body)))
+        } catch AgentError.http(let status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    private func decodePermissions(_ data: Data) throws -> MachinePermissions {
+        try BridgeCoding.decoder.decode(MachinePermissions.self, from: data)
+    }
+}
+
+struct BRPermissionRequest: Encodable {
+    let id: String
+}
+
 struct BRAuthCode: Encodable {
     let code: String
 }
