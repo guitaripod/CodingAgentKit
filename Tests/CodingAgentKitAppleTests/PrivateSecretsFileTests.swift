@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -60,3 +61,4 @@ struct PrivateSecretsFileTests {
         #expect(credentials.url.deletingLastPathComponent().lastPathComponent == "CodingAgentKit")
     }
 }
+#endif

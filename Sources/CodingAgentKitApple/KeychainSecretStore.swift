@@ -140,82 +140,84 @@
         #endif
     }
 
-    /// Secrets in a file only its user can read: `Application Support/CodingAgentKit`, one JSON map
-    /// per keychain service, created `0600` inside a `0700` directory and replaced whole by a rename,
-    /// so there is never a moment when the secrets sit in a file anyone else could open, and never
-    /// a half-written one. Every write in the process goes through one lock, because stores are
-    /// values handed between threads and each write reads the map before it rewrites it.
-    public struct PrivateSecretsFile: Sendable {
-        public let url: URL
+    #if os(macOS)
+        /// Secrets in a file only its user can read: `Application Support/CodingAgentKit`, one JSON map
+        /// per keychain service, created `0600` inside a `0700` directory and replaced whole by a rename,
+        /// so there is never a moment when the secrets sit in a file anyone else could open, and never
+        /// a half-written one. Every write in the process goes through one lock, because stores are
+        /// values handed between threads and each write reads the map before it rewrites it.
+        public struct PrivateSecretsFile: Sendable {
+            public let url: URL
 
-        public init(url: URL) {
-            self.url = url
-        }
+            public init(url: URL) {
+                self.url = url
+            }
 
-        public init(service: String) {
-            let base =
-                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-                .first ?? FileManager.default.homeDirectoryForCurrentUser
-            let name = String(service.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "_" })
-            self.url =
-                base.appendingPathComponent("CodingAgentKit", isDirectory: true)
-                .appendingPathComponent("\(name).secrets.json")
-        }
+            public init(service: String) {
+                let base =
+                    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                    .first ?? FileManager.default.homeDirectoryForCurrentUser
+                let name = String(service.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "_" })
+                self.url =
+                    base.appendingPathComponent("CodingAgentKit", isDirectory: true)
+                    .appendingPathComponent("\(name).secrets.json")
+            }
 
-        private static let lock = NSLock()
+            private static let lock = NSLock()
 
-        public func value(for key: String) throws -> String? {
-            try Self.lock.withLock { try read()[key] }
-        }
+            public func value(for key: String) throws -> String? {
+                try Self.lock.withLock { try read()[key] }
+            }
 
-        public func setValue(_ value: String, for key: String) throws {
-            try Self.lock.withLock {
-                var all = try read()
-                all[key] = value
-                try write(all)
+            public func setValue(_ value: String, for key: String) throws {
+                try Self.lock.withLock {
+                    var all = try read()
+                    all[key] = value
+                    try write(all)
+                }
+            }
+
+            public func removeValue(for key: String) throws {
+                try Self.lock.withLock {
+                    var all = try read()
+                    guard all.removeValue(forKey: key) != nil else { return }
+                    try write(all)
+                }
+            }
+
+            /// A file that exists and cannot be read is an error rather than an empty map: treating it
+            /// as empty would let the next write replace every secret in it with one.
+            private func read() throws -> [String: String] {
+                guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+                return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
+            }
+
+            private func write(_ all: [String: String]) throws {
+                let directory = url.deletingLastPathComponent()
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700])
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700], ofItemAtPath: directory.path)
+                let data = try JSONEncoder().encode(all)
+                let staging = directory.appendingPathComponent(
+                    ".\(url.lastPathComponent).\(UUID().uuidString)")
+                let descriptor = open(staging.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+                guard descriptor >= 0 else { throw KeychainError.unexpectedStatus(errSecIO) }
+                let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+                do {
+                    try handle.write(contentsOf: data)
+                    try handle.synchronize()
+                    try handle.close()
+                } catch {
+                    try? FileManager.default.removeItem(at: staging)
+                    throw error
+                }
+                guard rename(staging.path, url.path) == 0 else {
+                    try? FileManager.default.removeItem(at: staging)
+                    throw KeychainError.unexpectedStatus(errSecIO)
+                }
             }
         }
-
-        public func removeValue(for key: String) throws {
-            try Self.lock.withLock {
-                var all = try read()
-                guard all.removeValue(forKey: key) != nil else { return }
-                try write(all)
-            }
-        }
-
-        /// A file that exists and cannot be read is an error rather than an empty map: treating it
-        /// as empty would let the next write replace every secret in it with one.
-        private func read() throws -> [String: String] {
-            guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
-            return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
-        }
-
-        private func write(_ all: [String: String]) throws {
-            let directory = url.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700], ofItemAtPath: directory.path)
-            let data = try JSONEncoder().encode(all)
-            let staging = directory.appendingPathComponent(
-                ".\(url.lastPathComponent).\(UUID().uuidString)")
-            let descriptor = open(staging.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-            guard descriptor >= 0 else { throw KeychainError.unexpectedStatus(errSecIO) }
-            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-            do {
-                try handle.write(contentsOf: data)
-                try handle.synchronize()
-                try handle.close()
-            } catch {
-                try? FileManager.default.removeItem(at: staging)
-                throw error
-            }
-            guard rename(staging.path, url.path) == 0 else {
-                try? FileManager.default.removeItem(at: staging)
-                throw KeychainError.unexpectedStatus(errSecIO)
-            }
-        }
-    }
+    #endif
 #endif
