@@ -9,8 +9,9 @@
   allowed the build that was already running. Such a build now keeps its secrets in a file only
   its user can read (`PrivateSecretsFile`: `Application Support/CodingAgentKit/<service>.secrets.json`,
   `0600` in a `0700` folder, replaced whole by a rename). A secret an earlier build left in the
-  login keychain is read from there one last time, moved, and removed. Signed and sandboxed builds
-  keep the data-protection keychain and never touch the file.
+  login keychain is read from there one last time, moved, and removed; a person who declines that
+  prompt is not asked again for the rest of the launch. Signed and sandboxed builds keep the
+  data-protection keychain and never touch the file.
 
 ## 0.33.1
 

@@ -116,21 +116,31 @@
 
             /// The file first. A secret that is not in it yet may be in the login keychain, where
             /// builds before this one kept it: read there the one last time — which may ask — moved
-            /// into the file, and removed, which asks nothing.
+            /// into the file, and removed, which asks nothing. A person who declines that one
+            /// question is not asked it again for the rest of the launch, however often the secret
+            /// is wanted.
             private func privateValue(for key: String) throws -> String? {
                 let file = privateFile
                 if let value = try file.value(for: key) { return value }
+                let asked = "\(service)\u{0}\(key)"
+                guard !Self.declined.contains(asked) else { return nil }
                 var item: CFTypeRef?
                 var query = itemQuery(for: key)
                 query[kSecReturnData as String] = true
                 query[kSecMatchLimit as String] = kSecMatchLimitOne
-                guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-                    let data = item as? Data, let value = String(data: data, encoding: .utf8)
+                let status = SecItemCopyMatching(query as CFDictionary, &item)
+                if status == errSecAuthFailed || status == errSecUserCanceled {
+                    Self.declined.insert(asked)
+                }
+                guard status == errSecSuccess, let data = item as? Data,
+                    let value = String(data: data, encoding: .utf8)
                 else { return nil }
                 try file.setValue(value, for: key)
                 forgetLoginItem(for: key)
                 return value
             }
+
+            private static let declined = DeclinedSecrets()
 
             /// Deleting a login-keychain item needs no authorization, even one another build wrote,
             /// so a secret written or removed here leaves no stale copy for a later build to read.
@@ -141,6 +151,15 @@
     }
 
     #if os(macOS)
+        /// The login-keychain secrets a person has declined to hand over this launch.
+        final class DeclinedSecrets: @unchecked Sendable {
+            private let lock = NSLock()
+            private var keys: Set<String> = []
+
+            func contains(_ key: String) -> Bool { lock.withLock { keys.contains(key) } }
+            func insert(_ key: String) { lock.withLock { _ = keys.insert(key) } }
+        }
+
         /// Secrets in a file only its user can read: `Application Support/CodingAgentKit`, one JSON map
         /// per keychain service, created `0600` inside a `0700` directory and replaced whole by a rename,
         /// so there is never a moment when the secrets sit in a file anyone else could open, and never
