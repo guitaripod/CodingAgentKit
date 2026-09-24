@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.33.2
+
+### Fixed
+- A Mac build signed ad hoc stops asking for the login password after every install. The login
+  keychain files each item under the hash of the code that wrote it, and every ad hoc build has a
+  new one, so each install asked again for every saved secret — and "Always Allow" only ever
+  allowed the build that was already running. Such a build now keeps its secrets in a file only
+  its user can read (`PrivateSecretsFile`: `Application Support/CodingAgentKit/<service>.secrets.json`,
+  `0600` in a `0700` folder, replaced whole by a rename). A secret an earlier build left in the
+  login keychain is read from there one last time, moved, and removed. Signed and sandboxed builds
+  keep the data-protection keychain and never touch the file.
+
 ## 0.33.1
 
 ### Fixed
