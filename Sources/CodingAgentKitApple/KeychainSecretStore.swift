@@ -18,12 +18,13 @@
         }
 
         public func value(for key: String) throws -> String? {
-            var query = baseQuery(for: key)
-            query[kSecReturnData as String] = true
-            query[kSecMatchLimit as String] = kSecMatchLimitOne
-
             var item: CFTypeRef?
-            let status = SecItemCopyMatching(query as CFDictionary, &item)
+            let status = reaching { keychain in
+                var query = baseQuery(for: key, in: keychain)
+                query[kSecReturnData as String] = true
+                query[kSecMatchLimit as String] = kSecMatchLimitOne
+                return SecItemCopyMatching(query as CFDictionary, &item)
+            }
             if status == errSecItemNotFound { return nil }
             guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
             guard let data = item as? Data else { return nil }
@@ -31,26 +32,24 @@
         }
 
         public func setValue(_ value: String, for key: String) throws {
-            let attributes: [String: Any] = [
-                kSecValueData as String: Data(value.utf8),
-                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            ]
-            let status = SecItemUpdate(
-                baseQuery(for: key) as CFDictionary, attributes as CFDictionary)
-            if status == errSecItemNotFound {
-                var addQuery = baseQuery(for: key)
-                addQuery.merge(attributes) { _, new in new }
-                let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
-                guard addStatus == errSecSuccess else {
-                    throw KeychainError.unexpectedStatus(addStatus)
+            let status = reaching { keychain in
+                var attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+                if keychain == .dataProtection {
+                    attributes[kSecAttrAccessible as String] =
+                        kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
                 }
-            } else {
-                guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
+                let query = baseQuery(for: key, in: keychain)
+                let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+                guard updated == errSecItemNotFound else { return updated }
+                return SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
             }
+            guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
         }
 
         public func removeValue(for key: String) throws {
-            let status = SecItemDelete(baseQuery(for: key) as CFDictionary)
+            let status = reaching { keychain in
+                SecItemDelete(baseQuery(for: key, in: keychain) as CFDictionary)
+            }
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw KeychainError.unexpectedStatus(status)
             }
@@ -62,15 +61,30 @@
         /// attributes carry different (weaker) semantics. The flag must be present on
         /// add, lookup, update and delete alike, or an item added to one keychain is
         /// invisible to the other.
-        private func baseQuery(for key: String) -> [String: Any] {
+        private func baseQuery(for key: String, in keychain: Keychain) -> [String: Any] {
             var query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: key,
-                kSecUseDataProtectionKeychain as String: true,
             ]
+            guard keychain == .dataProtection else { return query }
+            query[kSecUseDataProtectionKeychain as String] = true
             if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
             return query
+        }
+
+        private enum Keychain { case dataProtection, file }
+
+        /// A Mac build signed ad hoc carries no application identifier, and the data-protection
+        /// keychain refuses such a process outright (`errSecMissingEntitlement`) — every save of a
+        /// password and every removal of a server would fail. The login keychain accepts it, so the
+        /// operation is run there instead; a signed app never reaches the second attempt.
+        private func reaching(_ operation: (Keychain) -> OSStatus) -> OSStatus {
+            let status = operation(.dataProtection)
+            #if os(macOS)
+                if status == errSecMissingEntitlement { return operation(.file) }
+            #endif
+            return status
         }
     }
 #endif
