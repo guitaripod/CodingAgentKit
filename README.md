@@ -1,16 +1,18 @@
 # CodingAgentKit
 
-A cross-platform Swift package for driving coding-agent servers over HTTP + SSE. It speaks two backends behind one unified model:
+A cross-platform Swift package for driving coding-agent servers over HTTP + SSE. It speaks three agents behind one unified model:
 
-- **opencode** (`opencode serve`) — multi-provider, file browsing, diffs, permissions.
-- **Claude Code** via a bridge service (e.g. claude-bridge) exposing structured sessions over HTTP + SSE — a subscription-billed Claude Code session.
-- **delegate** (`delegate serve`) — a tiered task dispatcher: a packet goes in, a cheaper model tries it in an isolated worktree, a verifier decides, failures escalate, and the passing patch is applied; `DelegateKit` follows every run as a stream.
+- **opencode** (`opencode serve`, 1.x or 2.x — the server is asked which) — multi-provider, file browsing, diffs, permissions.
+- **Claude Code** via [claude-bridge](https://github.com/guitaripod/claude-bridge) — a subscription-billed Claude Code session as structured HTTP + SSE.
+- **Oh My Pi** via [omp-bridge](https://github.com/guitaripod/omp-bridge) — the same wire protocol, so `ClaudeCodeBackend(agentType: .omp)` drives it.
+
+Beside them, **delegate** (`delegate serve`) is a tiered task dispatcher: a packet goes in, a cheaper model tries it in an isolated worktree, a verifier decides, failures escalate, and the passing patch is applied; `DelegateKit` follows every run as a stream.
 
 It compiles, tests, and **runs on Linux and Apple platforms**. No Keychain, no OSLog, no UIKit anywhere in the core — so it works headless on a server as well as inside an iOS app.
 
 ## Why
 
-Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events stream. Their wire formats differ (opencode streams fine-grained part deltas; the Claude backend receives whole messages with deltas), but a client wants one transcript model to render. CodingAgentKit hides that difference behind a `CodingAgentBackend` protocol and a `MessageReducer` that folds either event style into one ordered `[ChatMessage]` — which is the reusable heart you can drop into a UIKit app, a CLI, or a TUI.
+opencode and the bridges all expose an HTTP surface with a Server-Sent Events stream. Their wire formats differ (opencode streams fine-grained part deltas; the Claude backend receives whole messages with deltas), but a client wants one transcript model to render. CodingAgentKit hides that difference behind a `CodingAgentBackend` protocol and a `MessageReducer` that folds either event style into one ordered `[ChatMessage]` — which is the reusable heart you can drop into a UIKit app, a CLI, or a TUI.
 
 ## Modules
 
@@ -18,9 +20,9 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 |---|---|
 | `AgentCore` | Transport (URLSession REST + SSE), unified models, `CodingAgentBackend`, `MessageReducer`, `AgentConversation`, protocols (`SecretStore`, `SessionCache`), swift-log facade. No backend specifics, no Apple-only imports. |
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
-| `ClaudeCodeKit` | Hand-written client for Claude Code bridge + event decoder + `ClaudeCodeBackend`, over an SSE stream. |
+| `ClaudeCodeKit` | Client for claude-bridge and omp-bridge (one protocol, `AgentType` picks the flavour) + event decoder + `ClaudeCodeBackend`, over one multiplexed SSE stream. |
 | `DelegateKit` | Client for the delegate daemon (tiered task dispatcher): packets, runs, tier health, approvals, and the run event stream. |
-| `CodingAgentKit` | Umbrella that re-exports the three. |
+| `CodingAgentKit` | Umbrella that re-exports `AgentCore`, `OpenCodeKit`, `ClaudeCodeKit` and `DelegateKit`. |
 | `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
 | `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |
 | `codeagent` | Scriptable CLI that exercises the whole stack. |
@@ -35,14 +37,14 @@ Both opencode and Claude Code expose an HTTP surface with a Server-Sent Events s
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.16.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.33.0")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
 
 ```swift
 .product(name: "CodingAgentKit", package: "CodingAgentKit")
-// or: "AgentCore", "OpenCodeKit", "ClaudeCodeKit"
+// or: "AgentCore", "OpenCodeKit", "ClaudeCodeKit", "DelegateKit"
 ```
 
 ## Library usage
@@ -74,7 +76,7 @@ for await state in await conversation.states() {
 }
 ```
 
-Swap `OpenCodeBackend` for `ClaudeCodeBackend` and the rest is identical — that is the point of the unified model. For tests and previews, use `MockBackend` from `AgentTestSupport` instead of a live backend.
+Swap `OpenCodeBackend` for `ClaudeCodeBackend` (claude-bridge, or omp-bridge with `agentType: .omp`) and the rest is identical — that is the point of the unified model. For tests and previews, use `MockBackend` from `AgentTestSupport` instead of a live backend.
 
 ### Resilience
 
@@ -97,34 +99,38 @@ Beyond the flags, capability is also expressed as protocols a backend conforms t
 
 Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `SendPrompt.reasoningEffort`, not applied as a standing session setting.
 
-| Capability | Flag | opencode | Claude Code (claude-bridge) |
-|---|---|:-:|:-:|
-| File browsing (`FileBrowsingBackend`) | `supportsFileBrowsing` | ✅ | ✅ ¹ |
-| Diffs | `supportsDiffs` | ✅ | — |
-| Permission prompts | `supportsPermissions` | ✅ | — |
-| Structured questions | `supportsQuestions` | ✅ | ✅ ² |
-| Multiple sessions | `supportsMultipleSessions` | ✅ | ✅ |
-| Model selection (per prompt) | `supportsModelSelection` | ✅ | ✅ |
-| Attachments (files/images in prompts) | `supportsAttachments` | ✅ | ✅ |
-| Reasoning effort (per prompt) | `supportsReasoningEffort` | ✅ (per-model) | ✅ (low/medium/high/xhigh/max/ultracode) |
-| Clear conversation in place | `supportsClearing` | — | ✅ |
-| Fork session (branch with same history) | `supportsForking` | — | ✅ (bridge `--fork-session`) |
-| Rename session | `supportsRenaming` | — | ✅ |
-| Abort current turn | `supportsAbort` | ✅ | ✅ |
-| Session usage (per-turn cost/tokens) | `supportsSessionUsage` | — | ✅ |
-| Whole-session spend report | — ⁴ | — | ✅ |
-| Account-wide usage analytics | `supportsUsageAnalytics` | — | ✅ |
-| Transcript search (whole machine) | `supportsTranscriptSearch` | — | ✅ |
-| Subagents (sidecar transcripts) | `supportsSubagents` | ✅ | ✅ |
-| Server-side slash commands | `supportsCommands` | ✅ | ✅ |
-| Goals (`/goal`, run until a condition holds) | `supportsGoals` | — | ✅ |
-| Compaction as a transcript event | `supportsCompaction` | — | ✅ |
-| Live usage quota (rate-limit gauges) | — ³ | — | ✅ |
+| Capability | Flag | opencode 1.x | opencode 2.x | claude-bridge / omp-bridge |
+|---|---|:-:|:-:|:-:|
+| File browsing (`FileBrowsingBackend`) | `supportsFileBrowsing` | ✅ | ✅ | ✅ ¹ |
+| Diffs | `supportsDiffs` | ✅ | ✅ | — |
+| Permission prompts | `supportsPermissions` | ✅ | ✅ | — |
+| Structured questions | `supportsQuestions` | ✅ | ✅ | ✅ ² |
+| Multiple sessions | `supportsMultipleSessions` | ✅ | ✅ | ✅ |
+| Model selection (per prompt) | `supportsModelSelection` | ✅ | ✅ | ✅ |
+| Attachments (files/images in prompts) | `supportsAttachments` | ✅ | ✅ | ✅ |
+| Reasoning effort (per prompt) | `supportsReasoningEffort` | ✅ | ✅ | ✅ |
+| Clear conversation in place | `supportsClearing` | — | — | ✅ |
+| Fork session | `supportsForking` | — | ✅ | ✅ |
+| Rename session | `supportsRenaming` | — | ✅ | ✅ |
+| Revert to a message | `supportsRevert` | — | ✅ | — |
+| Abort current turn | `supportsAbort` | ✅ | ✅ | ✅ |
+| Session usage (per-turn cost/tokens) | `supportsSessionUsage` | — | ✅ | ✅ |
+| Whole-session spend report | — ⁴ | — | — | ✅ |
+| Account-wide usage analytics | `supportsUsageAnalytics` | — | ✅ | ✅ |
+| Transcript search (whole machine) | `supportsTranscriptSearch` | — | — | ✅ |
+| Subagents | `supportsSubagents` | ✅ | ✅ | ✅ |
+| Server-side slash commands | `supportsCommands` | ✅ | ✅ | ✅ |
+| Goals (`/goal`) | `supportsGoals` | — | — | ✅ ⁵ |
+| Compaction as a transcript event | `supportsCompaction` | ✅ | ✅ | ✅ |
+| Interrupted turns | `reportsInterruptions` | — | ✅ | ✅ |
+| Stop background work | `supportsBackgroundStop` | — | — | ✅ ⁵ |
+| Live usage quota (rate-limit gauges) | — ³ | — | — | ✅ ⁵ |
 
 ¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
 ² The bridge's questions arrive in the transcript rather than as a protocol prompt, and `answersQuestionsByMessage` is `true`: answer by sending an ordinary message, not by calling a respond endpoint. `QuestionRequest.awaitingAnswer` derives what is still open from the transcript.
 ³ No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
 ⁴ Probe by calling `sessionSpend(_:)`, which returns `nil` when the backend cannot price a conversation.
+⁵ claude-bridge only: omp has no `/goal`, no background shells and no plan gauges.
 
 ### Beyond messages
 
@@ -148,9 +154,9 @@ A transcript is more than text and tool calls, and the Kit models the rest as fi
 
 You don't have to type IP addresses. `AgentCore` ships discovery primitives:
 
-- **`ConnectionProbe`** classifies any base URL: `.ok(agentType:version:)` (auto-detects opencode vs the Claude bridge from `/global/health` vs `/status`), `.authFailed`, `.unreachable`, or `.notAnAgentServer`. Unreachable probes are retried once. This is what `codeagent discover` uses.
+- **`ConnectionProbe`** classifies any base URL: `.ok(agentType:version:)` (opencode 2.x from `/api/info`, 1.x from `/global/health`, claude-bridge or omp-bridge from `/status`), `.authFailed`, `.unreachable`, or `.notAnAgentServer`. Unreachable probes are retried once. This is what `codeagent discover` uses.
 - **`TailscaleClient`** fetches your tailnet's devices from the Tailscale API, with either OAuth client credentials or a raw API token (`tskey-api-…`).
-- **`TailnetScanner`** probes every device's addresses and hostname on the agent ports (default `4096`/`4098`, up to 16 concurrent probes) and returns ready-to-connect `Suggestion`s — backend type, version, and whether a password is required — deduplicated to one per server, preferring hostname-addressed, no-auth entries.
+- **`TailnetScanner`** probes every device's addresses and hostname on the agent ports (default `4096`/`4098`/`4099`, up to 16 concurrent probes) and returns ready-to-connect `Suggestion`s — backend type, version, and whether a password is required — deduplicated to one per server, preferring hostname-addressed, no-auth entries.
 
 ```swift
 let devices = try await TailscaleClient().fetchDevices(with: "tskey-api-…")
@@ -163,7 +169,7 @@ for s in suggestions {
 ## CLI
 
 ```
-codeagent health   [--backend opencode|claude] [--host URL] [--password …]
+codeagent health   [--backend opencode|claude|omp] [--host URL] [--password …]
 codeagent discover                   # probe URL, auto-detect backend
 codeagent sessions
 codeagent new
@@ -175,7 +181,7 @@ codeagent find <pattern>             # opencode
 codeagent providers                  # opencode
 ```
 
-Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `BRIDGE_HOST`, `BRIDGE_PASSWORD`, with `CODEAGENT_PASSWORD` as the backend-agnostic fallback.
+Config resolves from flags, then environment: `OPENCODE_HOST`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SERVER_USERNAME`, `BRIDGE_HOST`, `BRIDGE_PASSWORD`, `OMP_HOST`, `OMP_PASSWORD`, with `CODEAGENT_PASSWORD` as the backend-agnostic fallback.
 
 ```bash
 export OPENCODE_SERVER_PASSWORD=secret
@@ -198,9 +204,13 @@ A bridge service exposing Claude Code via the structured HTTP/SSE API used by `C
 
 The service is reached over a private network (Tailscale recommended). Never expose publicly.
 
+### Oh My Pi
+
+[omp-bridge](https://github.com/guitaripod/omp-bridge) on port 4099 (Basic auth user `omp`, password required). Configure with `OMP_HOST` and `OMP_PASSWORD`.
+
 ## Security model
 
-Run both servers bound to a private network. **Tailscale is the firewall** — point the Kit at the tailnet IP. opencode adds HTTP Basic on top; the Claude bridge relies on the network boundary (and optional Basic auth).
+Run every server bound to a private network. **Tailscale is the firewall** — point the Kit at the tailnet IP. opencode adds HTTP Basic on top; claude-bridge admits a node signed into the same Tailscale account and asks anyone else for its password; omp-bridge always asks.
 
 Credential storage is abstracted behind `SecretStore` (an `EnvironmentSecretStore` ships in the core). An app supplies a Keychain implementation; the core never imports `Security`.
 
@@ -228,7 +238,7 @@ swift package --disable-sandbox generate-documentation --target AgentCore
 ## Used by
 
 - [Tailscode](https://github.com/guitaripod/Tailscode) — native clients for iOS (UIKit), Linux (GTK4) and macOS (AppKit), all built on this Kit.
-- [claude-bridge](https://github.com/guitaripod/claude-bridge) — the structured HTTP/SSE bridge for Claude Code that `ClaudeCodeKit` speaks to.
+- [claude-bridge](https://github.com/guitaripod/claude-bridge) and [omp-bridge](https://github.com/guitaripod/omp-bridge) — the servers `ClaudeCodeKit` speaks to.
 
 ## License
 
