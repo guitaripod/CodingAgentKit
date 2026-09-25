@@ -75,6 +75,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     private let http: HTTPClient
     private let stream: BridgeStream
     private let transcripts: BridgeTranscripts
+    private let waitSupport = BridgeWaitSupport()
 
     public init(config: ServerConfig, agentType: AgentType = .claudeCode) {
         self.init(
@@ -1348,6 +1349,31 @@ struct BRPushReceipt: Decodable {
     let delivers: Bool?
 }
 
+/// Whether this bridge answers the turn-wait route at all, remembered for a while so arming a wait
+/// does not cost a fresh `/status` round trip every time — but only a definite answer, and only
+/// for ten minutes rather than this instance's whole life: a bridge can be updated and restarted
+/// while this process still holds it, unlike an opencode server's generation, which never changes
+/// mid-process.
+actor BridgeWaitSupport {
+    private static let ttl: TimeInterval = 600
+
+    private var value: TurnWaitSupport?
+    private var recordedAt: Date?
+
+    func cached() -> TurnWaitSupport? {
+        guard let value, let recordedAt, Date().timeIntervalSince(recordedAt) < Self.ttl else {
+            return nil
+        }
+        return value
+    }
+
+    func record(_ support: TurnWaitSupport) {
+        guard support == .supported || support == .serverTooOld else { return }
+        value = support
+        recordedAt = Date()
+    }
+}
+
 /// `GET /sessions/:id/wait`: a long-held request that answers only once the session's turn ends or
 /// needs the person, identical on claude-bridge and omp-bridge — both agent types share this one
 /// implementation.
@@ -1361,10 +1387,25 @@ extension ClaudeCodeBackend {
 
     /// `/status`'s `turnWait` is this route's own protocol version; a bridge built before the
     /// route existed leaves the field out entirely, which this reads as too old rather than as a
-    /// version of zero — and a bridge that cannot even be asked is read the same way.
+    /// version of zero. A definite answer is held for a while — arming a wait costs a round trip
+    /// nobody wants to pay per session — but a bridge that could not even be asked right now (a
+    /// dropped connection, a challenge, a stray status) says nothing about its age and is asked
+    /// again next time instead of being latched as either.
     public func turnWaitSupport() async -> TurnWaitSupport {
-        guard let data = try? await http.send(builder.request(.get, "/status")),
-            let status = try? BridgeCoding.decoder.decode(BRStatus.self, from: data),
+        if let cached = await waitSupport.cached() { return cached }
+        let support = await probeWaitSupport()
+        await waitSupport.record(support)
+        return support
+    }
+
+    private func probeWaitSupport() async -> TurnWaitSupport {
+        let data: Data
+        do {
+            data = try await http.send(builder.request(.get, "/status"))
+        } catch {
+            return .undetermined
+        }
+        guard let status = try? BridgeCoding.decoder.decode(BRStatus.self, from: data),
             let turnWait = status.turnWait, turnWait >= 1
         else { return .serverTooOld }
         return .supported

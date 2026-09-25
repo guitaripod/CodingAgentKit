@@ -477,22 +477,41 @@ enum OpenCodeV2Mapping {
         var lastMessageID: String
     }
 
-    static func waitOutcome(tail: [ChatMessage]) -> WaitOutcome? {
+    /// `raw` is the same tail before `transcript(_:)` drops its bookkeeping records — the trailing
+    /// `idle` item's own `outcome` is opencode's verdict for the turn and is read first; the last
+    /// assistant message's shape is only a guess for a turn the person's own decision to stop
+    /// deliberately leaves looking unremarkable (`shell(_:)` clears `error` for exactly that case).
+    static func waitOutcome(raw: [OC2Message], tail: [ChatMessage]) -> WaitOutcome? {
         guard let last = tail.last(where: { $0.role == .assistant }) else { return nil }
         let lastUserIndex = tail.lastIndex { $0.role == .user }
         let sinceUser = lastUserIndex.map { Array(tail[($0 + 1)...]) } ?? tail
         let toolCount = sinceUser.reduce(into: 0) { count, message in
             count += message.parts.filter(isToolPart).count
         }
-        let ending: TurnWaitResult.Ending
-        if last.error != nil {
-            ending = .failed
-        } else if last.isAnswerless {
-            ending = .answerless
-        } else {
-            ending = .finished
-        }
+        let ending = idleEnding(raw) ?? heuristicEnding(last)
         return WaitOutcome(ending: ending, toolCount: toolCount, lastMessageID: last.id)
+    }
+
+    /// The trailing `idle` record's own outcome, mapped by its name rather than guessed at —
+    /// `nil` when the tail holds no idle record (a short enough tail could truncate it) or the
+    /// loop settled cleanly, both of which fall back to reading the last assistant message.
+    private static func idleEnding(_ messages: [OC2Message]) -> TurnWaitResult.Ending? {
+        guard let outcome = messages.last(where: { $0.type == "idle" })?.outcome else { return nil }
+        switch outcome {
+        case "succeeded": return nil
+        case "failed": return .failed
+        default: return .cancelled
+        }
+    }
+
+    private static func heuristicEnding(_ last: ChatMessage) -> TurnWaitResult.Ending {
+        if last.error != nil {
+            return .failed
+        } else if last.isAnswerless {
+            return .answerless
+        } else {
+            return .finished
+        }
     }
 
     private static func isToolPart(_ part: MessagePart) -> Bool {

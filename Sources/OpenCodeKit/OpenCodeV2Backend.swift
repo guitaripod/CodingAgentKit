@@ -550,11 +550,20 @@ extension OpenCodeV2Backend {
     /// route answering a typed `404` about that missing session proves the route exists; an
     /// unmatched path on this same server answers `200` with the bundled web UI's HTML instead.
     /// Anything else — a refused connection, an auth challenge — is asked again next time rather
-    /// than remembered as either.
+    /// than remembered as either. The id itself has to pass opencode's own session-id shape
+    /// (`ses_` + lowercase alphanumerics) or the route answers a plain `400` before it ever looks
+    /// the session up, which reads as this server lacking the route when it does not.
     private func probeWaitSupport() async -> TurnWaitSupport {
-        let probeID = "turnwait-probe-\(UUID().uuidString)"
-        guard let raw = try? await client.rawWait(sessionID: probeID) else { return .serverTooOld }
-        return Self.classifyWaitProbe(raw)
+        let probeID = Self.probeSessionID()
+        do {
+            return Self.classifyWaitProbe(try await client.rawWait(sessionID: probeID))
+        } catch {
+            return .undetermined
+        }
+    }
+
+    private static func probeSessionID() -> String {
+        "ses_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
     static func classifyWaitProbe(_ raw: HTTPClient.RawResponse) -> TurnWaitSupport {
@@ -586,7 +595,9 @@ extension OpenCodeV2Backend {
         }
         let tail = (try? await client.recentMessages(sessionID: sessionID, limit: Self.waitTailLimit))
             ?? []
-        guard let outcome = OpenCodeV2Mapping.waitOutcome(tail: OpenCodeV2Mapping.transcript(tail))
+        guard
+            let outcome = OpenCodeV2Mapping.waitOutcome(
+                raw: tail, tail: OpenCodeV2Mapping.transcript(tail))
         else {
             return TurnWaitResult(state: .ended, waited: true, ending: .finished)
         }

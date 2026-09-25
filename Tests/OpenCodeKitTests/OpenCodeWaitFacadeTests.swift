@@ -35,10 +35,20 @@ private func unreachable() -> ServerConfig {
         #expect(receipt.delivers == nil)
     }
 
-    /// The facade cannot resolve a generation against an address nothing answers on, and reports
-    /// that the same way it reports an old server: too old to tell either way.
-    @Test func theFacadeReportsTooOldWhenItCannotEvenReachTheServer() async {
+    /// The facade cannot even reach the server, which says nothing about its age or generation —
+    /// that must read as undetermined, never as the permanent "too old" a stale connection could
+    /// then latch for the rest of the process.
+    @Test func theFacadeReportsUndeterminedWhenItCannotEvenReachTheServer() async {
         let backend = OpenCodeBackend { OpenCodeV2Backend(config: unreachable()) }
+        #expect(await backend.turnWaitSupport() == .undetermined)
+    }
+
+    /// A negotiation failure that genuinely says the generation lacks the route (rather than a
+    /// transport failure) still reports too old — the facade only softens the retryable case.
+    @Test func theFacadeReportsTooOldWhenNegotiationFailsForAnOtherReason() async {
+        let backend = OpenCodeBackend {
+            throw AgentError.decoding("malformed /api/info")
+        }
         #expect(await backend.turnWaitSupport() == .serverTooOld)
     }
 }

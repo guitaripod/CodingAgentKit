@@ -41,26 +41,62 @@ private let answerlessTurn = #"""
     ]
     """#
 
+/// A turn the person stopped mid-stream: partial, unremarkable content and no error on the last
+/// assistant message, but the idle record's own outcome says otherwise.
+private let interruptedTurn = #"""
+    [
+      {"id":"msg_U","time":{"created":1000},"text":"Do the thing","type":"user"},
+      {"id":"msg_A1","time":{"created":1010,"completed":1020},"type":"assistant","agent":"build","content":[{"type":"text","text":"Working on it"}],"finish":"stop"},
+      {"id":"msg_I","time":{"created":1030},"type":"idle","outcome":"interrupted"}
+    ]
+    """#
+
+/// A turn the idle record itself says failed, even though the last assistant message carries no
+/// `error` of its own — the session/idle-level failure the last message never recorded.
+private let idleFailedTurn = #"""
+    [
+      {"id":"msg_U","time":{"created":1000},"text":"Do the thing","type":"user"},
+      {"id":"msg_A1","time":{"created":1010,"completed":1020},"type":"assistant","agent":"build","content":[{"type":"text","text":"Working on it"}],"finish":"stop"},
+      {"id":"msg_I","time":{"created":1030},"type":"idle","outcome":"failed"}
+    ]
+    """#
+
 @Suite struct OpenCodeV2WaitOutcomeTests {
     @Test func aFinishedTurnCountsItsToolsSinceTheLastPrompt() throws {
-        let tail = OpenCodeV2Mapping.transcript(try records(finishedTurn))
-        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(tail: tail))
+        let raw = try records(finishedTurn)
+        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(raw: raw, tail: OpenCodeV2Mapping.transcript(raw)))
         #expect(outcome.ending == .finished)
         #expect(outcome.toolCount == 1)
         #expect(outcome.lastMessageID == "msg_A2")
     }
 
     @Test func aProviderErrorIsFailed() throws {
-        let tail = OpenCodeV2Mapping.transcript(try records(failedTurn))
-        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(tail: tail))
+        let raw = try records(failedTurn)
+        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(raw: raw, tail: OpenCodeV2Mapping.transcript(raw)))
         #expect(outcome.ending == .failed)
         #expect(outcome.lastMessageID == "msg_A1")
     }
 
     @Test func aWordlessToollessTurnIsAnswerless() throws {
-        let tail = OpenCodeV2Mapping.transcript(try records(answerlessTurn))
-        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(tail: tail))
+        let raw = try records(answerlessTurn)
+        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(raw: raw, tail: OpenCodeV2Mapping.transcript(raw)))
         #expect(outcome.ending == .answerless)
+    }
+
+    /// The idle record's own verdict outranks the last assistant message's unremarkable shape —
+    /// exactly the case `halted()` deliberately leaves looking like an ordinary answer.
+    @Test func anIdleOutcomeOfInterruptedIsCancelledEvenWithOrdinaryContent() throws {
+        let raw = try records(interruptedTurn)
+        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(raw: raw, tail: OpenCodeV2Mapping.transcript(raw)))
+        #expect(outcome.ending == .cancelled)
+    }
+
+    /// The idle record can say failed even when the last assistant message carries no `error` at
+    /// all — a session-level failure the message itself never recorded.
+    @Test func anIdleOutcomeOfFailedIsFailedEvenWithNoMessageError() throws {
+        let raw = try records(idleFailedTurn)
+        let outcome = try #require(OpenCodeV2Mapping.waitOutcome(raw: raw, tail: OpenCodeV2Mapping.transcript(raw)))
+        #expect(outcome.ending == .failed)
     }
 
     /// A tail with no assistant record at all — a very tool-heavy turn could in principle push
@@ -69,7 +105,7 @@ private let answerlessTurn = #"""
         let tail = [
             ChatMessage(id: "msg_U", role: .user, agentType: .openCode, createdAt: Date())
         ]
-        #expect(OpenCodeV2Mapping.waitOutcome(tail: tail) == nil)
+        #expect(OpenCodeV2Mapping.waitOutcome(raw: [], tail: tail) == nil)
     }
 
     /// Only tool parts after the most recent user message count — a tool call from an earlier
@@ -84,7 +120,8 @@ private let answerlessTurn = #"""
             id: "msg_A1", role: .assistant, agentType: .openCode,
             parts: [MessagePart(id: "msg_A1/text", kind: .text("done"))],
             createdAt: Date(), completedAt: Date())
-        let outcome = try? #require(OpenCodeV2Mapping.waitOutcome(tail: [earlierTool, prompt, answer]))
+        let outcome = try? #require(
+            OpenCodeV2Mapping.waitOutcome(raw: [], tail: [earlierTool, prompt, answer]))
         #expect(outcome?.toolCount == 0)
     }
 }

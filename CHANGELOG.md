@@ -14,15 +14,23 @@ Waiting on a turn without a relay: no APNs key, nothing leaves the tailnet, so a
   `ending` this build predates (nil, not a throw), fields neither side has agreed on yet, and an
   `endedAt` with or without fractional seconds — so the wire contract can only ever grow.
   claude-bridge and omp both speak `GET /sessions/:id/wait`, gated on `/status`'s new `turnWait`
-  field (missing means too old, never version zero). opencode 2.x speaks
+  field (missing means too old, never version zero), and a definite reading is held for ten
+  minutes rather than asked for again on every arming. opencode 2.x speaks
   `POST /api/experimental/session/:id/wait`, its support found out by probing the route on a
-  session id built to not exist — a typed `SessionNotFoundError` means the route is there, an
-  unmatched path's bundled web UI means it is not — and remembered for the backend's life; only a
-  `204` means idle, and the outcome is then read off a short transcript tail (a pending form or
-  permission outranks it: the loop can be idle *because* it is waiting on the person). opencode
+  session id built in opencode's own shape (`ses_` + lowercase alphanumerics — anything else, the
+  server rejects before it ever looks a session up) so it cannot exist — a typed
+  `SessionNotFoundError` means the route is there, an unmatched path's bundled web UI means it is
+  not — and remembered for the backend's life; only a `204` means idle, and the outcome is then
+  read off a short transcript tail, the trailing `idle` record's own verdict read first and the
+  transcript's shape only guessed at when that record is missing, because a turn the person just
+  stopped is deliberately left looking like an ordinary answer (a pending form or permission
+  outranks either reading: the loop can be idle *because* it is waiting on the person). opencode
   1.x has no such route in any release and reports `.unavailable(.generation)` — a fact about the
-  API generation, never about how old a particular server is. `MockBackend` gets a scriptable
-  wait, for tests that want to drive a session through running → running → ended without a server.
+  API generation, never about how old a particular server is. Neither backend ever latches a
+  transport failure, a 401 or a 5xx as `.serverTooOld`: `TurnWaitSupport.undetermined` carries
+  exactly that — a reading this process could not get just now, asked again next time rather than
+  held as a fact about the server. `MockBackend` gets a scriptable wait, for tests that want to
+  drive a session through running → running → ended without a server.
 - **`DevicePushRegistration.Receipt`.** `registerDeviceTokenReceipt(_:)` reads whether a bridge
   that accepted a device token can actually push to it — claude-bridge answers `{"ok":true}` with
   no APNs key configured at all, so accepting a token was never proof of delivering to it — with

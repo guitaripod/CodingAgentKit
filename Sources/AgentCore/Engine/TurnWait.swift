@@ -34,6 +34,10 @@ public enum TurnWaitSupport: Sendable, Equatable {
     /// This backend, or the generation it currently speaks, has no notion of waiting at all — an
     /// older opencode has no wait-without-sending route to be too old *for*.
     case unavailable(Reason)
+    /// This process could not find out just now — a transport failure, a 401, a 5xx, an
+    /// undecodable status — which says nothing about the server's age or generation and must
+    /// never be latched as if it did: ask again on the next real opportunity instead.
+    case undetermined
 
     /// Why a backend can never be waited on, independent of that server's own age. Words for the
     /// person live in TailscodeCore, which cannot see this Kit's newer types; this stays a closed

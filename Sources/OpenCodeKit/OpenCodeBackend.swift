@@ -230,9 +230,18 @@ public struct OpenCodeBackend: FileBrowsingBackend, RestartableBackend, GitObser
         try await resolved().turnWaitRequest(for: sessionID)
     }
 
+    /// A negotiation failure is not the same as a generation lacking the route: `resolved()`
+    /// throws on exactly the connection/auth failures `negotiate()` documents as answers about the
+    /// reach of the server rather than its age, and those are retryable — a Wi-Fi hiccup or a
+    /// tunnel reconfiguration at backgrounding must never be latched as a permanent "too old".
     public func turnWaitSupport() async -> TurnWaitSupport {
-        guard let generation = try? await resolved() else { return .serverTooOld }
-        return await generation.turnWaitSupport()
+        do {
+            return await (try await resolved()).turnWaitSupport()
+        } catch let error as AgentError where error.isRetryable {
+            return .undetermined
+        } catch {
+            return .serverTooOld
+        }
     }
 
     public func turnWaitResult(

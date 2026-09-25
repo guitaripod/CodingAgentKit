@@ -19,6 +19,10 @@ final class WaitServerProtocol: URLProtocol {
         guard let url = request.url, let client else { return }
         let (status, body, contentType) = WaitServer.shared.answer(
             path: url.path, method: request.httpMethod ?? "GET")
+        guard status >= 0 else {
+            client.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+            return
+        }
         let response = HTTPURLResponse(
             url: url, statusCode: status, httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": contentType])!
@@ -61,14 +65,47 @@ final class WaitServer: @unchecked Sendable {
         lock.withLock { waitProbeAnswer = (status, body.map { Data($0.utf8) }, contentType) }
     }
 
+    /// A negative status is this stub's own signal to fail the connection outright, standing in
+    /// for a dropped tailnet hop rather than any answer a real server would give.
+    func publishWaitProbeTransportFailure() {
+        lock.withLock { waitProbeAnswer = (-1, nil, "") }
+    }
+
     private static func isWaitProbe(path: String, method: String) -> Bool {
         method == "POST" && path.hasPrefix("/api/experimental/session/") && path.hasSuffix("/wait")
     }
+
+    /// The exact id opencode's own session-id validator accepts: `ses_` followed by lowercase
+    /// alphanumerics. A probe built any other way (a dashed UUID, an arbitrary prefix) is rejected
+    /// with a `400` before the server ever looks the session up — this stub matches that so a
+    /// regression in how the Kit builds the probe id is caught without a live server.
+    private static func sessionID(from waitPath: String) -> String? {
+        let segments = waitPath.split(separator: "/")
+        guard segments.count == 5, segments[0] == "api", segments[1] == "experimental",
+            segments[2] == "session", segments[4] == "wait"
+        else { return nil }
+        return String(segments[3])
+    }
+
+    private static func hasOpencodeSessionIDShape(_ id: String) -> Bool {
+        guard id.hasPrefix("ses_") else { return false }
+        let suffix = id.dropFirst("ses_".count)
+        return !suffix.isEmpty && suffix.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber) }
+    }
+
+    private static let invalidSessionIDAnswer: (Int, Data?, String) = (
+        400,
+        Data(#"{"_tag":"InvalidRequestError","message":"Invalid session ID","field":"sessionID"}"#.utf8),
+        "application/json"
+    )
 
     func answer(path: String, method: String) -> (Int, Data?, String) {
         lock.withLock {
             if Self.isWaitProbe(path: path, method: method) {
                 waitProbeHits += 1
+                guard let id = Self.sessionID(from: path), Self.hasOpencodeSessionIDShape(id) else {
+                    return Self.invalidSessionIDAnswer
+                }
                 return waitProbeAnswer ?? (404, nil, "text/html")
             }
             let key = "\(method) \(path)"
@@ -115,6 +152,21 @@ final class WaitServer: @unchecked Sendable {
         #expect(first == .supported)
         #expect(second == .supported)
         #expect(WaitServer.shared.waitProbeHitCount == 1)
+    }
+
+    /// A dropped connection is never remembered as either answer — it is asked again next time,
+    /// and once the tunnel recovers the real answer is found and then held.
+    @Test func aTransportFailureIsUndeterminedAndNotCached() async {
+        let backend = Self.backend()
+        WaitServer.shared.publishWaitProbeTransportFailure()
+        let first = await backend.turnWaitSupport()
+        #expect(first == .undetermined)
+
+        WaitServer.shared.publishWaitProbe(
+            404, #"{"_tag":"SessionNotFoundError","sessionID":"x","message":"gone"}"#)
+        let second = await backend.turnWaitSupport()
+        #expect(second == .supported)
+        #expect(WaitServer.shared.waitProbeHitCount == 2)
     }
 
     @Test func anUnsupportedServerOffersNoRequest() async throws {
