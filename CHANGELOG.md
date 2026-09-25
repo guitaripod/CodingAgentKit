@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.34.0
+
+Waiting on a turn without a relay: no APNs key, nothing leaves the tailnet, so a background
+`URLSession` this process does not itself drive can hold the request instead.
+
+### Added
+- **`TurnWaitRequest`/`TurnWaitResult`.** `CodingAgentBackend` gains `turnWaitRequest(for:)`,
+  `turnWaitSupport()` and `turnWaitResult(status:headers:body:sessionID:)`: a self-contained,
+  side-effect-free request that answers only once a session's turn ends or needs the person, safe
+  to hand to a background session in another process because two of it at once, or a silent
+  retry, cost nothing. `TurnWaitResult` decodes leniently — a heartbeat's leading blank line, an
+  `ending` this build predates (nil, not a throw), fields neither side has agreed on yet, and an
+  `endedAt` with or without fractional seconds — so the wire contract can only ever grow.
+  claude-bridge and omp both speak `GET /sessions/:id/wait`, gated on `/status`'s new `turnWait`
+  field (missing means too old, never version zero). opencode 2.x speaks
+  `POST /api/experimental/session/:id/wait`, its support found out by probing the route on a
+  session id built to not exist — a typed `SessionNotFoundError` means the route is there, an
+  unmatched path's bundled web UI means it is not — and remembered for the backend's life; only a
+  `204` means idle, and the outcome is then read off a short transcript tail (a pending form or
+  permission outranks it: the loop can be idle *because* it is waiting on the person). opencode
+  1.x has no such route in any release and reports `.unavailable(.generation)` — a fact about the
+  API generation, never about how old a particular server is. `MockBackend` gets a scriptable
+  wait, for tests that want to drive a session through running → running → ended without a server.
+- **`DevicePushRegistration.Receipt`.** `registerDeviceTokenReceipt(_:)` reads whether a bridge
+  that accepted a device token can actually push to it — claude-bridge answers `{"ok":true}` with
+  no APNs key configured at all, so accepting a token was never proof of delivering to it — with
+  `nil` from a bridge built before it said either way, which must not be read as `false`.
+
 ## 0.33.2
 
 ### Fixed

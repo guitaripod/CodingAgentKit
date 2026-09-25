@@ -973,6 +973,15 @@ public protocol CodingAgentBackend: Sendable {
     /// longer knows stops pushing to it. No-op for backends without push
     /// infrastructure.
     func unregisterDeviceToken(_ registration: DevicePushRegistration) async throws
+    /// The receipt a device-token registration left behind — a bridge can accept a token with no
+    /// working APNs client behind it at all, so a caller that needs to know whether it is really
+    /// covered by a remote push asks here rather than trusting the bare success of
+    /// ``registerDeviceToken(_:)``. A protocol requirement (not just an extension default) because
+    /// a caller almost always holds its backend as `any CodingAgentBackend`, and only a
+    /// requirement dispatches to a conformer's own override through that box.
+    func registerDeviceTokenReceipt(
+        _ registration: DevicePushRegistration
+    ) async throws -> DevicePushRegistration.Receipt
     /// Live quotas for other providers the backend's host machine is signed into (the bridge
     /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
     func additionalUsageQuotas() async throws -> [UsageQuota]
@@ -1041,6 +1050,20 @@ public protocol CodingAgentBackend: Sendable {
     /// Undoes the revert standing on the conversation: the messages come back into effect and the
     /// files return to how the agent left them.
     func restoreRevert(sessionID: String) async throws
+    /// A self-contained, side-effect-free request that answers only once this session's turn ends
+    /// or needs the person — safe to hand to a background `URLSession` this process does not
+    /// itself drive. `nil` when ``turnWaitSupport()`` is not ``TurnWaitSupport/supported``.
+    func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest?
+    /// Whether, and why not, this session's server can be waited on right now. Defaults to
+    /// ``TurnWaitSupport/unavailable(_:)`` with ``TurnWaitSupport/Reason/none``.
+    func turnWaitSupport() async -> TurnWaitSupport
+    /// Reads what a ``turnWaitRequest(for:)`` answered with, from the raw response a caller — very
+    /// possibly a background session in another process — actually received. Throws for any
+    /// status or body this backend cannot make sense of, which a caller treats the same as an
+    /// unknown or unsupported wait rather than a settled outcome.
+    func turnWaitResult(
+        status: Int, headers: [String: String], body: Data, sessionID: String
+    ) async throws -> TurnWaitResult
 }
 
 extension CodingAgentBackend {

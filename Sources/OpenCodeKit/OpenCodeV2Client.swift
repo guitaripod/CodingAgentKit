@@ -169,6 +169,30 @@ public struct OpenCodeV2Client: Sendable {
         try unwrap(await http.send(builder.request(.get, "/api/session/\(sessionID)/inbox")))
     }
 
+    /// The newest `limit` records rather than the whole transcript — `messages(sessionID:)` walks
+    /// forward from the start until a short page, which on a long conversation means paging
+    /// through everything just to reach the end. Asking for the first page in descending order
+    /// gets the tail directly, in one request; the result is handed back oldest first, the order
+    /// every mapping function expects.
+    func recentMessages(sessionID: String, limit: Int) async throws -> [OC2Message] {
+        let page: OC2Page<OC2Message> = try decode(
+            await http.send(
+                builder.request(
+                    .get, "/api/session/\(sessionID)/message",
+                    query: [
+                        URLQueryItem(name: "limit", value: "\(limit)"),
+                        URLQueryItem(name: "order", value: "desc"),
+                    ])))
+        return page.data.reversed()
+    }
+
+    /// Waits for the session's agent loop to go idle, per `POST /api/experimental/session/:id/wait`
+    /// — no body, and never thrown for the status the server actually answered with, since reading
+    /// that status is the entire point of both a support probe and a result read.
+    func rawWait(sessionID: String) async throws -> HTTPClient.RawResponse {
+        try await http.sendRaw(builder.request(.post, "/api/experimental/session/\(sessionID)/wait"))
+    }
+
     func synthetic(sessionID: String, request: OC2SyntheticRequest) async throws {
         let body = try JSONCoding.encoder.encode(request)
         try await http.send(

@@ -249,6 +249,11 @@ public struct OpenCodeV1Backend: OpenCodeGeneration {
         return OpenCodeLedger.report(sessions: sessions, days: days)
     }
 
+    /// 1.x has no wait-without-sending route at all, in any of its releases — a fact about the API
+    /// generation rather than about how old this particular server is, so it never becomes
+    /// `serverTooOld` no matter how far a future 1.x release runs.
+    public func turnWaitSupport() async -> TurnWaitSupport { .unavailable(.generation) }
+
     public func listSessions(inWorktree worktree: String?) async throws -> [AgentSession] {
         guard let worktree else { return try await listSessions() }
         let sessions = try await client.listSessions(directory: worktree)

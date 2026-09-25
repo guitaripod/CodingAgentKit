@@ -220,6 +220,28 @@ public struct OpenCodeBackend: FileBrowsingBackend, RestartableBackend, GitObser
         try await resolved().unregisterDeviceToken(registration)
     }
 
+    public func registerDeviceTokenReceipt(
+        _ registration: DevicePushRegistration
+    ) async throws -> DevicePushRegistration.Receipt {
+        try await resolved().registerDeviceTokenReceipt(registration)
+    }
+
+    public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? {
+        try await resolved().turnWaitRequest(for: sessionID)
+    }
+
+    public func turnWaitSupport() async -> TurnWaitSupport {
+        guard let generation = try? await resolved() else { return .serverTooOld }
+        return await generation.turnWaitSupport()
+    }
+
+    public func turnWaitResult(
+        status: Int, headers: [String: String], body: Data, sessionID: String
+    ) async throws -> TurnWaitResult {
+        try await resolved().turnWaitResult(
+            status: status, headers: headers, body: body, sessionID: sessionID)
+    }
+
     public func additionalUsageQuotas() async throws -> [UsageQuota] {
         try await resolved().additionalUsageQuotas()
     }

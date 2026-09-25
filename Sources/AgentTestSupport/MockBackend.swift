@@ -3,6 +3,10 @@ import Foundation
 import OpenCodeKit
 import Synchronization
 
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 public struct MockScriptStep: Sendable {
     public var event: BackendEvent
     public var delay: Duration
@@ -58,6 +62,9 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let commands: [AgentCommand]
     private let git: GitSnapshot?
     private let gitPatches: [String: String]
+    private let waitSupport: TurnWaitSupport
+    private let waitResults: [String: [TurnWaitResult]]
+    private let pushReceipt: DevicePushRegistration.Receipt
     private let mutable = Mutex(Mutable())
 
     private struct Mutable {
@@ -74,6 +81,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var replyIndex = 0
         var mintCounter = 0
         var modelsFailures = 0
+        var waitCallCounts: [String: Int] = [:]
     }
 
     public init(
@@ -105,7 +113,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         commands: [AgentCommand] = MockBackend.demoCommands,
         git: GitSnapshot? = nil,
         gitPatches: [String: String] = [:],
-        transcriptPrefix: Int? = nil
+        transcriptPrefix: Int? = nil,
+        turnWaitSupport: TurnWaitSupport = .supported,
+        turnWaitResults: [String: [TurnWaitResult]] = [:],
+        pushReceipt: DevicePushRegistration.Receipt = DevicePushRegistration.Receipt()
     ) {
         self.agentType = agentType
         self.script = script
@@ -134,6 +145,9 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         self.commands = commands
         self.git = git
         self.gitPatches = gitPatches
+        self.waitSupport = turnWaitSupport
+        self.waitResults = turnWaitResults
+        self.pushReceipt = pushReceipt
         self.capabilities =
             capabilities
             ?? BackendCapabilities(
@@ -315,6 +329,41 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         }
         guard interactive else { return }
         stream([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
+    }
+
+    public func registerDeviceTokenReceipt(
+        _ registration: DevicePushRegistration
+    ) async throws -> DevicePushRegistration.Receipt {
+        pushReceipt
+    }
+
+    public func turnWaitSupport() async -> TurnWaitSupport { waitSupport }
+
+    /// A placeholder request scripted tests never actually send — the session id rides the URL
+    /// only so a test can tell one session's request from another's at a glance.
+    public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? {
+        guard waitSupport == .supported else { return nil }
+        var request = URLRequest(url: URL(string: "https://mock.invalid/wait/\(sessionID)")!)
+        request.httpMethod = "GET"
+        return TurnWaitRequest(request: request, uploadsEmptyBody: false)
+    }
+
+    /// Ignores the status and body a real backend would decode off the wire — a mock never puts
+    /// one there — and instead answers the next result scripted for this session, advancing its
+    /// own call count so a script of several answers plays out in order and the last one repeats
+    /// for every call past the end of the script.
+    public func turnWaitResult(
+        status: Int, headers: [String: String], body: Data, sessionID: String
+    ) async throws -> TurnWaitResult {
+        guard let queued = waitResults[sessionID], !queued.isEmpty else {
+            throw AgentError.unsupported("turn wait")
+        }
+        let index = mutable.withLock { state -> Int in
+            let current = state.waitCallCounts[sessionID, default: 0]
+            state.waitCallCounts[sessionID] = current + 1
+            return current
+        }
+        return queued[min(index, queued.count - 1)]
     }
 
     /// Makes the session's standing revert final the way a server does when the next message

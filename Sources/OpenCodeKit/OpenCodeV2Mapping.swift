@@ -467,6 +467,39 @@ enum OpenCodeV2Mapping {
         return result
     }
 
+    /// What a wait's `204` leaves for the caller to say happened, read from a short tail of the
+    /// transcript rather than from the wait itself — the route only proves the turn is over, never
+    /// how it went. `nil` when the tail holds no assistant message at all, which a short enough
+    /// tail on a very tool-heavy turn could leave true; the caller falls back to a bare `finished`.
+    struct WaitOutcome: Sendable, Equatable {
+        var ending: TurnWaitResult.Ending
+        var toolCount: Int
+        var lastMessageID: String
+    }
+
+    static func waitOutcome(tail: [ChatMessage]) -> WaitOutcome? {
+        guard let last = tail.last(where: { $0.role == .assistant }) else { return nil }
+        let lastUserIndex = tail.lastIndex { $0.role == .user }
+        let sinceUser = lastUserIndex.map { Array(tail[($0 + 1)...]) } ?? tail
+        let toolCount = sinceUser.reduce(into: 0) { count, message in
+            count += message.parts.filter(isToolPart).count
+        }
+        let ending: TurnWaitResult.Ending
+        if last.error != nil {
+            ending = .failed
+        } else if last.isAnswerless {
+            ending = .answerless
+        } else {
+            ending = .finished
+        }
+        return WaitOutcome(ending: ending, toolCount: toolCount, lastMessageID: last.id)
+    }
+
+    private static func isToolPart(_ part: MessagePart) -> Bool {
+        if case .tool = part.kind { return true }
+        return false
+    }
+
     /// What a stored bookkeeping record says to the reader, or nil when it says nothing to them.
     static func noteSubject(_ message: OC2Message) -> TranscriptNote.Subject? {
         switch message.type {

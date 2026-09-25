@@ -34,6 +34,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     let directories = DirectoryCache()
     let local = OpenCodeLocalEvents()
     let cutOffs = CutOffWatch()
+    let waitSupport = WaitSupportCache()
 
     public init(config: ServerConfig) {
         self.client = OpenCodeV2Client(config: config)
@@ -67,6 +68,17 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
             else { return nil }
             return .some(reading.turn)
         }
+    }
+
+    /// Whether this server answers the experimental wait route at all, found out once by probing
+    /// it and remembered for the life of this backend — a server does not gain or lose the route
+    /// mid-process, and the probe itself costs a round trip nobody wants to pay per session.
+    actor WaitSupportCache {
+        private var value: TurnWaitSupport?
+
+        func cached() -> TurnWaitSupport? { value }
+
+        func record(_ support: TurnWaitSupport) { value = support }
     }
 
     /// Where each session runs, read once off its record: the scoped routes — the command
@@ -505,6 +517,83 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     public func usageAnalytics(days: Int) async throws -> UsageAnalyticsReport? {
         let records = try await client.listSessions(limit: OpenCodeLedger.sessionCeiling)
         return OpenCodeLedger.report(records: records.map(OpenCodeLedger.Record.init), days: days)
+    }
+}
+
+/// `POST /api/experimental/session/:id/wait` — new in 2.x, marked experimental and carrying no
+/// backward-compat guarantee, so support is found out from the machine rather than assumed from
+/// the generation: a session id that cannot exist tells the route apart from an old server's
+/// catch-all, which answers an unmatched path with its own bundled web UI rather than a 404.
+extension OpenCodeV2Backend {
+    /// How many of the newest records the outcome is read from — enough to hold a turn's own
+    /// prompt, its steps and its answer without walking a long conversation's whole history.
+    static let waitTailLimit = 60
+
+    public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? {
+        guard await turnWaitSupport() == .supported else { return nil }
+        return TurnWaitRequest(
+            request: try client.builder.request(
+                .post, "/api/experimental/session/\(sessionID)/wait"),
+            uploadsEmptyBody: true)
+    }
+
+    public func turnWaitSupport() async -> TurnWaitSupport {
+        if let cached = await waitSupport.cached() { return cached }
+        let probed = await probeWaitSupport()
+        if probed == .supported || probed == .serverTooOld {
+            await waitSupport.record(probed)
+        }
+        return probed
+    }
+
+    /// Asks the route itself, on a session id built so it cannot collide with a real one: the
+    /// route answering a typed `404` about that missing session proves the route exists; an
+    /// unmatched path on this same server answers `200` with the bundled web UI's HTML instead.
+    /// Anything else — a refused connection, an auth challenge — is asked again next time rather
+    /// than remembered as either.
+    private func probeWaitSupport() async -> TurnWaitSupport {
+        let probeID = "turnwait-probe-\(UUID().uuidString)"
+        guard let raw = try? await client.rawWait(sessionID: probeID) else { return .serverTooOld }
+        return Self.classifyWaitProbe(raw)
+    }
+
+    static func classifyWaitProbe(_ raw: HTTPClient.RawResponse) -> TurnWaitSupport {
+        guard raw.status == 404 else { return .serverTooOld }
+        let contentType = (raw.headers["Content-Type"] ?? raw.headers["content-type"] ?? "")
+            .lowercased()
+        guard !contentType.contains("html") else { return .serverTooOld }
+        guard (try? JSONSerialization.jsonObject(with: raw.data)) != nil else { return .serverTooOld }
+        return .supported
+    }
+
+    /// Only a `204` means the agent loop went idle — any other status is a shape this backend has
+    /// no reading for, including opencode's own `503` for a wait that outlived its own budget, and
+    /// is thrown rather than guessed at. A pending form or permission outranks the transcript: the
+    /// loop can be idle *because* it is waiting on the person, and that is `needsYou`, not `ended`.
+    public func turnWaitResult(
+        status: Int, headers: [String: String], body: Data, sessionID: String
+    ) async throws -> TurnWaitResult {
+        guard status == 204 else {
+            throw AgentError.http(status: status, body: String(data: body, encoding: .utf8) ?? "")
+        }
+        if let forms = try? await client.pendingForms(sessionID: sessionID), !forms.isEmpty {
+            return TurnWaitResult(state: .needsYou, waited: true, ending: .question)
+        }
+        if let permissions = try? await client.pendingPermissions(sessionID: sessionID),
+            !permissions.isEmpty
+        {
+            return TurnWaitResult(state: .needsYou, waited: true, ending: .approval)
+        }
+        let tail = (try? await client.recentMessages(sessionID: sessionID, limit: Self.waitTailLimit))
+            ?? []
+        guard let outcome = OpenCodeV2Mapping.waitOutcome(tail: OpenCodeV2Mapping.transcript(tail))
+        else {
+            return TurnWaitResult(state: .ended, waited: true, ending: .finished)
+        }
+        let title = try? await client.session(sessionID).title
+        return TurnWaitResult(
+            state: .ended, waited: true, ending: outcome.ending, title: title,
+            toolCount: outcome.toolCount, lastMessageID: outcome.lastMessageID)
     }
 }
 

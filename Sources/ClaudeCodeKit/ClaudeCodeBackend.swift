@@ -1180,6 +1180,9 @@ struct BRStatus: Decodable {
     let model: String?
     let version: String?
     let access: ServerAccess?
+    /// The protocol version of `GET /sessions/:id/wait`, absent on a bridge built before the
+    /// route existed — read as "too old for it" rather than as version zero.
+    let turnWait: Int?
 }
 
 struct BRFileEntry: Decodable {
@@ -1324,5 +1327,62 @@ extension ClaudeCodeBackend {
     public func unregisterDeviceToken(_ registration: DevicePushRegistration) async throws {
         let body = try BridgeCoding.encoder.encode(registration)
         _ = try await http.send(builder.request(.post, "/push/device/unregister", body: body))
+    }
+
+    /// The bridge answers `{"ok":true}` whether or not it holds an APNs key at all — accepting a
+    /// token is not the same as being able to push it anywhere — so `delivers` is read from the
+    /// same response rather than inferred from the call having succeeded. `nil` from a bridge
+    /// built before it said either way.
+    public func registerDeviceTokenReceipt(
+        _ registration: DevicePushRegistration
+    ) async throws -> DevicePushRegistration.Receipt {
+        let body = try BridgeCoding.encoder.encode(registration)
+        let data = try await http.send(builder.request(.post, "/push/device", body: body))
+        let response = try? BridgeCoding.decoder.decode(BRPushReceipt.self, from: data)
+        return DevicePushRegistration.Receipt(delivers: response?.delivers)
+    }
+}
+
+struct BRPushReceipt: Decodable {
+    let ok: Bool?
+    let delivers: Bool?
+}
+
+/// `GET /sessions/:id/wait`: a long-held request that answers only once the session's turn ends or
+/// needs the person, identical on claude-bridge and omp-bridge — both agent types share this one
+/// implementation.
+extension ClaudeCodeBackend {
+    public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? {
+        guard await turnWaitSupport() == .supported else { return nil }
+        return TurnWaitRequest(
+            request: try builder.request(.get, "/sessions/\(sessionID)/wait"),
+            uploadsEmptyBody: false)
+    }
+
+    /// `/status`'s `turnWait` is this route's own protocol version; a bridge built before the
+    /// route existed leaves the field out entirely, which this reads as too old rather than as a
+    /// version of zero — and a bridge that cannot even be asked is read the same way.
+    public func turnWaitSupport() async -> TurnWaitSupport {
+        guard let data = try? await http.send(builder.request(.get, "/status")),
+            let status = try? BridgeCoding.decoder.decode(BRStatus.self, from: data),
+            let turnWait = status.turnWait, turnWait >= 1
+        else { return .serverTooOld }
+        return .supported
+    }
+
+    /// The bridge always answers this route `200` with a JSON body, however long it held the
+    /// connection open — the heartbeats it wrote first are blank lines the decoder skips as
+    /// insignificant whitespace. Anything else is a status this backend has no reading for.
+    public func turnWaitResult(
+        status: Int, headers: [String: String], body: Data, sessionID: String
+    ) async throws -> TurnWaitResult {
+        guard (200..<300).contains(status) else {
+            throw AgentError.http(status: status, body: String(data: body, encoding: .utf8) ?? "")
+        }
+        do {
+            return try BridgeCoding.decoder.decode(TurnWaitResult.self, from: body)
+        } catch {
+            throw AgentError.decoding("turn wait: \(error)")
+        }
     }
 }

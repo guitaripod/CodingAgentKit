@@ -80,6 +80,27 @@ public struct HTTPClient: Sendable {
         return .modified(data, etag: http.value(forHTTPHeaderField: "ETag"))
     }
 
+    /// What the server actually said, whatever that was. Every other method on this type turns a
+    /// non-2xx status into a thrown error because callers only ever want the payload; a caller
+    /// that wants to read the status itself — a feature probe telling a typed 404 apart from an
+    /// unmatched route's 200, a result reader whose whole job is the code the server chose — needs
+    /// the status untouched instead. Only a genuine transport failure throws.
+    public struct RawResponse: Sendable {
+        public let status: Int
+        public let headers: [String: String]
+        public let data: Data
+    }
+
+    public func sendRaw(_ request: URLRequest) async throws -> RawResponse {
+        let (data, http) = try await exchange(request, timeout: policy.requestTimeout)
+        var headers: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            guard let name = key as? String else { continue }
+            headers[name] = "\(value)"
+        }
+        return RawResponse(status: http.statusCode, headers: headers, data: data)
+    }
+
     private func exchange(_ request: URLRequest, timeout: Duration) async throws
         -> (Data, HTTPURLResponse)
     {
