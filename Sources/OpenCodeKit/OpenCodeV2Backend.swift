@@ -566,8 +566,14 @@ extension OpenCodeV2Backend {
         "ses_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
+    /// Only an answer that says something about the route decides anything: a `404` is read by
+    /// its body, and a success status is the web UI standing in for a path this server lacks. An
+    /// auth challenge, a throttle, a server error or any other refusal says nothing about the
+    /// route, so it is `.undetermined` — never cached, asked again next time.
     static func classifyWaitProbe(_ raw: HTTPClient.RawResponse) -> TurnWaitSupport {
-        guard raw.status == 404 else { return .serverTooOld }
+        guard raw.status == 404 else {
+            return (200..<400).contains(raw.status) ? .serverTooOld : .undetermined
+        }
         let contentType = (raw.headers["Content-Type"] ?? raw.headers["content-type"] ?? "")
             .lowercased()
         guard !contentType.contains("html") else { return .serverTooOld }

@@ -155,8 +155,15 @@ private let idleFailedTurn = #"""
         #expect(OpenCodeV2Backend.classifyWaitProbe(response) == .serverTooOld)
     }
 
-    @Test func anyOtherStatusIsUnsupported() {
-        let response = raw(status: 400, headers: [:], body: #"{"_tag":"InvalidRequestError"}"#)
+    @Test func aRefusalThatSaysNothingAboutTheRouteIsUndetermined() {
+        for status in [400, 401, 403, 408, 429, 500, 502, 503] {
+            let response = raw(status: status, headers: [:], body: #"{"_tag":"Whatever"}"#)
+            #expect(OpenCodeV2Backend.classifyWaitProbe(response) == .undetermined)
+        }
+    }
+
+    @Test func aRedirectIsTheWebUIAndUnsupported() {
+        let response = raw(status: 302, headers: ["Location": "/"], body: "")
         #expect(OpenCodeV2Backend.classifyWaitProbe(response) == .serverTooOld)
     }
 }
