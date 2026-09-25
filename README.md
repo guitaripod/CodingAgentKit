@@ -125,12 +125,14 @@ Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `S
 | Interrupted turns | `reportsInterruptions` | — | ✅ | ✅ |
 | Stop background work | `supportsBackgroundStop` | — | — | ✅ ⁵ |
 | Live usage quota (rate-limit gauges) | — ³ | — | — | ✅ ⁵ |
+| Wait on a turn from another process | — ⁶ | — | ✅ | ✅ |
 
 ¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
 ² The bridge's questions arrive in the transcript rather than as a protocol prompt, and `answersQuestionsByMessage` is `true`: answer by sending an ordinary message, not by calling a respond endpoint. `QuestionRequest.awaitingAnswer` derives what is still open from the transcript.
 ³ No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
 ⁴ Probe by calling `sessionSpend(_:)`, which returns `nil` when the backend cannot price a conversation.
 ⁵ claude-bridge only: omp has no `/goal`, no background shells and no plan gauges.
+⁶ Ask `turnWaitSupport()`. `turnWaitRequest(for:)` vends a fully authorised request with no side effect that the server answers only when the session's turn ends or stops for the person — made to be handed to a background `URLSession` owned by the system, which may re-send it — and `turnWaitResult(status:headers:body:sessionID:)` reads the answer. The bridges hold `GET /sessions/:id/wait` open; opencode 2.x has its own `POST /api/experimental/session/{id}/wait`; opencode 1.x has no way to wait without sending a prompt, so it is never offered one. A transport failure reads `.undetermined`, never `.serverTooOld`.
 
 ### Beyond messages
 
