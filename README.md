@@ -21,7 +21,7 @@ opencode and the bridges all expose an HTTP surface with a Server-Sent Events st
 | `AgentCore` | Transport (URLSession REST + SSE), unified models, `CodingAgentBackend`, `MessageReducer`, `AgentConversation`, protocols (`SecretStore`, `SessionCache`), swift-log facade. No backend specifics, no Apple-only imports. |
 | `OpenCodeKit` | Hand-written opencode client + event decoder + `OpenCodeBackend` (conforms `FileBrowsingBackend`). |
 | `ClaudeCodeKit` | Client for claude-bridge and omp-bridge (one protocol, `AgentType` picks the flavour) + event decoder + `ClaudeCodeBackend`, over one multiplexed SSE stream. |
-| `DelegateKit` | Client for the delegate daemon (tiered task dispatcher): packets, runs, tier health, approvals, and the run event stream. |
+| `DelegateKit` | Client for the delegate daemon (tiered task dispatcher): packets, runs, tier health, approvals, held patches (read, apply, discard), and the run event stream. |
 | `CodingAgentKit` | Umbrella that re-exports `AgentCore`, `OpenCodeKit`, `ClaudeCodeKit` and `DelegateKit`. |
 | `AgentTestSupport` | `MockBackend` (scriptable, injectable mid-stream failure) + SSE replay helpers for previews and deterministic tests — no live server needed. |
 | `CodingAgentKitApple` | Apple-only companion: `KeychainSecretStore`, `ConnectionProfile`, `ConnectionProfileStore`. Empty on Linux so the core stays portable. |

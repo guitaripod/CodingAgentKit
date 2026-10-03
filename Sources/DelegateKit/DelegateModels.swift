@@ -20,6 +20,11 @@ public enum DelegateAttemptStatus: String, Codable, Sendable, Hashable {
     case pass, fail, timeout, scope, error
 }
 
+/// Where a passing patch went: into the tree as it landed, held for a person to read, or set aside.
+public enum DelegateDelivery: String, Codable, Sendable, Hashable {
+    case applied, pending, discarded
+}
+
 /// One delegated unit of work exactly as the daemon stores it.
 public struct DelegatePacket: Codable, Sendable, Hashable, Identifiable {
     public var id: String
@@ -118,15 +123,41 @@ public struct DelegateOverrides: Codable, Sendable, Hashable {
     public var ceiling: String?
     public var mode: DelegateMode?
     public var attempts: Int?
+    /// Hold a passing patch for review instead of applying it as it lands. Sent as `apply: review`
+    /// and only when true, so a daemon older than review never sees the field.
+    public var review: Bool?
 
-    public init(tier: String? = nil, ceiling: String? = nil, mode: DelegateMode? = nil, attempts: Int? = nil) {
+    enum CodingKeys: String, CodingKey { case tier, ceiling, mode, attempts, apply }
+
+    public init(
+        tier: String? = nil, ceiling: String? = nil, mode: DelegateMode? = nil, attempts: Int? = nil, review: Bool? = nil
+    ) {
         self.tier = tier
         self.ceiling = ceiling
         self.mode = mode
         self.attempts = attempts
+        self.review = review
     }
 
-    public var isEmpty: Bool { tier == nil && ceiling == nil && mode == nil && attempts == nil }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tier = try c.decodeIfPresent(String.self, forKey: .tier)
+        ceiling = try c.decodeIfPresent(String.self, forKey: .ceiling)
+        mode = try c.decodeIfPresent(DelegateMode.self, forKey: .mode)
+        attempts = try c.decodeIfPresent(Int.self, forKey: .attempts)
+        review = try c.decodeIfPresent(String.self, forKey: .apply).map { $0 == "review" }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(tier, forKey: .tier)
+        try c.encodeIfPresent(ceiling, forKey: .ceiling)
+        try c.encodeIfPresent(mode, forKey: .mode)
+        try c.encodeIfPresent(attempts, forKey: .attempts)
+        if review == true { try c.encode("review", forKey: .apply) }
+    }
+
+    public var isEmpty: Bool { tier == nil && ceiling == nil && mode == nil && attempts == nil && review != true }
 }
 
 public struct DelegateRun: Codable, Sendable, Hashable, Identifiable {
@@ -145,9 +176,12 @@ public struct DelegateRun: Codable, Sendable, Hashable, Identifiable {
     public var escalations: Int
     public var summary: String
     public var packet: DelegatePacket
+    /// Where the passing patch went. Nil for a run that never passed — and for a pass recorded by a
+    /// daemon older than review, which applied every patch as it landed (`effectiveDelivery`).
+    public var delivery: DelegateDelivery?
 
     enum CodingKeys: String, CodingKey {
-        case id, repo, host, mode, ceiling, status, escalations, summary, packet
+        case id, repo, host, mode, ceiling, status, escalations, summary, packet, delivery
         case packetID = "packet_id"
         case taskClass = "class"
         case startTier = "start_tier"
@@ -159,11 +193,37 @@ public struct DelegateRun: Codable, Sendable, Hashable, Identifiable {
     public var created: Date? { DelegateTimestamp.parse(createdAt) }
     public var finished: Date? { finishedAt.flatMap(DelegateTimestamp.parse) }
 
+    /// Where a passing patch is, reading a pass with no record as applied, which is what every pass
+    /// was before a patch could wait.
+    public var effectiveDelivery: DelegateDelivery? {
+        delivery ?? (status == .passed ? .applied : nil)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        packetID = try c.decode(String.self, forKey: .packetID)
+        taskClass = try c.decode(String.self, forKey: .taskClass)
+        repo = try c.decode(String.self, forKey: .repo)
+        host = try c.decode(String.self, forKey: .host)
+        mode = try c.decode(DelegateMode.self, forKey: .mode)
+        startTier = try c.decode(String.self, forKey: .startTier)
+        ceiling = try c.decode(String.self, forKey: .ceiling)
+        status = try c.decode(DelegateRunStatus.self, forKey: .status)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        finishedAt = try c.decodeIfPresent(String.self, forKey: .finishedAt)
+        passedTier = try c.decodeIfPresent(String.self, forKey: .passedTier)
+        escalations = try c.decode(Int.self, forKey: .escalations)
+        summary = try c.decode(String.self, forKey: .summary)
+        packet = try c.decode(DelegatePacket.self, forKey: .packet)
+        delivery = try c.decodeIfPresent(String.self, forKey: .delivery).flatMap(DelegateDelivery.init(rawValue:))
+    }
+
     public init(
         id: String, packetID: String, taskClass: String, repo: String, host: String, mode: DelegateMode,
         startTier: String, ceiling: String, status: DelegateRunStatus, createdAt: String,
         finishedAt: String? = nil, passedTier: String? = nil, escalations: Int = 0, summary: String = "",
-        packet: DelegatePacket
+        packet: DelegatePacket, delivery: DelegateDelivery? = nil
     ) {
         self.id = id
         self.packetID = packetID
@@ -180,6 +240,7 @@ public struct DelegateRun: Codable, Sendable, Hashable, Identifiable {
         self.escalations = escalations
         self.summary = summary
         self.packet = packet
+        self.delivery = delivery
     }
 }
 
@@ -419,6 +480,10 @@ public struct DelegateCapabilities: Codable, Sendable, Hashable {
     /// Whether this daemon lets the tailnet in without a password.
     public var trustsTailnet: Bool { auth == "tailnet" }
 
+    /// Whether this daemon can hold a passing patch for review (`apply: review`, the patch, apply
+    /// and discard routes) — delegate 0.4 and later.
+    public var supportsReview: Bool { features.contains("review") }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         api = try container.decode(Int.self, forKey: .api)
@@ -462,6 +527,10 @@ public enum DelegateEvent: Sendable, Hashable {
     case escalated(from: String, to: String, reason: String)
     case chainFailover(tier: String, from: String, to: String, reason: String)
     case applied(files: [String], patchBytes: Int)
+    /// The patch passed and is held until a person applies or discards it.
+    case awaitingReview(files: [String], patchBytes: Int)
+    /// The held patch was set aside; the tree never saw it.
+    case discarded(files: [String])
     case runFinished(status: DelegateRunStatus, passedTier: String?, escalations: Int, durationMS: Int, summary: String)
     case unknown(kind: String)
 
@@ -621,6 +690,12 @@ extension DelegateEnvelope: Decodable {
             return .applied(
                 files: try c.decodeIfPresent([String].self, forKey: .files) ?? [],
                 patchBytes: try c.decodeIfPresent(Int.self, forKey: .patchBytes) ?? 0)
+        case "awaiting_review":
+            return .awaitingReview(
+                files: try c.decodeIfPresent([String].self, forKey: .files) ?? [],
+                patchBytes: try c.decodeIfPresent(Int.self, forKey: .patchBytes) ?? 0)
+        case "discarded":
+            return .discarded(files: try c.decodeIfPresent([String].self, forKey: .files) ?? [])
         case "run_finished":
             return .runFinished(
                 status: try c.decode(DelegateRunStatus.self, forKey: .status),

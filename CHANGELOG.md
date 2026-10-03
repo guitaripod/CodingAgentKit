@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.35.0
+
+A delegated patch can wait to be read.
+
+### Added
+- **Review before a patch lands.** `DelegateOverrides.review` asks a delegate 0.4+ daemon to hold a
+  passing patch instead of applying it (sent as `apply: review`, and only when true, so an older
+  daemon is sent exactly what it always was). `DelegateRun.delivery` says where the patch went —
+  `applied`, `pending` or `discarded` — with `effectiveDelivery` reading a pass from an older
+  daemon as applied, and a word this build has never heard as no delivery rather than a failed
+  decode. `DelegateClient` gains `patch(runID:)` (the passing attempt's unified diff),
+  `apply(runID:)` (lands it unstaged; a tree that moved under it answers 409 with git's reason and
+  nothing touched) and `discard(runID:)`. `DelegateEvent` gains `.awaitingReview` and
+  `.discarded`; `DelegateCapabilities.supportsReview` reads the daemon's `review` feature.
+
 ## 0.34.0
 
 Waiting on a turn without a relay: no APNs key, nothing leaves the tailnet, so a background

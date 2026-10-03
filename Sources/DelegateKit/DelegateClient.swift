@@ -69,7 +69,30 @@ public struct DelegateClient: Sendable {
         _ = try await http.send(builder.request(.post, "/v1/runs/\(runID)/cancel"))
     }
 
-    /// Every event of the run from `after` onward — the stored past first, then live — ending with `run_finished`.
+    /// The passing attempt's patch as a unified diff — what a held run would put in the tree, or what
+    /// an applied one already did.
+    public func patch(runID: String) async throws -> String {
+        let data = try await http.send(builder.request(.get, "/v1/runs/\(runID)/patch"))
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Lands a held patch in the tree it was written for, unstaged, and answers the files it touched.
+    /// A tree that moved under the patch is refused (409, git's reason) with no file touched.
+    public func apply(runID: String) async throws -> [String] {
+        let data = try await http.send(builder.request(.post, "/v1/runs/\(runID)/apply"))
+        return try decode(Delivered.self, data).files
+    }
+
+    /// Sets a held patch aside; the tree never sees it and the patch stays readable.
+    public func discard(runID: String) async throws -> [String] {
+        let data = try await http.send(builder.request(.post, "/v1/runs/\(runID)/discard"))
+        return try decode(Delivered.self, data).files
+    }
+
+    /// Every event of the run from `after` onward — the stored past first, then live — until the
+    /// daemon closes the stream, which it does once the run is over and its past is sent. Events can
+    /// follow `run_finished` (a held patch applied or discarded later), so the end is the daemon's
+    /// to say rather than the first terminal event's.
     public func events(runID: String, after seq: Int = 0) -> AsyncThrowingStream<DelegateEnvelope, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -79,7 +102,6 @@ public struct DelegateClient: Sendable {
                     for try await raw in http.serverSentEvents(request) {
                         guard let envelope = Self.parseEnvelope(raw) else { continue }
                         continuation.yield(envelope)
-                        if envelope.event.isTerminal { break }
                     }
                     continuation.finish()
                 } catch is CancellationError {
@@ -110,7 +132,7 @@ public struct DelegateClient: Sendable {
         var packet: DelegatePacket
         var overrides: DelegateOverrides
 
-        enum CodingKeys: String, CodingKey { case packet, tier, ceiling, mode, attempts }
+        enum CodingKeys: String, CodingKey { case packet, tier, ceiling, mode, attempts, apply }
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -119,7 +141,12 @@ public struct DelegateClient: Sendable {
             try c.encodeIfPresent(overrides.ceiling, forKey: .ceiling)
             try c.encodeIfPresent(overrides.mode, forKey: .mode)
             try c.encodeIfPresent(overrides.attempts, forKey: .attempts)
+            if overrides.review == true { try c.encode("review", forKey: .apply) }
         }
+    }
+
+    private struct Delivered: Decodable {
+        var files: [String]
     }
 
     private struct Started: Decodable {

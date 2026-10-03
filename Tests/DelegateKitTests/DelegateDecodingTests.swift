@@ -27,6 +27,34 @@ import Testing
         #expect(run.created != nil)
     }
 
+    /// A pass recorded before review existed carries no delivery and was applied as it landed; a
+    /// held one says so, and a word this build has never heard is no delivery rather than no run.
+    @Test func aRunSaysWhereItsPatchWent() throws {
+        func run(_ delivery: String?) throws -> DelegateRun {
+            let field = delivery.map { #","delivery":"\#($0)""# } ?? ""
+            return try decode(
+                DelegateRun.self,
+                #"{"id":"R","packet_id":"P","class":"docs","repo":"/r","host":"h","mode":"normal","start_tier":"t1","ceiling":"t1","status":"passed","created_at":"2026-10-03T10:00:00+00:00","finished_at":null,"passed_tier":"t1","escalations":0,"summary":"1 file","packet":{"id":"P","class":"docs","goal":"g"}\#(field)}"#)
+        }
+        #expect(try run(nil).delivery == nil)
+        #expect(try run(nil).effectiveDelivery == .applied)
+        #expect(try run("pending").effectiveDelivery == .pending)
+        #expect(try run("discarded").delivery == .discarded)
+        #expect(try run("teleported").delivery == nil)
+    }
+
+    /// Review rides beside the packet as `apply: review`, and only when asked for, so an older
+    /// daemon is sent exactly what it always was.
+    @Test func reviewIsSentOnlyWhenAskedFor() throws {
+        let plain = String(decoding: try JSONCoding.encoder.encode(DelegateOverrides(tier: "t2")), as: UTF8.self)
+        #expect(!plain.contains("apply"))
+        let held = String(decoding: try JSONCoding.encoder.encode(DelegateOverrides(review: true)), as: UTF8.self)
+        #expect(held.contains(#""apply":"review""#))
+        #expect(!held.contains("\"review\":"))
+        #expect(try decode(DelegateOverrides.self, held).review == true)
+        #expect(!DelegateOverrides(review: true).isEmpty)
+    }
+
     @Test func aPacketRoundTripsWithoutInventingFields() throws {
         let packet = DelegatePacket(id: "01ABC", taskClass: "rust-mech", goal: "fix add", paths: ["src/lib.rs"], verify: "cargo test")
         let json = String(decoding: try JSONCoding.encoder.encode(packet), as: UTF8.self)
@@ -52,9 +80,15 @@ import Testing
             #"{"run_id":"R","seq":11,"ts":"2026-09-04T19:10:59+00:00","kind":"applied","files":["a"],"patch_bytes":121}"#,
             #"{"run_id":"R","seq":12,"ts":"2026-09-04T19:11:00+00:00","kind":"something_new","tier":"t9"}"#,
             #"{"run_id":"R","seq":13,"ts":"2026-09-04T19:11:01+00:00","kind":"run_finished","status":"passed","passed_tier":"t3","escalations":2,"duration_ms":9000,"summary":"1 file(s)"}"#,
+            #"{"run_id":"R","seq":14,"ts":"2026-09-04T19:11:02+00:00","kind":"awaiting_review","files":["a","b"],"patch_bytes":300}"#,
+            #"{"run_id":"R","seq":15,"ts":"2026-09-04T19:11:03+00:00","kind":"discarded","files":["a","b"]}"#,
         ]
         let envelopes = try lines.map { try decode(DelegateEnvelope.self, $0) }
-        #expect(envelopes.map(\.seq) == Array(1...13))
+        #expect(envelopes.map(\.seq) == Array(1...15))
+        guard case .awaitingReview(let held, let bytes) = envelopes[13].event else { Issue.record("awaiting_review"); return }
+        #expect(held == ["a", "b"] && bytes == 300)
+        guard case .discarded(let setAside) = envelopes[14].event else { Issue.record("discarded"); return }
+        #expect(setAside == ["a", "b"])
         guard case .runStarted(_, _, let start, let ceiling, let mode, _, _) = envelopes[0].event else { Issue.record("run_started"); return }
         #expect(start == "t1" && ceiling == "t3" && mode == .conserve)
         guard case .attemptFinished(let outcome) = envelopes[4].event else { Issue.record("attempt_finished"); return }
