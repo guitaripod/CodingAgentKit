@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.35.1
+
+A Linux binary no longer traps on a resource bundle it was never given.
 
 ### Fixed
 - **A Linux binary no longer traps the first time the Kit says a sentence.** `AgentText` read its
