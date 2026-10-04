@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **A Linux binary no longer traps the first time the Kit says a sentence.** `AgentText` read its
+  String Catalog through SwiftPM's `Bundle.module`, which on Linux is a fatal error whenever the
+  resource bundle is not beside the executable, as it never is for an installed binary, so a prompt
+  that was only a slash command (the `Agent session` fallback title) killed the desktop client.
+  Linux never localizes, so it now answers the English key without touching the accessor.
+
 ## 0.35.0
 
 A delegated patch can wait to be read.

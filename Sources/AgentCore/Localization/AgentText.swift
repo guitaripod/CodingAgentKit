@@ -5,12 +5,19 @@ import Foundation
 /// model ids, HTTP bodies, shell output) never pass through here.
 ///
 /// `NSLocalizedString` rather than `String(localized:)`: the latter has no
-/// `bundle:` overload on Linux, where this package also builds. Where the
-/// resource bundle is not compiled — SwiftPM on Linux, `swift test` — lookup
-/// returns the key, which is the English source string.
+/// `bundle:` overload on Linux, where this package also builds. Lookup that
+/// finds no translation returns the key, which is the English source string.
+///
+/// Linux never localizes, and SwiftPM's `Bundle.module` accessor there traps
+/// when the resource bundle is not beside the executable, which is the case
+/// for every installed binary, so Linux answers the key without touching it.
 enum AgentText {
     static func string(_ key: String) -> String {
-        NSLocalizedString(key, bundle: .module, comment: "")
+        #if os(Linux)
+        return key
+        #else
+        return NSLocalizedString(key, bundle: .module, comment: "")
+        #endif
     }
 
     static func format(_ key: String, _ arguments: any CVarArg...) -> String {
