@@ -34,6 +34,10 @@ actor BridgeStream {
     private var connectionTask: Task<Void, Never>?
     private var connectionGeneration = 0
     private var lastFrameAt = Date.distantPast
+    /// When a frame last arrived off any connection. Unlike ``lastFrameAt``, a dial that is
+    /// started and fails does not move it, so a long outage spent redialling still reads as the
+    /// long silence it was.
+    private var lastHeardAt = Date.distantPast
     /// Whether the socket has spoken since it was last dialled. Set by the first frame off a
     /// connection and cleared the moment the connection ends, so it is never true of a dial that
     /// is still in progress.
@@ -46,6 +50,34 @@ actor BridgeStream {
     /// How long a proven-silent socket is left to the watchdog before an arriving subscriber is
     /// allowed to hurry it along. The watchdog is the ceiling, this is the floor.
     private static let redialGap: TimeInterval = 2
+
+    /// How long a socket may have been silent before the log behind it is not worth replaying. A
+    /// blip shorter than this is bridged exactly, frame for frame. A phone back from its pocket is
+    /// not a blip: the bridge's ring holds thousands of frames by then, and delivering every one
+    /// as if it were live walks the screen through hours of a conversation, one text delta and one
+    /// list move at a time, while the main thread is asked to draw each. Past this, the cursor is
+    /// dropped, the bridge hands over its head, and every subscriber re-reads the present once.
+    static let replayHorizon: TimeInterval = 20
+
+    /// What a dial should ask the bridge for, given what this stream last knew and how long ago
+    /// it last heard anything.
+    enum Resume: Equatable {
+        /// First dial of the process: nothing to replay, nothing missed that a read will not give.
+        case fresh
+        /// A short gap: ask for exactly what was missed.
+        case replay
+        /// A long gap: forget the log, join at the head, and tell every subscriber to re-read.
+        case snapshot
+    }
+
+    static func resume(hasCursor: Bool, silence: TimeInterval) -> Resume {
+        guard hasCursor else { return .fresh }
+        return silence > replayHorizon ? .snapshot : .replay
+    }
+
+    /// Set when a dial gave up a cursor on purpose, so the hello that answers it is read as the
+    /// start of a re-read rather than the start of a stream.
+    private var joinedAtHead = false
 
     /// A socket that has proved itself recently enough to be trusted with a subscriber's
     /// "connected" reading.
@@ -241,6 +273,12 @@ actor BridgeStream {
     /// doubled on the screen until a refetch put it right.
     private func connectOnce(generation: Int) async throws {
         var query: [URLQueryItem] = []
+        if Self.resume(hasCursor: cursor != nil, silence: Date().timeIntervalSince(lastHeardAt))
+            == .snapshot
+        {
+            cursor = nil
+            joinedAtHead = true
+        }
         if let cursor {
             query.append(URLQueryItem(name: "since", value: "\(cursor.epoch):\(cursor.seq)"))
         }
@@ -271,6 +309,7 @@ actor BridgeStream {
     private func handle(_ sse: SSEvent, generation: Int) {
         guard generation == connectionGeneration else { return }
         lastFrameAt = Date()
+        lastHeardAt = lastFrameAt
         connected = true
         guard let type = sse.type,
             let data = sse.data.data(using: .utf8),
@@ -287,7 +326,8 @@ actor BridgeStream {
                 notifyAttached()
                 break
             }
-            let hadCursor = cursor != nil
+            let hadCursor = cursor != nil || joinedAtHead
+            joinedAtHead = false
             cursor = (epoch, head)
             if hadCursor || reset {
                 // The replay window is gone — a restarted bridge, a cursor that fell off the
