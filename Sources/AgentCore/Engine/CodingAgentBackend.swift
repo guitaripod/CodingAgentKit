@@ -25,6 +25,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// Whether the server keeps a conversation's bookmark, so saving a chat on one device shows
     /// it on every other. False leaves the bookmark where it has always been: on the device.
     public var supportsSavedChats: Bool
+    /// Whether the server keeps what a person decides about a conversation — saved, pinned,
+    /// archived, last read — and reports it on every listing, so a decision made on one device
+    /// reaches every other client the server answers. False leaves those marks on the device.
+    public var supportsSessionMarks: Bool
     public var supportsSubagents: Bool
     /// Whether the backend can list the slash commands it will resolve, so a client can offer them
     /// for completion instead of guessing.
@@ -80,6 +84,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         answersQuestionsByMessage: Bool = false,
         supportsRenaming: Bool = false,
         supportsSavedChats: Bool = false,
+        supportsSessionMarks: Bool = false,
         supportsSubagents: Bool = false,
         supportsCommands: Bool = false,
         supportsGoals: Bool = false,
@@ -107,6 +112,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.answersQuestionsByMessage = answersQuestionsByMessage
         self.supportsRenaming = supportsRenaming
         self.supportsSavedChats = supportsSavedChats
+        self.supportsSessionMarks = supportsSessionMarks
         self.supportsSubagents = supportsSubagents
         self.supportsCommands = supportsCommands
         self.supportsGoals = supportsGoals
@@ -995,6 +1001,11 @@ public protocol CodingAgentBackend: Sendable {
     /// server answers sees the same shortlist. Throws ``AgentError/unsupported(_:)`` on a backend
     /// with no notion of it, which leaves the bookmark device-local.
     func setSessionSaved(_ sessionID: String, saved: Bool) async throws
+    /// Tells the server what a person decided about a conversation, in one request however many
+    /// marks the decision touches. Throws ``AgentError/unsupported(_:)`` on a backend that keeps no
+    /// marks, which leaves them on the device; a server that does keep them weighs each field by
+    /// ``SessionMarkChange/at`` against what it already holds.
+    func setSessionMarks(_ sessionID: String, _ change: SessionMarkChange) async throws
     /// Slash commands this server will resolve — built-ins plus whatever the machine and the given
     /// worktree contribute. Empty when the backend can't enumerate them.
     func availableCommands(directory: String?) async throws -> [AgentCommand]
@@ -1147,6 +1158,10 @@ extension CodingAgentBackend {
 
     public func setSessionSaved(_ sessionID: String, saved: Bool) async throws {
         throw AgentError.unsupported("saved chats")
+    }
+
+    public func setSessionMarks(_ sessionID: String, _ change: SessionMarkChange) async throws {
+        throw AgentError.unsupported("session marks")
     }
 
     public func renameSession(_ sessionID: String, title: String) async throws {

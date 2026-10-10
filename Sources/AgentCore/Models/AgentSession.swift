@@ -77,6 +77,19 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// it with everything that finished. Nil when there is none, or from a backend with no such
     /// notion.
     public var backgroundWork: BackgroundWork?
+    /// The conversation is pinned to the top on the server that holds it, so every client the
+    /// server answers keeps the same shortlist. Nil from a server that keeps no such mark — which
+    /// is *cannot say*, never *not pinned* — and the mark is then the device's own.
+    public var pinned: Bool?
+    /// When it was pinned, by the server's clock. Pins are ordered by it on every client, so the
+    /// order a person made them in is the order they read in wherever they look.
+    public var pinnedAt: Date?
+    /// The conversation is set aside on the server that holds it. Nil as for ``pinned``.
+    public var archived: Bool?
+    /// The reference time of the person's last look, by the server's clock, which is the clock
+    /// ``updatedAt`` is read on — so a chat is unread exactly when it has moved on past this, whatever
+    /// the clock of the device that looked. Nil when no device has marked the chat either way.
+    public var readAt: Date?
 
     /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
     /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
@@ -114,7 +127,11 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         agentTask: String? = nil,
         saved: Bool? = nil,
         hostID: String? = nil,
-        backgroundWork: BackgroundWork? = nil
+        backgroundWork: BackgroundWork? = nil,
+        pinned: Bool? = nil,
+        pinnedAt: Date? = nil,
+        archived: Bool? = nil,
+        readAt: Date? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -132,5 +149,46 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.saved = saved
         self.hostID = hostID
         self.backgroundWork = backgroundWork
+        self.pinned = pinned
+        self.pinnedAt = pinnedAt
+        self.archived = archived
+        self.readAt = readAt
     }
+
+    /// Whether the server reports this person's marks at all. A listing that says `false` for a
+    /// pin is a server that speaks them; one that says nothing is a server that cannot.
+    public var reportsMarks: Bool { pinned != nil }
+}
+
+/// What a person decided about one conversation, for the server that holds it to keep. Each field
+/// is optional because a press changes one thing, and `at` is when the person decided, by this
+/// device's clock: a decision made while the server was out of reach is delivered late, and the
+/// server weighs it against what was decided meanwhile by when it was made rather than when it
+/// arrived.
+public struct SessionMarkChange: Sendable, Hashable {
+    public enum Read: String, Sendable, Hashable {
+        /// The person has looked at everything the chat holds.
+        case seen
+        /// The person set the chat aside to come back to.
+        case unread
+    }
+
+    public var saved: Bool?
+    public var pinned: Bool?
+    public var archived: Bool?
+    public var read: Read?
+    public var at: Date
+
+    public init(
+        saved: Bool? = nil, pinned: Bool? = nil, archived: Bool? = nil, read: Read? = nil,
+        at: Date = Date()
+    ) {
+        self.saved = saved
+        self.pinned = pinned
+        self.archived = archived
+        self.read = read
+        self.at = at
+    }
+
+    public var isEmpty: Bool { saved == nil && pinned == nil && archived == nil && read == nil }
 }

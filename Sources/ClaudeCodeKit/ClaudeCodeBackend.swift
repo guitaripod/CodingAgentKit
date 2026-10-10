@@ -20,6 +20,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         answersQuestionsByMessage: true,
         supportsRenaming: true,
         supportsSavedChats: true,
+        supportsSessionMarks: true,
         supportsSubagents: true,
         supportsCommands: true,
         supportsGoals: true,
@@ -169,6 +170,17 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// caller reads as a server that cannot keep bookmarks rather than as a failure to save.
     public func setSessionSaved(_ sessionID: String, saved: Bool) async throws {
         let body = try BridgeCoding.encoder.encode(BRPatch(title: nil, saved: saved))
+        _ = try await http.send(builder.request(.patch, "/sessions/\(sessionID)", body: body))
+    }
+
+    /// One patch for however many marks the press touched. A bridge older than marks answers 400
+    /// to a patch that names none of the fields it knows, which the caller reads as a server that
+    /// keeps no marks rather than as a failure.
+    public func setSessionMarks(_ sessionID: String, _ change: SessionMarkChange) async throws {
+        let body = try BridgeCoding.encoder.encode(
+            BRPatch(
+                title: nil, saved: change.saved, pinned: change.pinned, archived: change.archived,
+                read: change.read?.rawValue, at: change.at))
         _ = try await http.send(builder.request(.patch, "/sessions/\(sessionID)", body: body))
     }
 
@@ -599,6 +611,10 @@ struct BRSummary: Decodable {
     let agents: Int?
     let agentTask: String?
     let saved: Bool?
+    let pinned: Bool?
+    let pinnedAt: Date?
+    let archived: Bool?
+    let readAt: Date?
     let backgroundTasks: Int?
     let backgroundTask: String?
     let backgroundSince: Date?
@@ -615,7 +631,8 @@ struct BRSummary: Decodable {
             activeAgents: agents, agentTask: agentTask, saved: saved,
             backgroundWork: BackgroundWork.reported(
                 tasks: backgroundTasks, task: backgroundTask, since: backgroundSince,
-                stalled: backgroundStalled))
+                stalled: backgroundStalled),
+            pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt)
     }
 }
 
@@ -939,6 +956,10 @@ struct BRSubagentTranscript: Decodable {
 struct BRPatch: Encodable {
     let title: String?
     let saved: Bool?
+    var pinned: Bool?
+    var archived: Bool?
+    var read: String?
+    var at: Date?
 }
 
 struct BRSend: Encodable {
