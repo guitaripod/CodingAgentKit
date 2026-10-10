@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.36.0
+
+A phone back after a long absence reads the present once, and a server can keep what a person decided about a conversation.
+
+### Added
+- **Session marks.** `AgentSession` carries `pinned`, `pinnedAt`, `archived` and `readAt` beside `saved`; a server that speaks them always says `pinned` and `archived` (false included), so `reportsMarks` tells *not pinned* from *this server cannot say*. `readAt` is in the server's own clock — the one `updatedAt` is read on — so no device's clock can make a chat read-but-unread. `BackendCapabilities.supportsSessionMarks` and `setSessionMarks(_:_:)` send one patch for however many marks a press touched, each field weighed by `SessionMarkChange.at`, the time the person decided it, so a decision delivered late cannot overrule a later one.
+
+### Fixed
+- **Returning to a bridge after a long absence replays nothing.** `BridgeStream` redialled with its `epoch:seq` cursor after a suspension, so claude-bridge replayed up to its whole 8192-frame ring (text deltas and list moves) and every frame was applied as though it were live. A stream that has heard nothing for twenty seconds now drops the cursor, joins at the bridge's head and asks every subscriber to re-read once. A shorter gap is still bridged frame for frame.
+
 ## 0.35.1
 
 A Linux binary no longer traps on a resource bundle it was never given.
