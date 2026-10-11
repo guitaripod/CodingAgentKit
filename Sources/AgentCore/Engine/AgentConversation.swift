@@ -30,6 +30,7 @@ public actor AgentConversation {
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
     private var lastStreamPersist = Date.distantPast
+    private var lastPersisted: [ChatMessage]?
     private var subscribers: [UUID: AsyncStream<ConversationState>.Continuation] = [:]
     private var generation = 0
     private var resolvedPermissionIDs: Set<String> = []
@@ -1284,20 +1285,33 @@ public actor AgentConversation {
         }
     }
 
+    /// How long a turn may stream between writes of its transcript. A write is the whole
+    /// conversation, encoded and replaced — a long working session is megabytes — so at five
+    /// seconds a phone left streaming wrote over a gigabyte a day and iOS said so in a diagnostic.
+    /// The turn's own end writes at once, and a relaunch mid-turn re-reads the server, so the cache
+    /// only has to be recent, not current.
+    private static let streamPersistInterval: TimeInterval = 30
+
     /// A turn can stream for an hour; a cache written only at idle restores an hour stale. Every
-    /// few seconds of applied events reaches disk, so a relaunch mid-turn reopens on the newest
-    /// content the app ever saw rather than on the last completed turn.
+    /// half minute of applied events reaches disk, so a relaunch mid-turn reopens on content from
+    /// the turn rather than on the last completed one.
     private func persistDuringStream() {
-        guard Date().timeIntervalSince(lastStreamPersist) > 5 else { return }
+        guard Date().timeIntervalSince(lastStreamPersist) > Self.streamPersistInterval else {
+            return
+        }
         persist()
     }
 
     /// Chains onto the previous persist so writes reach the cache in order;
-    /// a cancelled predecessor may still complete, but never after this one.
+    /// a cancelled predecessor may still complete, but never after this one. A transcript the
+    /// cache already holds is not sent again: a refetch that found nothing new used to rewrite the
+    /// whole conversation to say so.
     private func persist() {
         guard let cache else { return }
-        lastStreamPersist = Date()
         let snapshot = reducer.snapshot
+        guard snapshot != lastPersisted else { return }
+        lastPersisted = snapshot
+        lastStreamPersist = Date()
         let sessionID = sessionID
         persistTask = Task { [previous = persistTask] in
             await previous?.value

@@ -190,6 +190,32 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
         _ = conversation
     }
 
+    @Test func aBurstOfStreamingWritesTheTranscriptOnceNotOnceAFewSeconds() async {
+        let cache = RecordingCache()
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(assistant("a", "first")),
+                MockScriptStep(assistant("a", "first second")),
+                MockScriptStep(assistant("a", "first second third")),
+                MockScriptStep(assistant("a", "first second third fourth")),
+                MockScriptStep(.status(.running)),
+            ])
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: fastPolicy, cache: cache)
+
+        for await state in await conversation.states()
+        where state.messages.first?.text == "first second third fourth" {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+
+        #expect(
+            await cache.stored.count == 1,
+            "a transcript growing inside the write floor was rewritten whole more than once")
+        _ = conversation
+    }
+
     @Test func aQueuedPromptLeavesARunningCompactionAlone() async {
         let backend = MockBackend(
             agentType: .openCode,
