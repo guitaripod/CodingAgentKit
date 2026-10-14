@@ -224,6 +224,39 @@ public struct HTTPClient: Sendable {
             }
         }
 
+        /// A response body as it arrives, chunk by chunk, for streams that are not text: a
+        /// picture sent as it changes cannot be read a byte at a time without spending a core on it.
+        public func byteStream(_ request: URLRequest) -> AsyncThrowingStream<Data, Error> {
+            AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        var streamRequest = try Self.makeStreamRequest(from: request)
+                        streamRequest.headers.replaceOrAdd(name: "Accept", value: "*/*")
+                        let response = try await Self.streamClient.execute(
+                            streamRequest, timeout: .hours(24 * 7))
+                        guard (200..<300).contains(response.status.code) else {
+                            throw AgentError.http(
+                                status: Int(response.status.code),
+                                body: await Self.errorBody(response))
+                        }
+                        for try await buffer in response.body {
+                            continuation.yield(Data(buffer.readableBytesView))
+                        }
+                        continuation.finish()
+                    } catch is CancellationError {
+                        continuation.finish()
+                    } catch let error as HTTPClientError where error == .cancelled {
+                        continuation.finish()
+                    } catch let error as AgentError {
+                        continuation.finish(throwing: error)
+                    } catch {
+                        continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+
         private static let streamClient: AsyncHTTPClient.HTTPClient = {
             var configuration = AsyncHTTPClient.HTTPClient.Configuration()
             configuration.timeout = .init(connect: .seconds(15), read: .seconds(300))
@@ -303,6 +336,76 @@ public struct HTTPClient: Sendable {
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+
+        /// A response body as it arrives, chunk by chunk, for streams that are not text: a
+        /// picture sent as it changes cannot be read a byte at a time without spending a core on it.
+        public func byteStream(_ request: URLRequest) -> AsyncThrowingStream<Data, Error> {
+            AsyncThrowingStream { continuation in
+                let delegate = ChunkDelegate(continuation: continuation)
+                let session = URLSession(
+                    configuration: Self.makeStreamConfiguration(), delegate: delegate, delegateQueue: nil)
+                var req = request
+                req.setValue("*/*", forHTTPHeaderField: "Accept")
+                req.cachePolicy = .reloadIgnoringLocalCacheData
+                req.timeoutInterval = 3600
+                let task = session.dataTask(with: req)
+                continuation.onTermination = { _ in
+                    task.cancel()
+                    session.invalidateAndCancel()
+                }
+                task.resume()
+            }
+        }
+
+        private static func makeStreamConfiguration() -> URLSessionConfiguration {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 300
+            configuration.timeoutIntervalForResource = 86_400 * 7
+            configuration.urlCache = nil
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.waitsForConnectivity = true
+            return configuration
+        }
+
+        private final class ChunkDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+            private let continuation: AsyncThrowingStream<Data, Error>.Continuation
+            private var status = 200
+            private var errorBody = Data()
+
+            init(continuation: AsyncThrowingStream<Data, Error>.Continuation) {
+                self.continuation = continuation
+            }
+
+            func urlSession(
+                _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+            ) {
+                status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                completionHandler(.allow)
+            }
+
+            func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+                if (200..<300).contains(status) {
+                    continuation.yield(data)
+                } else if errorBody.count < 65_536 {
+                    errorBody.append(data)
+                }
+            }
+
+            func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+                if !(200..<300).contains(status) {
+                    continuation.finish(
+                        throwing: AgentError.http(
+                            status: status, body: String(data: errorBody, encoding: .utf8) ?? ""))
+                } else if let error = error as? URLError, error.code == .cancelled {
+                    continuation.finish()
+                } else if let error {
+                    continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                } else {
+                    continuation.finish()
+                }
             }
         }
 

@@ -2,3 +2,4 @@
 @_exported import ClaudeCodeKit
 @_exported import DelegateKit
 @_exported import OpenCodeKit
+@_exported import PreviewKit

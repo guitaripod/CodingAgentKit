@@ -34,6 +34,7 @@ let package = Package(
         .library(name: "OpenCodeKit", targets: ["OpenCodeKit"]),
         .library(name: "ClaudeCodeKit", targets: ["ClaudeCodeKit"]),
         .library(name: "DelegateKit", targets: ["DelegateKit"]),
+        .library(name: "PreviewKit", targets: ["PreviewKit"]),
         .library(name: "AgentTestSupport", targets: ["AgentTestSupport"]),
         .library(name: "CodingAgentKitApple", targets: ["CodingAgentKitApple"]),
         .executable(name: "codeagent", targets: ["CodeAgentCLI"]),
@@ -72,8 +73,13 @@ let package = Package(
             swiftSettings: strict
         ),
         .target(
+            name: "PreviewKit",
+            dependencies: ["AgentCore"],
+            swiftSettings: strict
+        ),
+        .target(
             name: "CodingAgentKit",
-            dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit", "DelegateKit"],
+            dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit", "DelegateKit", "PreviewKit"],
             swiftSettings: strict
         ),
         .target(
@@ -118,6 +124,11 @@ let package = Package(
         .testTarget(
             name: "DelegateKitTests",
             dependencies: ["DelegateKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "PreviewKitTests",
+            dependencies: ["PreviewKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
