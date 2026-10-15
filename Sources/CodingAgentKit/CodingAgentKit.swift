@@ -3,3 +3,4 @@
 @_exported import DelegateKit
 @_exported import OpenCodeKit
 @_exported import PreviewKit
+@_exported import VoiceKit
