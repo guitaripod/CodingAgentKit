@@ -139,6 +139,62 @@ public struct PreviewClient: Sendable {
         }
     }
 
+    /// Where the screen changed because the code did: a picture kept each time the app first showed
+    /// and each time a build landed, oldest first, with the words and the road that explain each.
+    public func history(_ id: String) async throws -> [HistoryInfo] {
+        try decode([HistoryInfo].self, await http.send(builder.request(.get, "/sessions/\(id)/history")))
+    }
+
+    /// One kept picture, as a JPEG, by the id `history(_:)` gave it.
+    public func historyPicture(_ id: String, _ shot: Int) async throws -> Data {
+        try await http.send(builder.request(.get, "/sessions/\(id)/history/\(shot)/picture.jpg"))
+    }
+
+    /// Where two kept pictures differ, as rectangles in the pixels of the picture. `b` is a history
+    /// id, or `nil` for the picture on the screen now.
+    public func diff(_ id: String, a: Int, b: Int?) async throws -> DiffReport {
+        let query = [
+            URLQueryItem(name: "a", value: String(a)),
+            URLQueryItem(name: "b", value: b.map(String.init) ?? "live"),
+        ]
+        return try decode(DiffReport.self, await http.send(builder.request(.get, "/sessions/\(id)/diff", query: query)))
+    }
+
+    /// The last `seconds` of the screen, as the host held them: every picture with its capture time,
+    /// oldest first, for a scrubber to play back. The host keeps ten seconds at most.
+    public func replay(_ id: String, seconds: Double) async throws -> [FrameRecord] {
+        let query = [URLQueryItem(name: "seconds", value: String(seconds))]
+        let data = try await http.send(builder.request(.get, "/sessions/\(id)/replay", query: query))
+        var decoder = FrameDecoder()
+        return try decoder.feed(data)
+    }
+
+    /// Starts a run that shows the same screen several ways, one after another, and answers with
+    /// the job to follow. The host allows sixteen variants and one run at a time per session.
+    /// Asks the running app about its own screen: `hello`, `tree`, `hit` or `audit`. The answer is
+    /// the inspector's own JSON, left for the caller to read, because its shape belongs to the
+    /// library inside the app and not to this wire.
+    public func inspect(_ id: String, operation: String, arguments: [String: Double] = [:]) async throws -> Data {
+        let body = try JSONEncoder().encode(arguments)
+        return try await http.send(builder.request(.post, "/sessions/\(id)/inspect/\(operation)", body: body))
+    }
+
+    public func startVariants(_ id: String, _ request: VariantsRequest) async throws -> String {
+        struct Started: Decodable { var job: String }
+        let body = try PreviewJSON.encoder.encode(request)
+        let data = try await http.send(builder.request(.post, "/sessions/\(id)/variants", body: body))
+        return try decode(Started.self, data).job
+    }
+
+    public func variantJob(_ job: String) async throws -> VariantJob {
+        try decode(VariantJob.self, await http.send(builder.request(.get, "/variants/\(job)")))
+    }
+
+    /// The picture of the `index`th variant of a job, counting from zero in the order `results` lists them.
+    public func variantPicture(_ job: String, _ index: Int) async throws -> Data {
+        try await http.send(builder.request(.get, "/variants/\(job)/\(index).jpg"))
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ data: Data) throws -> T {
         do {
             return try PreviewJSON.decoder.decode(type, from: data)

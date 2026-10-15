@@ -60,4 +60,29 @@ struct LiveHostTests {
         #expect(kinds.contains("state"))
         #expect(kinds.contains("build.done"))
     }
+
+    @Test func historyDiffReplayAndVariantsAnswerOnALiveSession() async throws {
+        let client = try client()
+        let live = try #require(try await client.sessions().first { $0.state == .live })
+        let shots = try await client.history(live.id)
+        #expect(!shots.isEmpty)
+        let picture = try await client.historyPicture(live.id, try #require(shots.first).id)
+        #expect(picture.prefix(2) == Data([0xFF, 0xD8]))
+        let report = try await client.diff(live.id, a: try #require(shots.first).id, b: nil)
+        #expect(report.width > 0)
+        let replay = try await client.replay(live.id, seconds: 5)
+        for record in replay {
+            if case .frame(_, let jpeg) = record { #expect(jpeg.prefix(2) == Data([0xFF, 0xD8])) }
+        }
+        let job = try await client.startVariants(
+            live.id, VariantsRequest(variants: [VariantSpec(label: "Dark", appearance: "dark")], settle: 0.5))
+        var status = try await client.variantJob(job)
+        for _ in 0..<40 where status.state == .running {
+            try await Task.sleep(for: .milliseconds(500))
+            status = try await client.variantJob(job)
+        }
+        #expect(status.state == .done)
+        let variant = try await client.variantPicture(job, 0)
+        #expect(variant.prefix(2) == Data([0xFF, 0xD8]))
+    }
 }
