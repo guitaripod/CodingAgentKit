@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.37.0
+
+A Mac that streams a simulator can be watched, read and touched from any client.
+
+### Added
+- **`PreviewKit`.** `PreviewClient` speaks to previewd, the daemon that runs an app on a Mac's simulator: the doctor's checklist and fixes (rows may be marked optional so an extra never reads as a Mac that is not ready), sessions, the picture as a length-prefixed stream of JPEGs with heartbeats so a still screen is not mistaken for a dead link, and the session's own events. `HTTPClient.byteStream` delivers a response body chunk by chunk on both transports, because a picture sent as it changes cannot be read a byte at a time.
+- **What the screen has been, and what is on it.** The kept pictures and where two of them differ, a replay of the last seconds, the screen in other appearances, text sizes and directions, and the running app's own views, what is under a point and an audit of contrast, tap targets, cut-off text and missing labels.
+- **Touch.** `PreviewClient.touch` sends a tap, a swipe, typed text, a key or the home button, positions as fractions of the picture.
+
 ## 0.36.0
 
 A phone back after a long absence reads the present once, and a server can keep what a person decided about a conversation.
