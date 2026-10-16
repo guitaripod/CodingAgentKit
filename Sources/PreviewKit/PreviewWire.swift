@@ -509,3 +509,61 @@ public struct VariantJob: Codable, Sendable, Equatable {
         self.message = message
     }
 }
+
+/// One touch a person or an agent makes on the picture. Positions are fractions of the picture,
+/// from its top-left corner, so the host can turn them into points on whatever screen it has
+/// without the client knowing which device that is.
+public struct TouchRequest: Codable, Sendable, Equatable {
+    public enum Action: String, Codable, Sendable {
+        case tap
+        case swipe
+        case text
+        case key
+        case button
+    }
+
+    public var action: Action
+    public var x: Double?
+    public var y: Double?
+    public var toX: Double?
+    public var toY: Double?
+    public var seconds: Double?
+    public var text: String?
+    public var key: String?
+    public var button: String?
+
+    public init(
+        action: Action, x: Double? = nil, y: Double? = nil, toX: Double? = nil, toY: Double? = nil,
+        seconds: Double? = nil, text: String? = nil, key: String? = nil, button: String? = nil
+    ) {
+        self.action = action
+        self.x = x
+        self.y = y
+        self.toX = toX
+        self.toY = toY
+        self.seconds = seconds
+        self.text = text
+        self.key = key
+        self.button = button
+    }
+
+    public static func tap(x: Double, y: Double) -> TouchRequest {
+        TouchRequest(action: .tap, x: x, y: y)
+    }
+
+    public static func swipe(x: Double, y: Double, toX: Double, toY: Double, seconds: Double = 0.3) -> TouchRequest {
+        TouchRequest(action: .swipe, x: x, y: y, toX: toX, toY: toY, seconds: seconds)
+    }
+
+    public static func text(_ text: String) -> TouchRequest {
+        TouchRequest(action: .text, text: text)
+    }
+
+    public static func key(_ key: String) -> TouchRequest {
+        TouchRequest(action: .key, key: key)
+    }
+
+    public static func button(_ button: String) -> TouchRequest {
+        TouchRequest(action: .button, button: button)
+    }
+}

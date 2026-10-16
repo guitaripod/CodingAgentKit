@@ -19,6 +19,11 @@ public struct PreviewClient: Sendable {
         http = HTTPClient(policy: config.policy, logger: AgentLog.logger("preview"))
     }
 
+    init(config: ServerConfig, http: HTTPClient) {
+        builder = RequestBuilder(config: config)
+        self.http = http
+    }
+
     /// A config for the host at `host`, on its own port.
     public static func config(
         host: String, port: Int = defaultPort, password: String?, policy: ConnectionPolicy = .default
@@ -177,6 +182,14 @@ public struct PreviewClient: Sendable {
     public func inspect(_ id: String, operation: String, arguments: [String: Double] = [:]) async throws -> Data {
         let body = try JSONEncoder().encode(arguments)
         return try await http.send(builder.request(.post, "/sessions/\(id)/inspect/\(operation)", body: body))
+    }
+
+    /// Operates the app on the picture: a tap, a swipe, typed text, a key or the home button.
+    /// Positions are fractions of the picture from its top-left corner. The host answers 204 when
+    /// the touch was delivered, 409 while the app is not showing, and 501 on a Mac with no touch tool.
+    public func touch(_ id: String, _ request: TouchRequest) async throws {
+        let body = try PreviewJSON.encoder.encode(request)
+        _ = try await http.send(builder.request(.post, "/sessions/\(id)/touch", body: body))
     }
 
     public func startVariants(_ id: String, _ request: VariantsRequest) async throws -> String {
