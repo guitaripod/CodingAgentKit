@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.39.0
+
+A client can tell how far a server's clock is from its own, without asking.
+
+### Added
+- **`ServerClockLedger`.** Every answer a server gives carries a `Date` header, and `HTTPClient` now
+  notes it: the header names the second the reply was sent, so half a second is added back, and the
+  device's side of the reply is the middle of the round trip. `reading(for:)` answers with the
+  median skew of the last eight samples a host gave in the last ten minutes (positive when the
+  server runs ahead) and nothing for a host that has not answered yet, so a surface can say *no
+  reading* instead of *in sync*. A round trip over five seconds is not a measurement and is dropped.
+  It costs no request of its own.
+
+## 0.38.0
+
+A voice call has a wire, a machine can say what it cannot do yet, and a pairing link carries a person to a server.
+
+### Added
+- **`VoiceKit`.** The wire a voice call speaks between a client and its gateway: versioned JSON control frames, 24 kHz PCM16 audio frames and the gateway's health; the umbrella re-exports it, and the engine can be stopped or need setup, with the gateway saying what it is doing while it loads.
+- **`SetupKit`.** The wire a daemon speaks to say what its machine can do and to fix what it cannot: checks with stable ids and facts, and fixes as jobs the machine does or one command the person must run.
+- **`PairingKit`.** The `tailscode://connect` pairing link with strict parsing, a pure-Swift QR encoder (versions 1 to 12, all four correction levels) checked against OpenCV's decoder, and a terminal renderer that draws the code in explicit black and white cells so it scans on any theme.
+
 ## 0.37.0
 
 A Mac that streams a simulator can be watched, read and touched from any client.
