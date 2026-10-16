@@ -2,6 +2,7 @@
 @_exported import ClaudeCodeKit
 @_exported import DelegateKit
 @_exported import OpenCodeKit
+@_exported import PairingKit
 @_exported import PreviewKit
 @_exported import SetupKit
 @_exported import VoiceKit
