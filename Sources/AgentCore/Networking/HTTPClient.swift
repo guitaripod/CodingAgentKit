@@ -107,11 +107,15 @@ public struct HTTPClient: Sendable {
         logger.debug("→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?")")
         let data: Data
         let response: URLResponse
+        let sentAt: Date
+        let receivedAt: Date
         do {
             var req = request
             req.cachePolicy = .reloadIgnoringLocalCacheData
             req.timeoutInterval = timeout.timeInterval
+            sentAt = Date()
             (data, response) = try await session.data(for: req)
+            receivedAt = Date()
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
@@ -121,6 +125,13 @@ public struct HTTPClient: Sendable {
         }
         guard let http = response as? HTTPURLResponse else {
             throw AgentError.connection("Non-HTTP response")
+        }
+        if let url = request.url,
+            let header = http.value(forHTTPHeaderField: "Date"),
+            let serverDate = ServerClockLedger.parseHTTPDate(header)
+        {
+            ServerClockLedger.shared.record(
+                url: url, serverDate: serverDate, sentAt: sentAt, receivedAt: receivedAt)
         }
         logger.debug("← \(http.statusCode) \(request.url?.path ?? "")")
         return (data, http)
