@@ -18,6 +18,41 @@ private func device(
 }
 
 @Suite struct TailnetScannerTests {
+    @Test func connectedToControlOutranksLastSeen() {
+        let now = Date()
+        let stale = device("slept", os: "linux", lastSeenAgo: 3600 * 24, now: now)
+        var awake = stale
+        awake.connectedToControl = true
+        var asleep = device("fresh", os: "linux", lastSeenAgo: 5, now: now)
+        asleep.connectedToControl = false
+        let scannable = TailnetScanner.scannableDevices([stale, awake, asleep], now: now)
+        #expect(scannable.map(\.hostname) == ["slept"])
+        #expect(scannable.first?.connectedToControl == true)
+    }
+
+    @Test func aVisionHeadsetNeverHostsAnAgent() {
+        let devices = [device("vision", os: "visionOS", lastSeenAgo: 5)]
+        #expect(TailnetScanner.scannableDevices(devices).isEmpty)
+    }
+
+    @Test func onlyAnAuthorizationFailureIsARejectedCredential() {
+        #expect(TailscaleClient.isRejection(AgentError.http(status: 401, body: "")))
+        #expect(TailscaleClient.isRejection(AgentError.http(status: 403, body: "")))
+        #expect(!TailscaleClient.isRejection(AgentError.http(status: 500, body: "")))
+        #expect(!TailscaleClient.isRejection(AgentError.connection("offline")))
+        #expect(!TailscaleClient.isRejection(URLError(.notConnectedToInternet)))
+    }
+
+    @Test func theApiListingCarriesTheControlFlag() throws {
+        let json = """
+            {"devices": [{"hostname": "arch", "addresses": ["100.91.211.44"], "connectedToControl": true},
+                         {"hostname": "old", "addresses": ["100.64.0.9"]}]}
+            """
+        struct Body: Decodable { let devices: [TailscaleDevice] }
+        let devices = try JSONDecoder().decode(Body.self, from: Data(json.utf8)).devices
+        #expect(devices.map(\.connectedToControl) == [true, nil])
+    }
+
     @Test func scannableDevicesSkipsOfflineAndPhones() {
         let now = Date()
         let devices = [

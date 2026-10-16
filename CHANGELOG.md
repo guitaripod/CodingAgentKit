@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.40.0
+
+A client can tell a device that is connected from one that was merely seen, and a refused Tailscale credential from a failed request.
+
+### Added
+- **`TailscaleDevice.connectedToControl`.** The Tailscale API's own flag for whether a device is connected right now, decoded from the device listing. `TailnetScanner.scannableDevices` trusts it over `lastSeen`, which only approximates it: a device that slept a minute ago is no longer asked, and one that is awake but quiet no longer drops out of a scan.
+- **`TailscaleClient.isRejection(_:)`.** True for a 401 or 403, the two answers that mean the token itself is expired, revoked or mistyped, so a client can tell the person to replace it instead of retrying a request that will fail the same way for as long as the token is kept.
+
+### Changed
+- A visionOS device is skipped by the scan like a phone or a TV: it never hosts an agent.
+
 ## 0.39.0
 
 A client can tell how far a server's clock is from its own, without asking.

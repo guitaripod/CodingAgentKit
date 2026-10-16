@@ -24,6 +24,9 @@ public struct TailscaleDevice: Sendable, Hashable, Codable {
     public var user: String?
     public var authorized: Bool?
     public var lastSeen: String?
+    /// Whether the device is connected to Tailscale's control plane right now, which is the fact
+    /// `lastSeen` only approximates. Absent for a device read from somewhere that cannot say.
+    public var connectedToControl: Bool?
 
     public var lastSeenDate: Date? {
         lastSeen.flatMap { try? Date($0, strategy: .iso8601) }
@@ -38,7 +41,8 @@ public struct TailscaleDevice: Sendable, Hashable, Codable {
         os: String? = nil,
         user: String? = nil,
         authorized: Bool? = nil,
-        lastSeen: String? = nil
+        lastSeen: String? = nil,
+        connectedToControl: Bool? = nil
     ) {
         self.id = id
         self.nodeId = nodeId
@@ -49,6 +53,7 @@ public struct TailscaleDevice: Sendable, Hashable, Codable {
         self.user = user
         self.authorized = authorized
         self.lastSeen = lastSeen
+        self.connectedToControl = connectedToControl
     }
 }
 
@@ -82,6 +87,7 @@ public struct TailscaleClient: Sendable {
                 let user: String?
                 let authorized: Bool?
                 let lastSeen: String?
+                let connectedToControl: Bool?
             }
             let devices: [Device]
         }
@@ -96,9 +102,18 @@ public struct TailscaleClient: Sendable {
                 os: d.os,
                 user: d.user,
                 authorized: d.authorized,
-                lastSeen: d.lastSeen
+                lastSeen: d.lastSeen,
+                connectedToControl: d.connectedToControl
             )
         }
+    }
+
+    /// Whether a failed request means Tailscale refused the credential itself — expired, revoked or
+    /// mistyped — rather than that the request could not be made. The difference decides whether a
+    /// retry is worth anything or the person has to replace the token.
+    public static func isRejection(_ error: Error) -> Bool {
+        guard case .http(let status, _) = error as? AgentError else { return false }
+        return status == 401 || status == 403
     }
 
     private func exchangeToken(credentials: TailscaleOAuthCredentials) async throws -> String {
@@ -181,18 +196,20 @@ public struct TailnetScanner: Sendable {
         self.probeFn = probeFn
     }
 
-    /// Devices that could plausibly host an agent server: seen online
-    /// recently and running a general-purpose OS. Offline peers blackhole
-    /// every probe into a full timeout, which is what makes naive scans
-    /// take minutes; phones and TVs can never run a server at all.
+    /// Devices that could plausibly host an agent server: connected now
+    /// (`connectedToControl`, or failing that seen in the last ten minutes) and
+    /// running a general-purpose OS. Offline peers blackhole every probe into a
+    /// full timeout, which is what makes naive scans take minutes; phones and
+    /// TVs can never run a server at all.
     public static func scannableDevices(
         _ devices: [TailscaleDevice], now: Date = Date()
     ) -> [TailscaleDevice] {
-        let excludedOS: Set<String> = ["ios", "ipados", "tvos", "watchos", "android"]
+        let excludedOS: Set<String> = ["ios", "ipados", "tvos", "watchos", "visionos", "android"]
         let cutoff = now.addingTimeInterval(-600)
         return devices
             .filter { device in
                 if let os = device.os?.lowercased(), excludedOS.contains(os) { return false }
+                if let connected = device.connectedToControl { return connected }
                 guard let seen = device.lastSeenDate else { return true }
                 return seen > cutoff
             }
