@@ -29,6 +29,8 @@ import Testing
             .stop,
             .degraded(.runaway, recovering: true),
             .recycled,
+            .engine(.loading, progress: 0.4),
+            .engine(.stopped, progress: nil),
             .error(code: "engineDown", message: "The voice model is not running"),
         ]
         for message in messages {
@@ -45,6 +47,9 @@ import Testing
             try VoiceCodec.encode(VoiceClientMessage.agent(.init(busy: false, digest: "Idle", turn: 3)))
                 == #"{"busy":false,"digest":"Idle","t":"agent","turn":3}"#)
         #expect(try VoiceCodec.encode(VoiceServerMessage.stop) == #"{"t":"stop"}"#)
+        #expect(
+            try VoiceCodec.encode(VoiceServerMessage.engine(.loading, progress: 0.5))
+                == #"{"progress":0.5,"state":"loading","t":"engine"}"#)
     }
 
     @Test func aNewerPeerDoesNotBreakAnOlderOne() throws {
@@ -52,6 +57,11 @@ import Testing
         #expect(try VoiceCodec.decodeClient(#"{"t":"mute","on":true}"#) == .unknown("mute"))
         let withExtra = #"{"t":"phase","phase":"speaking","at":3,"extra":1}"#
         #expect(try VoiceCodec.decodeServer(withExtra) == .phase(.speaking, at: 3))
+    }
+
+    @Test func anUnknownEngineStateReadsAsDown() throws {
+        let text = #"{"t":"engine","state":"warming"}"#
+        #expect(try VoiceCodec.decodeServer(text) == .engine(.down, progress: nil))
     }
 
     @Test func healthUsesTheProtocolKey() throws {

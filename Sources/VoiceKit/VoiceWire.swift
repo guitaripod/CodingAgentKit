@@ -29,7 +29,12 @@ public enum VoiceDegradedReason: String, Codable, Sendable, Hashable {
 }
 
 public enum VoiceEngineState: String, Codable, Sendable, Hashable {
-    case ready, loading, down, busy
+    case ready, loading, down, busy, stopped, needsSetup
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = VoiceEngineState(rawValue: raw) ?? .down
+    }
 }
 
 public struct VoiceHealth: Codable, Sendable, Hashable {
@@ -102,6 +107,7 @@ public enum VoiceServerMessage: Sendable, Hashable {
     case stop
     case degraded(VoiceDegradedReason, recovering: Bool)
     case recycled
+    case engine(VoiceEngineState, progress: Double?)
     case error(code: String, message: String)
     case unknown(String)
 
@@ -175,7 +181,7 @@ extension VoiceClientMessage: Codable {
 
 extension VoiceServerMessage: Codable {
     private enum Key: String, CodingKey {
-        case t, v, gateway, model, phase, at, id, text, final, reason, recovering, code, message
+        case t, v, gateway, model, phase, at, id, text, final, reason, recovering, code, message, state, progress
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,6 +214,10 @@ extension VoiceServerMessage: Codable {
                 recovering: try c.decodeIfPresent(Bool.self, forKey: .recovering) ?? false)
         case "recycled":
             self = .recycled
+        case "engine":
+            self = .engine(
+                try c.decode(VoiceEngineState.self, forKey: .state),
+                progress: try c.decodeIfPresent(Double.self, forKey: .progress))
         case "error":
             self = .error(
                 code: try c.decode(String.self, forKey: .code),
@@ -250,6 +260,10 @@ extension VoiceServerMessage: Codable {
             try c.encode(recovering, forKey: .recovering)
         case .recycled:
             try c.encode("recycled", forKey: .t)
+        case .engine(let state, let progress):
+            try c.encode("engine", forKey: .t)
+            try c.encode(state, forKey: .state)
+            try c.encodeIfPresent(progress, forKey: .progress)
         case .error(let code, let message):
             try c.encode("error", forKey: .t)
             try c.encode(code, forKey: .code)
