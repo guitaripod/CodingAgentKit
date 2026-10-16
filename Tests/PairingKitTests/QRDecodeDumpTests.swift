@@ -25,6 +25,8 @@ import Testing
                     name: payload.name, level: "\(level)", payload: payload.text, version: code.version, rows: rows)
                 let file = folder.appendingPathComponent("\(payload.name)-\(level).json")
                 try JSONEncoder().encode(dump).write(to: file)
+                let ansi = folder.appendingPathComponent("\(payload.name)-\(level).ansi")
+                try Data(TerminalQR.ansi(code).utf8).write(to: ansi)
                 written += 1
             }
         }

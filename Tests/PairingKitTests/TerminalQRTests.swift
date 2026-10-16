@@ -61,9 +61,24 @@ import Testing
         #expect(!TerminalQR.supportsUnicode(environment: ["LANG": "en_US.UTF-8", "TERM": "dumb"]))
     }
 
-    @Test func renderPicksTheFallback() throws {
+    @Test func renderPicksTheBestRendering() throws {
         let code = try code()
-        #expect(TerminalQR.render(code, environment: ["LANG": "en_US.UTF-8"]) == TerminalQR.blocks(code))
-        #expect(TerminalQR.render(code, environment: ["LANG": "C"]) == TerminalQR.ascii(code))
+        let color = ["LANG": "en_US.UTF-8", "TERM": "xterm-256color"]
+        #expect(TerminalQR.render(code, environment: color, isTerminal: true) == TerminalQR.ansi(code))
+        #expect(TerminalQR.render(code, environment: color, isTerminal: false) == TerminalQR.blocks(code))
+        #expect(TerminalQR.render(code, environment: color.merging(["NO_COLOR": "1"]) { $1 }, isTerminal: true) == TerminalQR.blocks(code))
+        #expect(TerminalQR.render(code, environment: ["LANG": "en_US.UTF-8"], isTerminal: true) == TerminalQR.blocks(code))
+        #expect(TerminalQR.render(code, inverse: true, environment: ["LANG": "en_US.UTF-8"], isTerminal: true) == TerminalQR.blocks(code, inverse: true))
+        #expect(TerminalQR.render(code, environment: ["LANG": "C", "TERM": "xterm-256color"], isTerminal: true) == TerminalQR.ascii(code))
+    }
+
+    @Test func colorSupportFollowsTheTerminal() {
+        #expect(TerminalQR.supportsColor(environment: ["TERM": "xterm-256color"]))
+        #expect(TerminalQR.supportsColor(environment: ["TERM": "xterm", "COLORTERM": "truecolor"]))
+        #expect(!TerminalQR.supportsColor(environment: ["TERM": "xterm"]))
+        #expect(!TerminalQR.supportsColor(environment: ["TERM": "dumb", "COLORTERM": "truecolor"]))
+        #expect(!TerminalQR.supportsColor(environment: ["TERM": "linux", "COLORTERM": "truecolor"]))
+        #expect(!TerminalQR.supportsColor(environment: ["TERM": "xterm-256color", "NO_COLOR": "1"]))
+        #expect(!TerminalQR.supportsColor(environment: [:]))
     }
 }
