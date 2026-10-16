@@ -35,6 +35,9 @@ let package = Package(
         .library(name: "ClaudeCodeKit", targets: ["ClaudeCodeKit"]),
         .library(name: "DelegateKit", targets: ["DelegateKit"]),
         .library(name: "PreviewKit", targets: ["PreviewKit"]),
+        .library(name: "VoiceKit", targets: ["VoiceKit"]),
+        .library(name: "SetupKit", targets: ["SetupKit"]),
+        .library(name: "PairingKit", targets: ["PairingKit"]),
         .library(name: "AgentTestSupport", targets: ["AgentTestSupport"]),
         .library(name: "CodingAgentKitApple", targets: ["CodingAgentKitApple"]),
         .executable(name: "codeagent", targets: ["CodeAgentCLI"]),
@@ -78,8 +81,23 @@ let package = Package(
             swiftSettings: strict
         ),
         .target(
+            name: "VoiceKit",
+            swiftSettings: strict
+        ),
+        .target(
+            name: "SetupKit",
+            swiftSettings: strict
+        ),
+        .target(
+            name: "PairingKit",
+            swiftSettings: strict
+        ),
+        .target(
             name: "CodingAgentKit",
-            dependencies: ["AgentCore", "OpenCodeKit", "ClaudeCodeKit", "DelegateKit", "PreviewKit"],
+            dependencies: [
+                "AgentCore", "OpenCodeKit", "ClaudeCodeKit", "DelegateKit", "PreviewKit", "VoiceKit", "SetupKit",
+                "PairingKit",
+            ],
             swiftSettings: strict
         ),
         .target(
@@ -124,6 +142,21 @@ let package = Package(
         .testTarget(
             name: "DelegateKitTests",
             dependencies: ["DelegateKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "SetupKitTests",
+            dependencies: ["SetupKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "PairingKitTests",
+            dependencies: ["PairingKit"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "VoiceKitTests",
+            dependencies: ["VoiceKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
