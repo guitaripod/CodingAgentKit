@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.41.0
+
+A long conversation is read, kept and refetched in bounded work, so a process that holds many of them stays quick when one stalls.
+
+### Added
+- **`AgentConversation.setRefreshPriority(_:)` and `RefreshPriority`.** A conversation says whether it is on screen (`.foreground`), ordinary (`.normal`, the default) or only kept alive to follow a turn (`.background`), and a refetch that is already waiting moves with it.
+
+### Changed
+- **One gate for every transcript refetch.** A reconnect, a resync, the stale-turn nudge, record-following and a hub redial all go through `RefreshGate`: two at a time per process, the highest priority first, refetches asked for one conversation while one is queued share it, and a turn is a 20-second lease so a server that has gone quiet cannot hold up the rest. A process that stalls past the stream's 20 seconds used to refetch every conversation it held in the same instant.
+- **The reducer's rename check is cheap.** It rejects by byte count before it walks a single grapheme, so rebuilding a 4000-message, 22 MB transcript went from 230 ms to 9 ms. The answer is the old algorithm's on 400 random transcripts. `MessageReducer.revision` counts every event that can change the snapshot.
+- **Persisting skips on an unchanged revision** instead of deep-comparing the whole transcript, and the compare and the encode run off the conversation actor. A mid-turn write is still at most every thirty seconds; the interval now restarts on every persist handed to the writer, so a refetch that finds nothing new can delay the next one by up to that long.
+- **The cache seed no longer delays the live read.** It decodes beside the refresh and can never overwrite a transcript that has already loaded, an empty one included.
+- **`FileSessionCache` prunes itself.** Once per directory per process, off the main path: files untouched for 60 days go, then the least recently used until the directory is under 256 MB. A transcript this process has read or written is never removed, and reading a file counts as using it.
+- **`BridgeTranscripts` is bounded by bytes as well as count**: 64 MB of decoded transcripts beside the twelve it already held, the newest always kept; `If-None-Match` handling is unchanged.
+
 ## 0.40.0
 
 A client can tell a device that is connected from one that was merely seen, and a refused Tailscale credential from a failed request.
