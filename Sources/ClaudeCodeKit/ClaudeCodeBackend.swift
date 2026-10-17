@@ -225,7 +225,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 backgroundWork: BackgroundWork.reported(
                     tasks: session.backgroundTasks, task: session.backgroundTask,
                     since: session.backgroundSince, stalled: session.backgroundStalled))
-            transcripts.hold(sessionID, etag: etag, snapshot: snapshot)
+            transcripts.hold(sessionID, etag: etag, snapshot: snapshot, bytes: data.count)
             return snapshot
         }
     }

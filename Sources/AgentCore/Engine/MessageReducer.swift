@@ -10,12 +10,19 @@ public struct MessageReducer: Sendable {
 
     public init(agentType: AgentType, messages: [ChatMessage] = []) {
         self.agentType = agentType
+        self.messages.reserveCapacity(messages.count)
+        self.indexByID.reserveCapacity(messages.count)
         for message in messages {
             upsert(message, replaceParts: true)
         }
     }
 
     public var snapshot: [ChatMessage] { messages }
+
+    /// Counts every event that may have changed what ``snapshot`` holds. Equal revisions of one
+    /// reducer mean equal snapshots, which is the question a writer asks before encoding a
+    /// transcript, answered without comparing it.
+    public private(set) var revision: UInt64 = 0
 
     /// Whether the transcript can say where a text delta lands.
     ///
@@ -30,6 +37,12 @@ public struct MessageReducer: Sendable {
     }
 
     public mutating func apply(_ event: BackendEvent) {
+        switch event {
+        case .messageUpserted, .partUpserted, .partTextDelta, .partRemoved, .messageRemoved:
+            revision &+= 1
+        default:
+            break
+        }
         switch event {
         case .messageUpserted(let message, let replaceParts):
             upsert(message, replaceParts: replaceParts)
@@ -133,22 +146,57 @@ public struct MessageReducer: Sendable {
     /// than showing one twice: only the newest assistant message with words since the last prompt
     /// is a candidate, and the words have to match — equal, or one the whole opening of the other —
     /// over a length no two different sentences of a turn share by chance.
-    private func renamedCopy(of message: ChatMessage) -> Int? {
-        guard message.role == .assistant else { return nil }
-        let incoming = Self.words(of: message)
-        guard incoming.count >= Self.renameEvidence else { return nil }
-        let prompt = messages.lastIndex { $0.role == .user } ?? -1
-        guard
-            let index = messages.indices.reversed().first(where: {
-                $0 > prompt && messages[$0].role == .assistant
-                    && !Self.words(of: messages[$0]).isEmpty
-            })
+    ///
+    /// Every test is ordered cheapest first and decided without building a string until the words
+    /// might really match: a rebuild of a long transcript asks this once per assistant message, and
+    /// counting graphemes of whole answers made that the dearest part of reading a conversation.
+    func renamedCopy(of message: ChatMessage) -> Int? {
+        guard message.role == .assistant, Self.textBytes(of: message) >= Self.renameEvidence else {
+            return nil
+        }
+        guard let index = newestAnswerSincePrompt(),
+            Self.textBytes(of: messages[index]) >= Self.renameEvidence
         else { return nil }
+        let incoming = Self.words(of: message)
+        guard Self.hasAtLeast(Self.renameEvidence, charactersIn: incoming) else { return nil }
         let held = Self.words(of: messages[index])
-        guard min(held.count, incoming.count) >= Self.renameEvidence,
+        guard Self.hasAtLeast(Self.renameEvidence, charactersIn: held),
             held.hasPrefix(incoming) || incoming.hasPrefix(held)
         else { return nil }
         return index
+    }
+
+    /// The newest assistant message that has words, provided no prompt has come after it.
+    private func newestAnswerSincePrompt() -> Int? {
+        var index = messages.count - 1
+        while index >= 0 {
+            let candidate = messages[index]
+            if candidate.role == .user { return nil }
+            if candidate.role == .assistant, Self.hasWords(candidate) { return index }
+            index -= 1
+        }
+        return nil
+    }
+
+    /// The bytes of text a message's words are made of. A grapheme is at least one byte, so a
+    /// message under the evidence bar in bytes is under it in characters, and this is a constant
+    /// time answer to a question that would otherwise walk the string.
+    private static func textBytes(of message: ChatMessage) -> Int {
+        message.parts.reduce(into: 0) { total, part in
+            if case .text(let value) = part.kind { total += value.utf8.count }
+        }
+    }
+
+    private static func hasWords(_ message: ChatMessage) -> Bool {
+        message.parts.contains { part in
+            if case .text(let value) = part.kind { return !value.isEmpty }
+            return false
+        }
+    }
+
+    /// Whether `text` holds at least `count` characters, counting no further than that.
+    private static func hasAtLeast(_ count: Int, charactersIn text: String) -> Bool {
+        text.index(text.startIndex, offsetBy: count, limitedBy: text.endIndex) != nil
     }
 
     /// How much of an answer two copies have to agree on before they are one answer.
@@ -163,10 +211,13 @@ public struct MessageReducer: Sendable {
         merge(message, into: &messages[index], replaceParts: fuller)
     }
 
-    private static func words(of message: ChatMessage) -> String {
-        message.parts.reduce(into: "") { text, part in
-            if case .text(let value) = part.kind { text += value }
+    static func words(of message: ChatMessage) -> String {
+        var text: String?
+        for part in message.parts {
+            guard case .text(let value) = part.kind else { continue }
+            if text == nil { text = value } else { text?.append(value) }
         }
+        return text ?? ""
     }
 
     /// Merges an incoming upsert into the stored message, preserving known metadata when the

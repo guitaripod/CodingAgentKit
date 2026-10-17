@@ -141,6 +141,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
     let server = ScriptedServer(mirrorsLiveTurn: mirroring)
     if mirroring { server.composeLate() }
     let conversation = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+    await conversation.useRefreshGate(RefreshGate(limit: 2))
     let states = await conversation.states()
 
     await waitUntil { server.isSubscribed }
@@ -212,6 +213,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
         server.hold()
         if composingLate { server.composeLate() }
         let conversation = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        await conversation.useRefreshGate(RefreshGate(limit: 2))
         let states = await conversation.states()
         await waitUntil { server.isSubscribed && server.fetchCount > 0 }
         for event in script.dropFirst(freezeIndex) { server.emit(event) }
@@ -233,6 +235,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
     @Test func aReconnectDoesNotQueueBehindTheRefetchItSuperseded() async {
         let server = ScriptedServer()
         let conversation = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        await conversation.useRefreshGate(RefreshGate(limit: 2))
         let states = await conversation.states()
         await waitUntil { await conversation.state.hasLoadedTranscript }
 
@@ -258,6 +261,7 @@ private func drive(refetchingMidTurn: Bool, againstAMirroringServer mirroring: B
     @Test func aDeltaForAMessageTheTranscriptNeverHeldRefetchesRatherThanInventOne() async {
         let server = ScriptedServer()
         let conversation = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        await conversation.useRefreshGate(RefreshGate(limit: 2))
         let states = await conversation.states()
         await waitUntil { await conversation.state.hasLoadedTranscript }
 

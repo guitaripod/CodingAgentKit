@@ -30,7 +30,9 @@ public actor AgentConversation {
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
     private var lastStreamPersist = Date.distantPast
-    private var lastPersisted: [ChatMessage]?
+    private var persistedStamp: PersistStamp?
+    private let persistLedger = PersistLedger()
+    private var reducerEpoch = 0
     private var subscribers: [UUID: AsyncStream<ConversationState>.Continuation] = [:]
     private var generation = 0
     private var resolvedPermissionIDs: Set<String> = []
@@ -38,6 +40,9 @@ public actor AgentConversation {
     private var refreshInFlight = false
     private var bufferedEvents: [BackendEvent] = []
     private var refreshChain: Task<Error?, Never>?
+    private var queuedRefresh: QueuedRefresh?
+    private let refreshPriorityBox = RefreshPriorityBox()
+    private var refreshGate = RefreshGate.shared
     private var recoveryRefreshInFlight = false
     private var droppedDeltaDuringRecovery = false
     private var reachedTerminal = false
@@ -64,6 +69,20 @@ public actor AgentConversation {
     }
 
     public var messages: [ChatMessage] { reducer.snapshot }
+
+    /// Where this conversation's refetches stand when several are waiting their turn. A process
+    /// runs only a couple of transcript reads at once, so the conversation on screen should say
+    /// so and one kept alive in the background should say that too. Changing it moves a refetch
+    /// that is already waiting.
+    public var refreshPriority: RefreshPriority { refreshPriorityBox.priority }
+
+    public func setRefreshPriority(_ priority: RefreshPriority) {
+        refreshPriorityBox.priority = priority
+    }
+
+    func useRefreshGate(_ gate: RefreshGate) {
+        refreshGate = gate
+    }
 
     public var state: ConversationState {
         let transcript = reducer.snapshot
@@ -174,6 +193,7 @@ public actor AgentConversation {
         generation += 1
         refreshChain?.cancel()
         refreshChain = nil
+        queuedRefresh = nil
     }
 
     /// Whether anything is currently observing — a supervisor uses this to decide when a session
@@ -650,7 +670,10 @@ public actor AgentConversation {
         reachedTerminal = false
         lastEventAt = Date()
         lastRecordSeen = nil
-        await seedFromCache(generation: gen)
+        let seeding = Task { [weak self] in
+            await self?.seedFromCache(generation: gen)
+        }
+        defer { seeding.cancel() }
 
         var attempt = 0
 
@@ -1176,11 +1199,16 @@ public actor AgentConversation {
         }
     }
 
+    /// Paints what the cache holds while the server is being asked, never in front of it: the read
+    /// of a cache file can be tens of megabytes, and the live transcript is not made to wait for
+    /// it. A transcript that has landed since is newer than anything the cache can say.
     private func seedFromCache(generation gen: Int) async {
         guard let cache, reducer.snapshot.isEmpty else { return }
         let cached = await cache.messages(for: sessionID)
-        guard gen == generation, !cached.isEmpty, reducer.snapshot.isEmpty else { return }
-        reducer = MessageReducer(agentType: backend.agentType, messages: cached)
+        guard gen == generation, !Task.isCancelled, !cached.isEmpty, reducer.snapshot.isEmpty,
+            !loadedTranscript
+        else { return }
+        installReducer(MessageReducer(agentType: backend.agentType, messages: cached))
         loadedTranscript = true
         syncTranscriptQuestions()
         emit()
@@ -1202,17 +1230,31 @@ public actor AgentConversation {
     /// other already folded in. Queued, the buffer belongs to exactly one fetch at a time and every
     /// later fetch is strictly newer than everything replayed before it. The queue carries the
     /// caller's cancellation through to the request, so closing a chat still abandons its load.
+    ///
+    /// A refetch that has not gone out yet is shared by whoever asks for one in the meantime: it
+    /// will read the server later than every one of them asked, so it answers them all, and a
+    /// burst of triggers — a resync, a stale nudge and a record advance landing together — costs
+    /// one read of the conversation rather than one each. It is abandoned only when every one of
+    /// them has gone.
     private func refreshSerialized(generation gen: Int) async -> Error? {
-        let previous = refreshChain
-        let task = Task { [weak self] () -> Error? in
-            _ = await previous?.value
-            return await self?.performRefresh(generation: gen) ?? nil
+        let queued: QueuedRefresh
+        if let waiting = queuedRefresh, waiting.generation == gen, waiting.join() {
+            queued = waiting
+        } else {
+            let previous = refreshChain
+            let fresh = QueuedRefresh(generation: gen)
+            fresh.task = Task { [weak self] () -> Error? in
+                _ = await previous?.value
+                return await self?.performRefresh(generation: gen, queued: fresh) ?? nil
+            }
+            queuedRefresh = fresh
+            refreshChain = fresh.task
+            queued = fresh
         }
-        refreshChain = task
         return await withTaskCancellationHandler {
-            await task.value
+            await queued.task.value
         } onCancel: {
-            task.cancel()
+            queued.leave()
         }
     }
 
@@ -1238,8 +1280,24 @@ public actor AgentConversation {
     /// the buffer and the hold on live events belong to the run loop that replaced it, which is
     /// re-reading the transcript itself. The check is made again here, after the queue has been
     /// waited on, so a refetch a reconnect superseded while it sat in the chain never goes out.
-    private func performRefresh(generation gen: Int) async -> Error? {
+    ///
+    /// The read waits for its turn at the process-wide ``RefreshGate`` first, so many
+    /// conversations asking at once (a stalled process waking up) are read a few at a time, the
+    /// one on screen first. Events keep applying while it waits, and the transcript they are
+    /// folded onto is the one in place when the read goes out.
+    private func performRefresh(generation gen: Int, queued: QueuedRefresh) async -> Error? {
         guard gen == generation else { return nil }
+        let permit: RefreshGate.Permit
+        do {
+            permit = try await refreshGate.acquire(priority: refreshPriorityBox)
+        } catch {
+            guard gen == generation else { return error }
+            drainBufferedEvents(generation: gen)
+            return error
+        }
+        defer { permit.release() }
+        guard gen == generation else { return nil }
+        queued.markStarted()
         refreshInFlight = true
         let preRefresh = reducer.snapshot
         do {
@@ -1256,7 +1314,8 @@ public actor AgentConversation {
                 drainBufferedEvents(generation: gen)
                 return nil
             }
-            reducer = MessageReducer(agentType: backend.agentType, messages: snapshot.messages)
+            installReducer(
+                MessageReducer(agentType: backend.agentType, messages: snapshot.messages))
             let folded = restoreMessagesTheStreamIsWriting(from: preRefresh)
             loadedTranscript = true
             deriveStatusFromTranscript(reported: snapshot.status)
@@ -1306,18 +1365,31 @@ public actor AgentConversation {
     /// a cancelled predecessor may still complete, but never after this one. A transcript the
     /// cache already holds is not sent again: a refetch that found nothing new used to rewrite the
     /// whole conversation to say so.
+    ///
+    /// Whether it is the same is answered in two steps. A reducer that has not been touched since
+    /// its transcript was last handed over is the same by its revision alone, which costs nothing.
+    /// A transcript rebuilt from a refetch is compared with the last one written, a walk over every
+    /// message, and that walk runs with the write rather than on this actor.
     private func persist() {
         guard let cache else { return }
-        let snapshot = reducer.snapshot
-        guard snapshot != lastPersisted else { return }
-        lastPersisted = snapshot
+        let stamp = PersistStamp(epoch: reducerEpoch, revision: reducer.revision)
+        guard stamp != persistedStamp else { return }
+        persistedStamp = stamp
         lastStreamPersist = Date()
+        let snapshot = reducer.snapshot
         let sessionID = sessionID
+        let ledger = persistLedger
         persistTask = Task { [previous = persistTask] in
             await previous?.value
             guard !Task.isCancelled else { return }
+            guard await ledger.admit(snapshot) else { return }
             await cache.store(snapshot, for: sessionID)
         }
+    }
+
+    private func installReducer(_ replacement: MessageReducer) {
+        reducer = replacement
+        reducerEpoch += 1
     }
 
     private func setConnection(_ phase: ConnectionPhase, generation gen: Int) {
@@ -1352,5 +1424,67 @@ public actor AgentConversation {
         persistTask = nil
         for continuation in subscribers.values { continuation.finish() }
         subscribers.removeAll()
+    }
+}
+
+/// Which transcript a reducer was holding when it was last handed to the cache.
+private struct PersistStamp: Equatable, Sendable {
+    let epoch: Int
+    let revision: UInt64
+}
+
+/// What the cache was last given, kept where the writer can reach it without the conversation.
+private final class PersistLedger: @unchecked Sendable {
+    private let lock = NSLock()
+    private var written: [ChatMessage]?
+
+    /// Whether `snapshot` differs from the last one admitted, and if it does, remembers it. The
+    /// comparison walks every message, so it is asynchronous to run off the conversation's actor.
+    func admit(_ snapshot: [ChatMessage]) async -> Bool {
+        let previous = lock.withLock { written }
+        if let previous, previous == snapshot { return false }
+        lock.withLock { written = snapshot }
+        return true
+    }
+}
+
+/// A refetch that is waiting for its turn, and how many callers are waiting on it.
+final class QueuedRefresh: @unchecked Sendable {
+    let generation: Int
+    nonisolated(unsafe) var task: Task<Error?, Never>!
+
+    private let lock = NSLock()
+    private var waiters = 1
+    private var started = false
+    private var abandoned = false
+
+    init(generation: Int) {
+        self.generation = generation
+    }
+
+    /// Adds a caller if the refetch can still answer it: it has not gone out and has not been
+    /// given up.
+    func join() -> Bool {
+        lock.withLock {
+            guard !started, !abandoned else { return false }
+            waiters += 1
+            return true
+        }
+    }
+
+    func markStarted() {
+        lock.withLock { started = true }
+    }
+
+    /// Removes a caller, and cancels the refetch when it was the last one, as closing a chat
+    /// always has abandoned its load.
+    func leave() {
+        let cancel = lock.withLock { () -> Bool in
+            waiters -= 1
+            guard waiters <= 0 else { return false }
+            abandoned = true
+            return true
+        }
+        if cancel { task.cancel() }
     }
 }

@@ -203,6 +203,7 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
             ])
         let conversation = AgentConversation(
             backend: backend, sessionID: "s", policy: fastPolicy, cache: cache)
+        await conversation.useRefreshGate(RefreshGate(limit: 2))
 
         for await state in await conversation.states()
         where state.messages.first?.text == "first second third fourth" {
