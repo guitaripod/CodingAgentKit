@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.0
+
+A request names how long its cache writes live, so a client can say whether the prompt cache is still held.
+
+### Added
+- **`MessageUsage.cacheLifetime`.** An hour when any cache write the request made was cached for an hour, five minutes when that is all there was, and nil when nothing was written (a request that only read the cache says nothing about how long it lives). The claude bridge already sends the two write lifetimes apart on a message's `context` and `usage`; the Kit was adding them back together and dropping the lifetime. Optional and additive: an older bridge, or a transcript saved before this, decodes with it absent.
+
 ## 0.41.0
 
 A long conversation is read, kept and refetched in bounded work, so a process that holds many of them stays quick when one stalls.
