@@ -784,7 +784,16 @@ struct BRTokens: Decodable {
     var usage: MessageUsage {
         MessageUsage(
             input: input ?? 0, output: output ?? 0, reasoning: 0, cacheRead: cacheRead ?? 0,
-            cacheWrite: (cacheWrite5m ?? 0) + (cacheWrite1h ?? 0))
+            cacheWrite: (cacheWrite5m ?? 0) + (cacheWrite1h ?? 0), cacheLifetime: cacheLifetime)
+    }
+
+    /// The longest lifetime among the writes this request made: an hour when any of them was
+    /// written for an hour, five minutes when that is all there was, nothing when nothing was
+    /// written. A request that only read the cache says nothing about how long it lives.
+    private var cacheLifetime: TimeInterval? {
+        if (cacheWrite1h ?? 0) > 0 { return 3600 }
+        if (cacheWrite5m ?? 0) > 0 { return 300 }
+        return nil
     }
 }
 

@@ -321,6 +321,24 @@ import Testing
         #expect(message.context?.total == 42_710)
     }
 
+    /// The cache a request wrote lives as long as its longest write; a request that only read it
+    /// says nothing about the lifetime, and nothing is guessed in its place.
+    @Test func aRequestNamesHowLongItsCacheWritesLive() throws {
+        func lifetime(_ context: String) throws -> TimeInterval? {
+            try decode(
+                BRMessage.self,
+                """
+                {"id":"m1","role":"assistant","parts":[],"createdAt":"2024-01-02T03:04:05Z",
+                 "context":\(context)}
+                """
+            ).chat(agentType: .claudeCode).context?.cacheLifetime
+        }
+        #expect(try lifetime(#"{"cacheRead":10,"cacheWrite1h":5}"#) == 3600)
+        #expect(try lifetime(#"{"cacheRead":10,"cacheWrite5m":5,"cacheWrite1h":5}"#) == 3600)
+        #expect(try lifetime(#"{"cacheRead":10,"cacheWrite5m":5}"#) == 300)
+        #expect(try lifetime(#"{"cacheRead":10}"#) == nil)
+    }
+
     @Test func anOldBridgeLeavesTheFootprintUnknown() throws {
         let message = try decode(
             BRMessage.self,

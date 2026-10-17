@@ -195,15 +195,22 @@ public struct MessageUsage: Sendable, Hashable, Codable {
     public var reasoning: Int
     public var cacheRead: Int
     public var cacheWrite: Int
+    /// How long the provider keeps what this request cached, where the server says: the lifetime
+    /// of the cache writes the request made (an hour or five minutes), which every later request
+    /// that reads the cache pushes out again. Nil where nothing was written or the server does not
+    /// split its writes by lifetime.
+    public var cacheLifetime: TimeInterval?
 
     public init(
-        input: Int = 0, output: Int = 0, reasoning: Int = 0, cacheRead: Int = 0, cacheWrite: Int = 0
+        input: Int = 0, output: Int = 0, reasoning: Int = 0, cacheRead: Int = 0,
+        cacheWrite: Int = 0, cacheLifetime: TimeInterval? = nil
     ) {
         self.input = input
         self.output = output
         self.reasoning = reasoning
         self.cacheRead = cacheRead
         self.cacheWrite = cacheWrite
+        self.cacheLifetime = cacheLifetime
     }
 
     public var total: Int { input + output + reasoning + cacheRead + cacheWrite }
