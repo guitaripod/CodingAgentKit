@@ -500,7 +500,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                     usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
             },
             details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
-            error: snapshot.error)
+            error: snapshot.error,
+            errorCode: snapshot.errorCode,
+            accountID: snapshot.accountID,
+            schema: snapshot.schema)
     }
 
     /// Every other provider this machine holds an account for, one bridge route each. Older
@@ -525,7 +528,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                             usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
                     },
                     details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
-                    error: snapshot.error))
+                    error: snapshot.error,
+                    errorCode: snapshot.errorCode,
+                    accountID: snapshot.accountID,
+                    schema: snapshot.schema))
         }
         return quotas
     }
@@ -575,6 +581,9 @@ private struct BRUsage: Decodable {
     let gauges: [Gauge]
     let details: [Detail]
     let error: String?
+    let errorCode: String?
+    let accountID: String?
+    let schema: Int?
 }
 
 enum BridgeCoding {

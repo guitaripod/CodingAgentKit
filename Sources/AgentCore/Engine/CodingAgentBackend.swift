@@ -637,10 +637,20 @@ public struct UsageQuota: Sendable, Hashable, Codable {
     /// reason is still worth showing: it is the difference between "nothing left" and "could not
     /// ask", and only the server knows which one happened.
     public var error: String?
+    /// A short, stable word for ``error`` — `key_expired`, `unreachable`, `no_subscription` — so a
+    /// client can write the sentence in the reader's language instead of showing the server's.
+    public var errorCode: String?
+    /// The account the reading belongs to, when the provider names one. Two machines signed into
+    /// different accounts of the same provider are not one card.
+    public var accountID: String?
+    /// The usage route's schema, so a client can tell a reading that carries account identity and
+    /// exact windows from one written by an older bridge.
+    public var schema: Int?
 
     public init(
         providerName: String, subtitle: String, source: String, live: Bool,
-        gauges: [Gauge], details: [Detail], error: String? = nil
+        gauges: [Gauge], details: [Detail], error: String? = nil,
+        errorCode: String? = nil, accountID: String? = nil, schema: Int? = nil
     ) {
         self.providerName = providerName
         self.subtitle = subtitle
@@ -649,6 +659,9 @@ public struct UsageQuota: Sendable, Hashable, Codable {
         self.gauges = gauges
         self.details = details
         self.error = error
+        self.errorCode = errorCode
+        self.accountID = accountID
+        self.schema = schema
     }
 }
 
