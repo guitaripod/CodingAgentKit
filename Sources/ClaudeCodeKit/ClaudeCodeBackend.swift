@@ -487,7 +487,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     public func usageQuota() async throws -> UsageQuota? {
         let data = try await http.send(builder.request(.get, "/usage"))
         let snapshot = try BridgeCoding.decoder.decode(BRUsage.self, from: data)
-        guard snapshot.live, !snapshot.gauges.isEmpty else { return nil }
+        guard !snapshot.gauges.isEmpty || snapshot.error != nil else { return nil }
         return UsageQuota(
             providerName: snapshot.providerName,
             subtitle: snapshot.subtitle,
@@ -499,7 +499,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                     resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
                     usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
             },
-            details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) })
+            details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
+            error: snapshot.error)
     }
 
     /// Every other provider this machine holds an account for, one bridge route each. Older
@@ -509,7 +510,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         for route in ["/usage/grok", "/usage/opencode"] {
             guard let data = try? await http.send(builder.request(.get, route)),
                 let snapshot = try? BridgeCoding.decoder.decode(BRUsage.self, from: data),
-                snapshot.live, !snapshot.gauges.isEmpty
+                !snapshot.gauges.isEmpty || snapshot.error != nil
             else { continue }
             quotas.append(
                 UsageQuota(
@@ -523,7 +524,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                             resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
                             usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
                     },
-                    details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) }))
+                    details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
+                    error: snapshot.error))
         }
         return quotas
     }
@@ -571,6 +573,7 @@ private struct BRUsage: Decodable {
     let live: Bool
     let gauges: [Gauge]
     let details: [Detail]
+    let error: String?
 }
 
 enum BridgeCoding {

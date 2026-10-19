@@ -628,10 +628,14 @@ public struct UsageQuota: Sendable, Hashable, Codable {
     public var live: Bool
     public var gauges: [Gauge]
     public var details: [Detail]
+    /// Why a live reading could not be taken, when the server says. A quota with no gauges and a
+    /// reason is still worth showing: it is the difference between "nothing left" and "could not
+    /// ask", and only the server knows which one happened.
+    public var error: String?
 
     public init(
         providerName: String, subtitle: String, source: String, live: Bool,
-        gauges: [Gauge], details: [Detail]
+        gauges: [Gauge], details: [Detail], error: String? = nil
     ) {
         self.providerName = providerName
         self.subtitle = subtitle
@@ -639,6 +643,7 @@ public struct UsageQuota: Sendable, Hashable, Codable {
         self.live = live
         self.gauges = gauges
         self.details = details
+        self.error = error
     }
 }
 
