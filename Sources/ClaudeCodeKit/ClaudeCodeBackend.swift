@@ -497,7 +497,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 UsageQuota.Gauge(
                     key: $0.key, label: $0.label, fraction: $0.fraction,
                     resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
-                    usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
+                    usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
             },
             details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
             error: snapshot.error)
@@ -522,7 +522,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                         UsageQuota.Gauge(
                             key: $0.key, label: $0.label, fraction: $0.fraction,
                             resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
-                            usedUSD: $0.usedUSD, limitUSD: $0.limitUSD)
+                            usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
                     },
                     details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
                     error: snapshot.error))
@@ -558,6 +558,7 @@ private struct BRUsage: Decodable {
         let key: String
         let label: String
         let fraction: Double
+        let startsAt: Date?
         let resetsAt: Date?
         let trustedReset: Bool
         let usedUSD: Double?

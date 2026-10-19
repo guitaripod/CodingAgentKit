@@ -581,6 +581,9 @@ public struct UsageQuota: Sendable, Hashable, Codable {
         /// clamping, so a value can momentarily read slightly above `1` when the provider counts an
         /// over-limit request — clamp at the presentation layer if a bar must not overflow.
         public var fraction: Double
+        /// When the window opened, when the provider states it. A window with both a stated start
+        /// and reset is a fixed interval the server can account for exactly.
+        public var startsAt: Date?
         /// When the window is expected to reset, if known.
         public var resetsAt: Date?
         /// Whether ``resetsAt`` is a real provider-reported reset time rather than one the backend
@@ -594,11 +597,13 @@ public struct UsageQuota: Sendable, Hashable, Codable {
 
         public init(
             key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool,
-            usedUSD: Double? = nil, limitUSD: Double? = nil, currency: String? = nil
+            usedUSD: Double? = nil, limitUSD: Double? = nil, currency: String? = nil,
+            startsAt: Date? = nil
         ) {
             self.key = key
             self.label = label
             self.fraction = fraction
+            self.startsAt = startsAt
             self.resetsAt = resetsAt
             self.trustedReset = trustedReset
             self.usedUSD = usedUSD
