@@ -332,9 +332,31 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         }
     }
 
+    /// A prompt that names a model sets it first, and the server announces that change a moment
+    /// before the session record carries it. The title written for a fresh conversation is taken
+    /// from that record as the prompt is promoted, so a prompt sent in the same breath as its own
+    /// model raced the announcement and left the conversation with no title at all (opencode
+    /// 2.0.15). Reading the record back until it agrees puts the selection where the title reader
+    /// will find it, before the turn can start.
+    private func settleSelection(
+        model: ModelSelection?, effort: String?, of sessionID: String
+    ) async {
+        guard let model else { return }
+        let wantedVariant = effort ?? "default"
+        for attempt in 0..<3 {
+            guard let record = try? await client.session(sessionID) else { return }
+            let landed =
+                record.model?.providerID == model.providerID && record.model?.id == model.modelID
+                && (record.model?.variant ?? "default") == wantedVariant
+            if landed { return }
+            if attempt < 2 { try? await Task.sleep(for: .milliseconds(15)) }
+        }
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         try await applySelection(
             model: prompt.model, effort: prompt.reasoningEffort, agent: prompt.agent, to: sessionID)
+        await settleSelection(model: prompt.model, effort: prompt.reasoningEffort, of: sessionID)
         let files = prompt.attachments.compactMap { attachment -> OC2FileAttachment? in
             guard let uri = Self.attachmentURL(attachment) else { return nil }
             return OC2FileAttachment(uri: uri, name: attachment.filename)
@@ -392,6 +414,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     public func runCommand(_ run: CommandRun, in sessionID: String) async throws {
         try await applySelection(
             model: run.model, effort: run.reasoningEffort, agent: run.agent, to: sessionID)
+        await settleSelection(model: run.model, effort: run.reasoningEffort, of: sessionID)
         if OpenCodeCommon.isCompaction(run.command.name) {
             try await client.compact(sessionID: sessionID)
             return

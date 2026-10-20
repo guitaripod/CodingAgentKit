@@ -40,7 +40,7 @@ enum OpenCodeMapping {
         AgentSession(
             id: session.id,
             agentType: .openCode,
-            title: session.title ?? session.id,
+            title: session.title ?? AgentSession.untitledTitle,
             parentID: session.parentID,
             directory: session.directory,
             createdAt: date(session.time?.created),

@@ -41,6 +41,11 @@ public struct SessionRevision: Sendable, Hashable {
 }
 
 public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
+    /// The title a listing wears until the server has named the conversation. Sentinel rather
+    /// than a word to draw: ``isPlaceholderTitle(_:)`` recognizes it and every client shows its
+    /// own name for a chat that has none yet. A record's id is not a title, and a list that
+    /// falls back to one reads as a conversation called `ses_…`.
+    public static let untitledTitle = "New session"
     public let id: String
     public let agentType: AgentType
     public var title: String

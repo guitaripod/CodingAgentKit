@@ -175,7 +175,7 @@ enum OpenCodeLedger {
 
     private static func title(_ session: Record) -> String {
         let title = session.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? session.id : title
+        return title.isEmpty ? AgentSession.untitledTitle : title
     }
 
     private static func add(

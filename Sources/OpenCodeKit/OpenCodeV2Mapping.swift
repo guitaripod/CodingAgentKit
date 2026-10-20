@@ -53,7 +53,7 @@ enum OpenCodeV2Mapping {
 
     static func title(_ session: OC2Session) -> String {
         let title = session.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return title.isEmpty ? session.id : title
+        return title.isEmpty ? AgentSession.untitledTitle : title
     }
 
     static func project(_ project: OC2Project) -> AgentProject? {
