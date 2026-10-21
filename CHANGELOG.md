@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.2
+
+An opencode 2 server's folders open and its levels stick.
+
+### Fixed
+- **A folder in the picker opens.** opencode 2 lists a folder relative to the workspace it answered for, so `Dev/android/` under `/home/marcus` was not a path a client could ask again. The listing's own `location` is now the root its entries hang from, and an entry outside it (`../../etc/alsa/`) resolves to its absolute path.
+- **A level picked without a model lands on the session.** A chat opened on one desk and continued on another keeps the model the session already carries, and its record now says the level, so the next client no longer reads the server deciding. A level nobody named is never waited for, and the wait for the selection to settle is five short round trips instead of three.
+
 ## 0.42.0
 
 A request names how long its cache writes live, so a client can say whether the prompt cache is still held.
