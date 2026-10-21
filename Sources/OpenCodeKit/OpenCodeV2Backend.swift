@@ -317,7 +317,9 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
 
     /// The model and the agent are standing settings on the session rather than fields on the
     /// prompt, so a prompt that names them sets them first. The effort travels as the model's
-    /// variant.
+    /// variant. A level picked without a model still belongs to the session — a chat opened on
+    /// one desk and continued on another runs on the model the session already carries, and its
+    /// record has to say the level or the next client reads the server deciding.
     private func applySelection(
         model: ModelSelection?, effort: String?, agent: String?, to sessionID: String
     ) async throws {
@@ -326,6 +328,12 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
                 sessionID: sessionID,
                 model: OC2ModelRefInput(
                     id: model.modelID, providerID: model.providerID, variant: effort))
+        } else if let effort, let current = try? await client.session(sessionID).model,
+            let id = current.id, let providerID = current.providerID
+        {
+            try await client.switchModel(
+                sessionID: sessionID,
+                model: OC2ModelRefInput(id: id, providerID: providerID, variant: effort))
         }
         if let agent, !agent.isEmpty {
             try await client.switchAgent(sessionID: sessionID, agent: agent)
@@ -337,19 +345,20 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     /// from that record as the prompt is promoted, so a prompt sent in the same breath as its own
     /// model raced the announcement and left the conversation with no title at all (opencode
     /// 2.0.15). Reading the record back until it agrees puts the selection where the title reader
-    /// will find it, before the turn can start.
+    /// will find it, before the turn can start. The wait is bounded to a few round trips, and a
+    /// level nobody named is never waited for: the server keeps whatever the session carries.
     private func settleSelection(
         model: ModelSelection?, effort: String?, of sessionID: String
     ) async {
         guard let model else { return }
-        let wantedVariant = effort ?? "default"
-        for attempt in 0..<3 {
+        for attempt in 0..<5 {
             guard let record = try? await client.session(sessionID) else { return }
-            let landed =
+            let modelLanded =
                 record.model?.providerID == model.providerID && record.model?.id == model.modelID
-                && (record.model?.variant ?? "default") == wantedVariant
-            if landed { return }
-            if attempt < 2 { try? await Task.sleep(for: .milliseconds(15)) }
+            let levelLanded =
+                effort.map { (record.model?.variant ?? "default") == $0 } ?? true
+            if modelLanded, levelLanded { return }
+            if attempt < 4 { try? await Task.sleep(for: .milliseconds(60)) }
         }
     }
 
