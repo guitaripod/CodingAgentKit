@@ -236,8 +236,8 @@ public struct OpenCodeV2Client: Sendable {
         try unwrap(await http.send(builder.request(.get, "/api/session/\(sessionID)/diff")))
     }
 
-    func files(path: String, directory: String?) async throws -> [OC2FSEntry] {
-        try unwrap(
+    func files(path: String, directory: String?) async throws -> OC2FileListing {
+        try decode(
             await http.send(
                 builder.request(
                     .get, "/api/fs/list",

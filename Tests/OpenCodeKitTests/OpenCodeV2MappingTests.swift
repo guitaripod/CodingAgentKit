@@ -342,6 +342,19 @@ private func records(_ json: String) throws -> [OC2Message] {
         #expect(entry.isDirectory)
     }
 
+    /// opencode answers a listing relative to the workspace it resolved, so a folder in the
+    /// picker is only clickable when the listing's own location is put back in front of it.
+    @Test func anEntryListedFromAWorkspaceIsRootedAtThatWorkspace() {
+        let inside = OpenCodeV2Mapping.fileNode(
+            OC2FSEntry(path: "Dev/android/", type: "directory"), root: "/home/marcus")
+        #expect(inside.path == "/home/marcus/Dev/android")
+        #expect(inside.name == "android")
+        let outside = OpenCodeV2Mapping.fileNode(
+            OC2FSEntry(path: "../../etc/alsa/", type: "directory"), root: "/home/marcus")
+        #expect(outside.path == "/etc/alsa")
+        #expect(outside.name == "alsa")
+    }
+
     @Test func aDirectoryEntryLosesItsSlashAndKeepsItsKind() {
         let directory = OpenCodeV2Mapping.fileNode(OC2FSEntry(path: "home/", type: "directory"))
         #expect(directory.path == "home")

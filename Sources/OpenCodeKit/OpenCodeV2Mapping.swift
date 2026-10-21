@@ -109,7 +109,10 @@ enum OpenCodeV2Mapping {
     static func fileNode(_ entry: OC2FSEntry, root: String? = nil) -> FileNode {
         let isDirectory = entry.type == "directory" || entry.path.hasSuffix("/")
         let relative = entry.path.hasSuffix("/") ? String(entry.path.dropLast()) : entry.path
-        let path = root.map { ($0.hasSuffix("/") ? $0 : $0 + "/") + relative } ?? relative
+        let path =
+            root.map {
+                ((($0 as NSString).appendingPathComponent(relative)) as NSString).standardizingPath
+            } ?? relative
         let name = path.split(separator: "/").last.map(String.init) ?? path
         return FileNode(path: path, name: name, isDirectory: isDirectory)
     }

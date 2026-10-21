@@ -354,6 +354,13 @@ struct OC2FSEntry: Decodable, Sendable {
     let type: String?
 }
 
+/// A folder listing. Entries are relative to the listing's `location` — the workspace opencode
+/// answered for — not to the folder that was asked for, so the root has to travel with them.
+struct OC2FileListing: Decodable, Sendable {
+    let data: [OC2FSEntry]
+    let location: OC2Location?
+}
+
 struct OC2Diff: Decodable, Sendable {
     let file: String?
     let patch: String?

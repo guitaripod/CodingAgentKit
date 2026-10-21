@@ -469,24 +469,24 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         try await client.pendingForms(sessionID: sessionID).compactMap(OpenCodeV2Mapping.question)
     }
 
-    /// opencode 2 answers every file route relative to a location, and its reader takes the path as
-    /// URL segments, so a leading slash is lost. An absolute path is therefore asked of the root
-    /// location, which reads it as written and lists entries that are absolute once rooted again.
-    private static let rootLocation = "/"
-
+    /// opencode 2 lists a folder relative to the workspace it answered for — the home the server
+    /// runs in — so `Dev/android/` under `/home/marcus` is not a path a client can open or ask
+    /// again. The listing's own location is the root those entries hang from, and it is the only
+    /// thing that makes a folder in the picker clickable.
     public func listFiles(path: String?) async throws -> [FileNode] {
-        let requested = path ?? "."
-        guard requested.hasPrefix("/") else {
-            return try await client.files(path: requested, directory: nil).map { OpenCodeV2Mapping.fileNode($0) }
-        }
-        return try await client.files(path: requested, directory: Self.rootLocation).map {
-            OpenCodeV2Mapping.fileNode($0, root: Self.rootLocation)
+        let listing = try await client.files(path: path ?? ".", directory: nil)
+        return listing.data.map {
+            OpenCodeV2Mapping.fileNode($0, root: listing.location?.directory)
         }
     }
 
+    /// A read route takes the path as URL segments, so the leading slash is dropped and the file is
+    /// asked of the root workspace instead — the one place a location still has to be named.
+    private static let readRoot = "/"
+
     public func fileContent(path: String) async throws -> String {
         let bytes = try await client.fileBytes(
-            path: path, directory: path.hasPrefix("/") ? Self.rootLocation : nil)
+            path: path, directory: path.hasPrefix("/") ? Self.readRoot : nil)
         return String(decoding: bytes, as: UTF8.self)
     }
 
