@@ -29,6 +29,11 @@ public actor AgentConversation {
     /// When a running compaction last ended, by any road, on this client's clock. See
     /// ``isTailOfCompactionJustEnded()``.
     private var compactionEndedAt: Date?
+    /// The seams the transcript held when the last compaction ended. They answered that one, so
+    /// the time rule in ``settleCompactionAgainstTranscript()`` never lets one of them end the
+    /// next — a `/compact` typed seconds after an automatic compaction, announced while a re-read
+    /// was in flight, would otherwise be ended at once by the seam the first one left.
+    private var seamsAnsweredBefore: Set<String> = []
     private var interruption: TurnInterruption?
     private var backgroundWork: BackgroundWork?
     private var retry: TurnRetry?
@@ -296,7 +301,12 @@ public actor AgentConversation {
     private func endCompaction() {
         compaction = nil
         seamsWhenCompactionBegan = nil
+        noteCompactionEnded()
+    }
+
+    private func noteCompactionEnded() {
         compactionEndedAt = Date()
+        seamsAnsweredBefore = Set(landedSeamMessages().map(\.id))
     }
 
     /// How long after a compaction ends a report that one has started is taken for the tail of the
@@ -342,7 +352,7 @@ public actor AgentConversation {
         }
         if let began = seamsWhenCompactionBegan {
             if landedSeams() > began { endCompaction() }
-        } else if seamHasLanded(since: running.startedAt) {
+        } else if seamHasLanded(since: running.startedAt, excludingAnswered: true) {
             endCompaction()
         }
     }
@@ -361,10 +371,16 @@ public actor AgentConversation {
     private func landedSeams() -> Int { landedSeamMessages().count }
 
     /// Whether the transcript holds a finished seam written at or after `moment`, allowing for the
-    /// clocks of the two ends disagreeing by ``compactionClockSkew``.
-    private func seamHasLanded(since moment: Date) -> Bool {
+    /// clocks of the two ends disagreeing by ``compactionClockSkew``. With `excludingAnswered`,
+    /// a seam that already ended an earlier compaction does not count.
+    private func seamHasLanded(since moment: Date, excludingAnswered: Bool = false) -> Bool {
         let earliest = moment.addingTimeInterval(-Self.compactionClockSkew)
-        return landedSeamMessages().contains { $0.createdAt >= earliest }
+        return landedSeamMessages().contains { message in
+            guard !excludingAnswered || !seamsAnsweredBefore.contains(message.id) else {
+                return false
+            }
+            return message.createdAt >= earliest
+        }
     }
 
     /// Ends a running compaction when the server says the turn it ran in is over. Where
@@ -1154,7 +1170,7 @@ public actor AgentConversation {
                 seamsWhenCompactionBegan =
                     loadedTranscript && !replayingBufferedEvents ? landedSeams() : nil
             }
-            if wasRunning, value?.isRunning != true { compactionEndedAt = Date() }
+            if wasRunning, value?.isRunning != true { noteCompactionEnded() }
             /// A compaction that just ended rewrote the transcript on the server: the summary
             /// message the stream delivered is not the seam the transcript wants, so re-read the
             /// authoritative messages once the dust settles rather than leaving the raw summary
