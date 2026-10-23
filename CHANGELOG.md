@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.44.0
 
 Coming back to a conversation shows its latest messages after one small read instead of after the whole transcript.
 
