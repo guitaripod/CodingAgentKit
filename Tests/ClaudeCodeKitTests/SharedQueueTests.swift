@@ -438,23 +438,4 @@ private let itemJSON =
 
         #expect(snapshot.queue == nil)
     }
-
-    @Test func anUnchangedTranscriptStillCarriesTheQueueAsItIsNow() async throws {
-        let host = "etag.test"
-        let bridge = QueueBridge.named(host)
-        bridge.publish(200, #"{"healthy":true,"queue":1}"#, at: "/status")
-        bridge.publish(
-            200,
-            #"{"id":"s1","title":"t","messages":[],"queue":[\#(itemJSON)],"queuePaused":false}"#,
-            etag: "\"v1\"", at: "/sessions/s1")
-        let backend = backend(host: host)
-        let first = try await backend.transcript(for: "s1")
-        #expect(first.queue?.items.map(\.id) == ["q1"])
-
-        bridge.publish(200, #"{"queue":[],"paused":true}"#, at: "/sessions/s1/queue")
-        let second = try await backend.transcript(for: "s1")
-
-        #expect(second.queue?.items.isEmpty == true)
-        #expect(second.queue?.paused == true)
-    }
 }

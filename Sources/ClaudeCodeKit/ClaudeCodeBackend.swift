@@ -230,7 +230,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         await learned
         switch reply {
         case .notModified:
-            if let held { return await withCurrentQueue(held.snapshot, sessionID: sessionID) }
+            if let held { return held.snapshot }
             transcripts.forget(sessionID)
             return try await transcript(for: sessionID)
         case .modified(let data, let etag):

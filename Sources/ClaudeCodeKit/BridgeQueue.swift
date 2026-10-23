@@ -143,21 +143,6 @@ extension ClaudeCodeBackend {
         guard queueSupport.isSupported else { throw AgentError.unsupported("queue") }
     }
 
-    /// A held copy of the conversation with the queue as the bridge has it now. A 304 says the
-    /// transcript is unchanged, and the validator was made for the transcript: the copy held
-    /// carries the queue as it stood when it was read, which a queue change since would leave
-    /// wrong. So where the bridge keeps a queue it is asked for on its own route; if that cannot
-    /// be read the copy is handed back as it was.
-    func withCurrentQueue(_ held: TranscriptSnapshot, sessionID: String) async -> TranscriptSnapshot {
-        guard queueSupport.isSupported,
-            let data = try? await http.send(builder.request(.get, "/sessions/\(sessionID)/queue")),
-            let current = try? Self.queueSnapshot(from: data)
-        else { return held }
-        var snapshot = held
-        snapshot.queue = current
-        return snapshot
-    }
-
     public func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult {
         try await requireQueue()
         let attachments = prompt.prompt.attachments.compactMap { attachment -> BRSendAttachment? in
