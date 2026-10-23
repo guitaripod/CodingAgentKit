@@ -953,6 +953,11 @@ public protocol CodingAgentBackend: Sendable {
     /// server that knows says so beside the words, and a re-read of the conversation corrects a
     /// status the stream left stale in either direction. Defaults to the messages with no verdict.
     func transcript(for sessionID: String) async throws -> TranscriptSnapshot
+    /// The newest `limit` messages of the conversation with the status the server gives beside
+    /// them, read without the rest of it: a client that already holds the older messages shows the
+    /// latest of the conversation after one small request instead of after the whole transcript.
+    /// `nil` from a backend that cannot read from the end, which leaves the full read as the only one.
+    func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot?
     /// Where the server's own record of this session stands right now, asked on a clock while the
     /// event stream is silent. It exists because silence on a stream is not evidence that nothing
     /// happened: opencode's bus is per-process, so a turn another process on that machine is
@@ -1236,6 +1241,7 @@ extension CodingAgentBackend {
     }
 
     public func revision(for sessionID: String) async throws -> SessionRevision? { nil }
+    public func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot? { nil }
 
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         TranscriptSnapshot(messages: try await messages(for: sessionID), status: nil)

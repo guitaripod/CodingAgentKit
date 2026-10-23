@@ -1472,6 +1472,45 @@ public actor AgentConversation {
         emit()
     }
 
+    /// How many of the newest messages are read ahead of the whole transcript. Enough that
+    /// whatever happened while a phone was away is inside them; a gap longer than this is simply
+    /// left to the full read.
+    private static let recentTailLimit = 30
+
+    /// Shows the end of the conversation without waiting for the whole of it.
+    ///
+    /// A client coming back to a conversation it already holds — the cache seeded it, or it was
+    /// open until a moment ago — is waiting for the last few messages, and the full read has to
+    /// walk every page from the first message to reach them, which on a long conversation is
+    /// megabytes. The newest are asked for beside it, and when the oldest of them is a message
+    /// already held, everything held before it is still true and the server's account of the
+    /// rest replaces what was held after it. A tail that does not meet what is held — more new
+    /// messages than it reads — is left alone; the full read installs the same conversation a
+    /// moment later whichever of them lands first, and while it is out the events the stream
+    /// delivers are held for it as ever, so nothing here touches them.
+    private func adoptRecentTail(generation gen: Int) async {
+        guard loadedTranscript, !reducer.snapshot.isEmpty,
+            let tail = try? await backend.recentTranscript(
+                for: sessionID, limit: Self.recentTailLimit),
+            !Task.isCancelled, gen == generation, refreshInFlight, !reachedTerminal,
+            let joined = Self.splice(tail.messages, onto: reducer.snapshot)
+        else { return }
+        installReducer(MessageReducer(agentType: backend.agentType, messages: joined))
+        deriveStatusFromTranscript(reported: tail.status)
+        retry = status == .running ? tail.retry : nil
+        syncTranscriptQuestions()
+        emit()
+    }
+
+    /// What is held before the tail's first message, then the tail. Nil when the tail does not
+    /// begin on a message that is held, because then there may be messages between the two that
+    /// neither side knows of.
+    static func splice(_ tail: [ChatMessage], onto held: [ChatMessage]) -> [ChatMessage]? {
+        guard let first = tail.first, let joint = held.firstIndex(where: { $0.id == first.id })
+        else { return nil }
+        return Array(held[..<joint]) + tail
+    }
+
     /// A refetch nobody asked for, so a failure is a banner rather than a thrown error.
     private func refreshQuietly(generation gen: Int) async {
         guard let error = await refreshSerialized(generation: gen),
@@ -1542,12 +1581,18 @@ public actor AgentConversation {
     /// re-reading the transcript itself. The check is made again here, after the queue has been
     /// waited on, so a refetch a reconnect superseded while it sat in the chain never goes out.
     ///
+    /// The newest messages are asked for before that wait, not after it: they are a small read, and
+    /// the gate exists to keep the large ones from piling up, so a conversation on screen is not
+    /// made to queue behind other conversations' transcripts for the last few messages of its own.
+    ///
     /// The read waits for its turn at the process-wide ``RefreshGate`` first, so many
     /// conversations asking at once (a stalled process waking up) are read a few at a time, the
     /// one on screen first. Events keep applying while it waits, and the transcript they are
     /// folded onto is the one in place when the read goes out.
     private func performRefresh(generation gen: Int, queued: QueuedRefresh) async -> Error? {
         guard gen == generation else { return nil }
+        let tailing = Task { [weak self] in await self?.adoptRecentTail(generation: gen) }
+        defer { tailing.cancel() }
         let permit: RefreshGate.Permit
         do {
             permit = try await refreshGate.acquire(priority: refreshPriorityBox)

@@ -110,6 +110,10 @@ public struct OpenCodeBackend: FileBrowsingBackend, RestartableBackend, GitObser
         try await resolved().revision(for: sessionID)
     }
 
+    public func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot? {
+        try await resolved().recentTranscript(for: sessionID, limit: limit)
+    }
+
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
         try await resolved().send(prompt, to: sessionID)
     }

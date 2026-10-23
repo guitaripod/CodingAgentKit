@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Coming back to a conversation shows its latest messages after one small read instead of after the whole transcript.
+
+### Added
+- **`CodingAgentBackend.recentTranscript(for:limit:)`**, `nil` by default. opencode 2 reads the newest messages and whether a turn is running in two small requests.
+- **`AgentConversation` reads the end of a held conversation ahead of the whole of it.** A refetch of a conversation whose older messages are already held (the cache seeded them, or the chat was open a moment ago) asks for the newest thirty beside the full read, before the wait at the process-wide gate, and when the oldest of them is a message already held it shows everything held before that message and the server's account of the rest. A conversation of two thousand messages used to show what an agent said while a phone was away only once every page of it had been read, megabytes of tool output on a mobile link. A tail that does not meet what is held, a backend that cannot read from the end, and a conversation nothing is held for behave as before, and the full read still installs the conversation whichever lands first.
+
 ## 0.43.0
 
 A message queued behind a running turn lives on the server, so every client of the conversation shows the same queue and can edit or cancel it.

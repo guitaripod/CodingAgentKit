@@ -86,6 +86,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var transcriptStatus: BackendStatus?
         var runningCompaction: CompactionActivity?
         var transcriptDelay: Duration = .zero
+        var servesRecentTranscript = false
+        var recentReads = 0
         var queues: [String: QueueSnapshot] = [:]
         var queuedPrompts: [String: EnqueuePrompt] = [:]
         var startedQueueIDs: Set<String> = []
@@ -200,6 +202,15 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         mutable.withLock { $0.transcriptDelay = delay }
     }
 
+    /// Whether the server can read the end of a conversation without the rest of it, the way
+    /// opencode 2 does. Off by default, which is a server that cannot.
+    public func serveRecentTranscript(_ serves: Bool) {
+        mutable.withLock { $0.servesRecentTranscript = serves }
+    }
+
+    /// How many reads of the end of a conversation have been made.
+    public var recentTranscriptReads: Int { mutable.withLock { $0.recentReads } }
+
     /// What a read of the compaction in flight answers, the way a server that can tell does.
     public func serveRunningCompaction(_ activity: CompactionActivity?) {
         mutable.withLock { $0.runningCompaction = activity }
@@ -304,6 +315,15 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             revert: mutable.withLock { $0.standingReverts[sessionID] },
             queue: capabilities.supportsServerQueue
                 ? mutable.withLock { $0.queues[sessionID] ?? .empty } : nil)
+    }
+
+    public func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot? {
+        guard mutable.withLock({ $0.servesRecentTranscript }) else { return nil }
+        mutable.withLock { $0.recentReads += 1 }
+        let messages = try await messages(for: sessionID)
+        return TranscriptSnapshot(
+            messages: Array(messages.suffix(limit)),
+            status: mutable.withLock { $0.transcriptStatus })
     }
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {

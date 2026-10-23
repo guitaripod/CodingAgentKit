@@ -446,9 +446,9 @@ enum OpenCodeV2Mapping {
     /// description for display) are drawn as notes; what it wrote for the model alone and the idle
     /// marker that closes a turn draw nothing; a compaction still running is the activity rather
     /// than a row, and one that failed left no seam to show.
-    static func transcript(_ messages: [OC2Message]) -> [ChatMessage] {
+    static func transcript(_ messages: [OC2Message], startsMidway: Bool = false) -> [ChatMessage] {
         var result: [ChatMessage] = []
-        var prompted = false
+        var prompted = startsMidway
         for message in messages {
             switch message.type {
             case "user":

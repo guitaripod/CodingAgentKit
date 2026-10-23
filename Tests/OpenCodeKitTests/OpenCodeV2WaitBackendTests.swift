@@ -239,6 +239,23 @@ final class WaitServer: @unchecked Sendable {
         #expect(result.lastMessageID == "msg_A1")
     }
 
+    @Test func theEndOfAConversationIsReadNewestFirstAndHandedBackOldestFirst() async throws {
+        let backend = Self.backend()
+        WaitServer.shared.publish(
+            200,
+            #"""
+            {"data":[
+              {"id":"msg_A2","time":{"created":1030,"completed":1040},"type":"assistant","agent":"build","content":[{"type":"text","text":"the latest result"}],"finish":"stop"},
+              {"id":"msg_U2","time":{"created":1025},"text":"and now this","type":"user"}
+            ]}
+            """#,
+            at: "/api/session/ses_1/message")
+
+        let tail = try await backend.recentTranscript(for: "ses_1", limit: 30)
+        #expect(tail?.messages.map(\.id) == ["msg_U2", "msg_A2"])
+        #expect(tail?.messages.last?.text == "the latest result")
+    }
+
     @Test func aTailWithNoAssistantMessageStillReportsEnded() async throws {
         let backend = Self.backend()
         Self.publishNoPendingUI(sessionID: "ses_1")

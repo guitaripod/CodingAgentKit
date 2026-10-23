@@ -209,6 +209,19 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
             queue: await inbox.map(OpenCodeV2Mapping.queue))
     }
 
+    /// The end of the conversation and whether a turn is running, two small reads that go out
+    /// together, for a client that already holds the beginning. The records are mapped as the
+    /// tail of a transcript, which has had its first prompt already.
+    public func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot? {
+        async let running = liveness()
+        let records = try await client.recentMessages(sessionID: sessionID, limit: limit)
+        let isRunning = await running.map { $0.contains(sessionID) }
+        return TranscriptSnapshot(
+            messages: OpenCodeV2Mapping.transcript(records, startsMidway: true),
+            status: isRunning.map { $0 ? .running : .idle },
+            retry: isRunning == true ? OpenCodeV2Mapping.pendingRetry(records) : nil)
+    }
+
     /// A turn is only cut off when nothing on this server is running it and it has been silent
     /// long enough that no other process is writing it either. A managed server picks such a turn
     /// back up by itself when it starts, and that first moment of a restart is inside the quiet.
