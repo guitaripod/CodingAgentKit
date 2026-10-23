@@ -3,7 +3,16 @@ import Foundation
 
 public struct ClaudeCodeBackend: CodingAgentBackend {
     public let agentType: AgentType
-    public let capabilities = BackendCapabilities(
+    /// The capabilities of the bridge this backend speaks to. The oh-my-pi bridge answers on the
+    /// same wire but compacts between turns, so only the Claude Code flavour has its compaction
+    /// end with its turn.
+    public var capabilities: BackendCapabilities {
+        var value = Self.baseline
+        value.compactionRunsAsTurn = agentType == .claudeCode
+        return value
+    }
+
+    private static let baseline = BackendCapabilities(
         supportsFileBrowsing: true,
         supportsDiffs: false,
         supportsPermissions: false,

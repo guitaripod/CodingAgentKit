@@ -43,6 +43,15 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// must keep. A server whose summarize takes none (opencode's) still compacts; the preflight
     /// just has no field for a sentence the server would drop.
     public var supportsCompactionInstructions: Bool
+    /// Whether summarizing runs as a turn of the conversation, so that the turn closing is the
+    /// server saying no compaction is under way. True of the Claude Code bridge, where a
+    /// compaction is a turn that spends its minutes reading; false where it is not — the oh-my-pi
+    /// bridge compacts between turns with none open, and opencode summarizes beside them.
+    public var compactionRunsAsTurn: Bool
+    /// Whether ``CodingAgentBackend/runningCompaction(for:)`` can tell "nothing is being
+    /// summarized" from "I cannot say", so that a nil answer ends a compaction the stream is
+    /// still holding as running. False for a backend whose nil only ever means it cannot tell.
+    public var reportsRunningCompaction: Bool
     /// Whether this backend stamps `completedAt` on finished assistant
     /// messages. When false, a message upsert with a nil `completedAt` says
     /// nothing about liveness, so the engine must not infer "running" from it
@@ -90,6 +99,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsGoals: Bool = false,
         supportsCompaction: Bool = false,
         supportsCompactionInstructions: Bool = false,
+        compactionRunsAsTurn: Bool = false,
+        reportsRunningCompaction: Bool = false,
         reportsMessageCompletion: Bool = true,
         reportsInterruptions: Bool = false,
         supportsTranscriptSearch: Bool = false,
@@ -118,6 +129,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsGoals = supportsGoals
         self.supportsCompaction = supportsCompaction
         self.supportsCompactionInstructions = supportsCompactionInstructions
+        self.compactionRunsAsTurn = compactionRunsAsTurn
+        self.reportsRunningCompaction = reportsRunningCompaction
         self.reportsMessageCompletion = reportsMessageCompletion
         self.reportsInterruptions = reportsInterruptions
         self.supportsTranscriptSearch = supportsTranscriptSearch

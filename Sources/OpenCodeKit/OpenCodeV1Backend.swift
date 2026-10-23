@@ -20,7 +20,8 @@ public struct OpenCodeV1Backend: OpenCodeGeneration {
         supportsQuestions: true,
         supportsSubagents: true,
         supportsCommands: true,
-        supportsCompaction: true
+        supportsCompaction: true,
+        reportsRunningCompaction: true
     )
 
     let client: OpenCodeClient

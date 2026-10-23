@@ -22,6 +22,13 @@ public actor AgentConversation {
     /// How many seams the transcript held when the running compaction began — the count its own
     /// seam has to exceed. See ``settleCompactionAgainstTranscript()``.
     private var seamsWhenCompactionBegan: Int?
+    /// Whether events held back during a refetch are being applied. A transcript read while they
+    /// were held already reflects whatever they announced, so it is no account of the conversation
+    /// as it stood when they happened.
+    private var replayingBufferedEvents = false
+    /// When a running compaction last ended, by any road, on this client's clock. See
+    /// ``isTailOfCompactionJustEnded()``.
+    private var compactionEndedAt: Date?
     private var interruption: TurnInterruption?
     private var backgroundWork: BackgroundWork?
     private var retry: TurnRetry?
@@ -236,22 +243,71 @@ public actor AgentConversation {
         compaction = nil
     }
 
-    /// Takes the server's word for a compaction still running, so opening the conversation again —
-    /// on this device or another — brings the card back with it. A compaction is minutes of work
-    /// that no client's memory outlives, and on a backend where summarizing is not a turn nothing
-    /// else on screen says the transcript is being rewritten.
+    /// Takes the server's word for a compaction, so opening the conversation again — on this
+    /// device or another — brings the card back with it, and a compaction the server says is over
+    /// takes it down. A compaction is minutes of work that no client's memory outlives, and on a
+    /// backend where summarizing is not a turn nothing else on screen says the transcript is being
+    /// rewritten.
     ///
-    /// Only an answer is adopted. A nil is not news: it is what every backend that cannot tell
-    /// says, so treating it as "nothing is happening" would take the card off screen at the first
-    /// refresh of a compaction the stream had just reported. What ends a compaction here is the
-    /// finish event, exactly as before. A failure already shown is not overwritten either — that
-    /// attempt is over, and the marker it left behind is not a second one starting.
+    /// An answer is adopted wherever it comes from. A nil is news only from a backend that can
+    /// tell (``BackendCapabilities/reportsRunningCompaction``): for every other it is what the
+    /// backend says when it cannot, and treating that as "nothing is happening" would take the card
+    /// off screen at the first refresh of a compaction the stream had just reported. Where it is
+    /// news, it ends a compaction the stream is still holding as running — the finish that was
+    /// never heard — once the read has had time to see a compaction the stream announced a moment
+    /// ago. A failure already shown is never overwritten: that attempt is over, and the marker it
+    /// left behind is not a second one starting.
+    ///
+    /// An answer older than the seam the transcript already holds is not adopted either. It
+    /// describes a compaction the transcript has since finished, and adopting it would start one
+    /// nothing is left to end.
     private func adoptRunningCompaction(_ activity: CompactionActivity?) {
-        guard let activity else { return }
+        guard let activity else {
+            guard backend.capabilities.reportsRunningCompaction,
+                let running = compaction, running.isRunning,
+                Date().timeIntervalSince(running.startedAt) > Self.compactionReadGrace
+            else { return }
+            endCompaction()
+            return
+        }
         guard compaction?.isRunning != false else { return }
         guard compaction?.startedAt != activity.startedAt else { return }
+        guard !seamHasLanded(since: activity.startedAt) else { return }
         compaction = activity
         seamsWhenCompactionBegan = landedSeams()
+    }
+
+    /// How long a compaction the stream announced is believed over a transcript read that does not
+    /// show it yet. The server writes the marker before it says anything, so a read that misses it
+    /// began before the announcement reached this client; the window only has to cover that read.
+    private static let compactionReadGrace: TimeInterval = 5
+
+    /// How far apart two clocks may be and still agree on whether a seam came after a compaction
+    /// began. The compaction's start is stamped by the client (or by the server, for one adopted
+    /// from a read) and the seam's by the server, so the comparison has to forgive the difference.
+    private static let compactionClockSkew: TimeInterval = 15
+
+    /// The longest a compaction is believed to be running without a word from the server. A
+    /// summarize is minutes — the slowest on record is a million-token context at a minute and a
+    /// half, and the bridges stop waiting at fifteen — so a card older than this belongs to a
+    /// compaction whose end was lost with the connection that carried it.
+    private static let compactionCeiling: TimeInterval = 30 * 60
+
+    private func endCompaction() {
+        compaction = nil
+        seamsWhenCompactionBegan = nil
+        compactionEndedAt = Date()
+    }
+
+    /// How long after a compaction ends a report that one has started is taken for the tail of the
+    /// one that just did. A bridge repeats its `compacting` status while a summary streams, and a
+    /// repeat that trails the finish would put back a card nothing is left to take down. Two
+    /// seconds is longer than any trail and shorter than anyone can begin another compaction.
+    private static let compactionTailWindow: TimeInterval = 2
+
+    private func isTailOfCompactionJustEnded() -> Bool {
+        guard let ended = compactionEndedAt else { return false }
+        return Date().timeIntervalSince(ended) < Self.compactionTailWindow
     }
 
     /// The transcript outranks the stream on whether a compaction is still running.
@@ -262,29 +318,64 @@ public actor AgentConversation {
     /// activity, so a compaction nobody closed is a conversation that quietly stops sending — the
     /// prompts pile up as queued behind a summarize that ended an hour ago, and the card saying so
     /// stays until the chat is opened afresh. The seam is the compaction's own product, written
-    /// into the transcript by every backend that compacts, so once the transcript holds one more
-    /// seam than it did when the compaction began, the compaction is over whatever was heard.
+    /// into the transcript by every backend that compacts, so a compaction is over once the
+    /// transcript holds a seam that is its own, whatever was heard.
+    ///
+    /// A seam is its own in either of two ways. The transcript holds more of them than it did when
+    /// the compaction began. But when it began before the conversation was read there is no such
+    /// count to take: a count taken from the transcript that read brought in could already hold the
+    /// seam, and then no later seam would ever exceed it. A compaction with no count is ended by a
+    /// seam written at or after the moment it began instead, which needs none.
     ///
     /// A seam counts once its message is complete where the backend says when a message is
     /// complete — opencode streams the summary into the seam's message, and a compaction that
     /// ends the moment its summary starts is a card that goes down while the machine is still
     /// writing. A backend that never stamps completion counts every seam it has.
+    ///
+    /// A compaction no seam has answered after ``compactionCeiling`` is over as well: whatever
+    /// became of it, the server stopped summarizing long before.
     private func settleCompactionAgainstTranscript() {
-        guard compaction?.isRunning == true, let began = seamsWhenCompactionBegan else { return }
-        guard landedSeams() > began else { return }
-        compaction = nil
-        seamsWhenCompactionBegan = nil
+        guard let running = compaction, running.isRunning else { return }
+        if Date().timeIntervalSince(running.startedAt) > Self.compactionCeiling {
+            endCompaction()
+            return
+        }
+        if let began = seamsWhenCompactionBegan {
+            if landedSeams() > began { endCompaction() }
+        } else if seamHasLanded(since: running.startedAt) {
+            endCompaction()
+        }
     }
 
-    private func landedSeams() -> Int {
+    private func landedSeamMessages() -> [ChatMessage] {
         let reportsCompletion = backend.capabilities.reportsMessageCompletion
-        return reducer.snapshot.count { message in
+        return reducer.snapshot.filter { message in
             guard !reportsCompletion || message.completedAt != nil else { return false }
             return message.parts.contains { part in
                 if case .compaction = part.kind { return true }
                 return false
             }
         }
+    }
+
+    private func landedSeams() -> Int { landedSeamMessages().count }
+
+    /// Whether the transcript holds a finished seam written at or after `moment`, allowing for the
+    /// clocks of the two ends disagreeing by ``compactionClockSkew``.
+    private func seamHasLanded(since moment: Date) -> Bool {
+        let earliest = moment.addingTimeInterval(-Self.compactionClockSkew)
+        return landedSeamMessages().contains { $0.createdAt >= earliest }
+    }
+
+    /// Ends a running compaction when the server says the turn it ran in is over. Where
+    /// summarizing is a turn (``BackendCapabilities/compactionRunsAsTurn``) the turn closing is the
+    /// server's own word that nothing is being summarized any more, and it is the only word a
+    /// compaction that failed without saying so, was stopped, or died with its process ever gives.
+    private func settleCompactionAgainstTurnEnd() {
+        guard backend.capabilities.compactionRunsAsTurn, compaction?.isRunning == true else {
+            return
+        }
+        endCompaction()
     }
 
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
@@ -759,10 +850,13 @@ public actor AgentConversation {
         guard !buffered.isEmpty, !reachedTerminal else { return }
         markLive(generation: gen)
         var credit = alreadyFolded
+        replayingBufferedEvents = true
+        defer { replayingBufferedEvents = false }
         for event in buffered {
             guard let owing = unfolded(event, against: &credit) else { continue }
             apply(owing, generation: gen)
         }
+        settleCompactionAgainstTranscript()
     }
 
     /// What is left of a held-back event once the refetch is credited with the part of it that
@@ -1046,15 +1140,21 @@ public actor AgentConversation {
         case .status(let value):
             status = value
             retry = nil
-            if value == .idle || value == .stable { persist() }
+            if value == .idle || value == .stable {
+                settleCompactionAgainstTurnEnd()
+                persist()
+            }
         case .goal(let value):
             goal = value
         case .compaction(let value):
             let wasRunning = compaction?.isRunning == true
+            if value?.isRunning == true, !wasRunning, isTailOfCompactionJustEnded() { break }
             compaction = value
             if value?.isRunning == true, !wasRunning {
-                seamsWhenCompactionBegan = loadedTranscript ? landedSeams() : nil
+                seamsWhenCompactionBegan =
+                    loadedTranscript && !replayingBufferedEvents ? landedSeams() : nil
             }
+            if wasRunning, value?.isRunning != true { compactionEndedAt = Date() }
             /// A compaction that just ended rewrote the transcript on the server: the summary
             /// message the stream delivered is not the seam the transcript wants, so re-read the
             /// authoritative messages once the dust settles rather than leaving the raw summary
@@ -1266,12 +1366,15 @@ public actor AgentConversation {
     /// answer. So the events are held instead and replayed on top of the snapshot; a fetch that
     /// failed installs nothing and replays them onto the transcript that was already there.
     ///
-    /// Every fetch rides concurrently: the transcript, the questions, the goal, the interruption and
-    /// the running compaction. On a bridge answering a heavy machine, or a phone reaching it through
-    /// a relay, each round trip can cost real time, and paying them in sequence is what made a
-    /// freshly opened chat sit on its placeholder. The interruption and the compaction used to wait
-    /// for the transcript before going out, two round trips on every open and every reconnect that
-    /// bought nothing.
+    /// The fetches ride concurrently: the transcript, the questions, the goal and the
+    /// interruption. On a bridge answering a heavy machine, or a phone reaching it through a relay,
+    /// each round trip can cost real time, and paying them in sequence is what made a freshly
+    /// opened chat sit on its placeholder.
+    ///
+    /// The running compaction is the one question asked after the transcript is in, never beside
+    /// it. A backend works the answer out of the transcript it reads (opencode), so asked beside the
+    /// read it still held the answer from the read before, and a compaction that ended in between
+    /// was handed back as running — adopted with no seam left to end it.
     ///
     /// A message the stream is actively writing belongs to the stream, so the snapshot may not
     /// install its version of one — see ``restoreMessagesTheStreamIsWriting(from:)``.
@@ -1304,11 +1407,10 @@ public actor AgentConversation {
             async let questionsFetch = fetchQuestions()
             async let goalFetch = fetchGoal()
             async let cutOffFetch = fetchInterruption()
-            async let compactingFetch = try? backend.runningCompaction(for: sessionID)
             let snapshot = try await backend.transcript(for: sessionID)
+            let compacting = try? await backend.runningCompaction(for: sessionID)
             let (questions, goal) = await (questionsFetch, goalFetch)
             let cutOff = await cutOffFetch
-            let compacting = await compactingFetch
             guard gen == generation else { return nil }
             guard !reachedTerminal else {
                 drainBufferedEvents(generation: gen)
@@ -1327,8 +1429,8 @@ public actor AgentConversation {
             if backend.capabilities.supportsGoals { self.goal = goal }
             if case .answered(let cut) = cutOff { interruption = cut }
             adoptRunningCompaction(compacting)
-            if compaction?.isRunning == true, seamsWhenCompactionBegan == nil {
-                seamsWhenCompactionBegan = landedSeams()
+            if snapshot.status == .idle || snapshot.status == .stable {
+                settleCompactionAgainstTurnEnd()
             }
             settleCompactionAgainstTranscript()
             lastFailure = nil

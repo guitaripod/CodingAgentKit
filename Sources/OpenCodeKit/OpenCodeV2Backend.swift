@@ -25,6 +25,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         supportsSubagents: true,
         supportsCommands: true,
         supportsCompaction: true,
+        reportsRunningCompaction: true,
         reportsInterruptions: true,
         supportsRevert: true
     )

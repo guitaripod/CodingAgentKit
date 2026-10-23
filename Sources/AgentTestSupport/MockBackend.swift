@@ -82,6 +82,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var mintCounter = 0
         var modelsFailures = 0
         var waitCallCounts: [String: Int] = [:]
+        var transcriptOnly: [String: [ChatMessage]] = [:]
+        var transcriptStatus: BackendStatus?
+        var runningCompaction: CompactionActivity?
+        var transcriptDelay: Duration = .zero
     }
 
     public init(
@@ -169,6 +173,33 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         }
     }
 
+    /// Puts a message in the transcript the backend serves that the stream never delivers — a seam
+    /// the compaction wrote while the client was not listening.
+    public func serveInTranscriptOnly(_ message: ChatMessage, for sessionID: String) {
+        mutable.withLock { $0.transcriptOnly[sessionID, default: []].append(message) }
+    }
+
+    /// What the served transcript says about the turn, the way a server that reports whether one
+    /// is open does. Nil, the default, is a server that does not say.
+    public func serveTranscriptStatus(_ status: BackendStatus?) {
+        mutable.withLock { $0.transcriptStatus = status }
+    }
+
+    /// How long a read of the transcript takes, so the stream can be heard before the conversation
+    /// has been read at all.
+    public func delayTranscript(by delay: Duration) {
+        mutable.withLock { $0.transcriptDelay = delay }
+    }
+
+    /// What a read of the compaction in flight answers, the way a server that can tell does.
+    public func serveRunningCompaction(_ activity: CompactionActivity?) {
+        mutable.withLock { $0.runningCompaction = activity }
+    }
+
+    public func runningCompaction(for sessionID: String) async throws -> CompactionActivity? {
+        mutable.withLock { $0.runningCompaction }
+    }
+
     public var recordedPrompts: [SendPrompt] { mutable.withLock { $0.sentPrompts } }
     /// Every session whose background work a client asked to stop, in order.
     public var backgroundStops: [String] { mutable.withLock { $0.backgroundStops } }
@@ -247,15 +278,20 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         let log = fullLog(for: sessionID)
         let served = transcriptPrefix.map { Array(log.prefix($0)) } ?? log
         for step in served { reducer.apply(step.event) }
+        for message in mutable.withLock({ $0.transcriptOnly[sessionID] ?? [] }) {
+            reducer.apply(.messageUpserted(message, replaceParts: true))
+        }
         return reducer.snapshot
     }
 
     /// The messages with the revert standing on the session, the way a server that keeps one on
     /// its record answers a re-read.
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
+        let delay = mutable.withLock { $0.transcriptDelay }
+        if delay > .zero { try await Task.sleep(for: delay) }
         let messages = try await messages(for: sessionID)
         return TranscriptSnapshot(
-            messages: messages, status: nil,
+            messages: messages, status: mutable.withLock { $0.transcriptStatus },
             revert: mutable.withLock { $0.standingReverts[sessionID] })
     }
 
