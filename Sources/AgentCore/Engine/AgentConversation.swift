@@ -38,6 +38,16 @@ public actor AgentConversation {
     private var backgroundWork: BackgroundWork?
     private var retry: TurnRetry?
     private var revert: SessionRevert?
+    private var queue: [QueuedPrompt] = []
+    private var queuePaused = false
+    /// How many queue announcements the stream has made, so that a request which was answered
+    /// while the stream spoke can tell the stream's account was written after its own.
+    private var queueEventCount = 0
+    /// Prompts handed to the server's queue, by id, and whether each started at once. A repeat of
+    /// one of them is answered from here without a second request.
+    private var enqueued: [String: Bool] = [:]
+    private var enqueuedOrder: [String] = []
+    private var enqueuesInFlight: [String: Task<EnqueueResult, Error>] = [:]
 
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
@@ -114,7 +124,9 @@ public actor AgentConversation {
             backgroundWork: backgroundWork,
             retry: retry,
             revert: revert,
-            revertedMessages: boundary.map { Array(transcript[$0...]) } ?? []
+            revertedMessages: boundary.map { Array(transcript[$0...]) } ?? [],
+            queue: queue,
+            queuePaused: queuePaused
         )
     }
 
@@ -404,6 +416,133 @@ public actor AgentConversation {
 
     public func cancelCurrentTurn() async throws {
         try await backend.abort(sessionID: sessionID)
+    }
+
+    /// Hands a prompt to the server's queue. With nothing running it starts at once, as a
+    /// ``send(_:model:reasoningEffort:agent:attachments:)`` does, and the result says so;
+    /// otherwise it waits on the server behind the running turn, where every client of the
+    /// conversation sees it and the server starts it when its turn comes.
+    ///
+    /// `id` is the prompt's name on the server. Calling again with the same id is always safe: a
+    /// call that is still out is shared, one that already succeeded is answered without another
+    /// request, and one whose answer was lost goes out again under the same id, which the server
+    /// recognises. Keep the id for as long as the prompt might be retried.
+    ///
+    /// Throws ``AgentError/unsupported(_:)`` on a backend without a server queue
+    /// (``BackendCapabilities/supportsServerQueue``); a client keeps its own queue there.
+    @discardableResult
+    public func enqueue(
+        _ text: String,
+        id: String = UUID().uuidString,
+        kind: QueuedPrompt.Kind = .prompt,
+        model: ModelSelection? = nil,
+        reasoningEffort: String? = nil,
+        agent: String? = nil,
+        attachments: [PromptAttachment] = []
+    ) async throws -> EnqueueResult {
+        if let started = enqueued[id] {
+            return EnqueueResult(started: started, queue: queueSnapshot)
+        }
+        if let pending = enqueuesInFlight[id] { return try await pending.value }
+        let backend = backend
+        let sessionID = sessionID
+        let request = EnqueuePrompt(
+            id: id, kind: kind,
+            prompt: SendPrompt(
+                text: text, model: model, reasoningEffort: reasoningEffort, agent: agent,
+                attachments: attachments))
+        let task = Task { try await backend.enqueue(sessionID: sessionID, prompt: request) }
+        enqueuesInFlight[id] = task
+        let heard = queueEventCount
+        defer { enqueuesInFlight[id] = nil }
+        let result = try await task.value
+        adoptEnqueue(result, id: id, heardBefore: heard)
+        return result
+    }
+
+    /// Takes the server's answer to an enqueue, once however many callers waited on it.
+    ///
+    /// The answer is the queue as the server had it when it took the prompt. If the stream has
+    /// announced a queue since this request went out, that announcement was written after the
+    /// answer or alongside it, so it stands and the answer is not allowed to put an older queue
+    /// over it; the server announces every change, so a prompt the stream's account leaves out
+    /// is announced next.
+    private func adoptEnqueue(_ result: EnqueueResult, id: String, heardBefore: Int) {
+        guard enqueued[id] == nil else { return }
+        enqueued[id] = result.started
+        enqueuedOrder.append(id)
+        if enqueuedOrder.count > Self.enqueueMemory {
+            enqueued[enqueuedOrder.removeFirst()] = nil
+        }
+        if queueEventCount == heardBefore { adoptQueue(result.queue) }
+        if result.started {
+            lastFailure = nil
+            forgetFinishedCompaction()
+            status = .running
+            if let standing = revert { commitRevert(at: standing.messageID) }
+        }
+        emit()
+    }
+
+    private static let enqueueMemory = 64
+
+    /// Changes a prompt still waiting in the server's queue. A prompt that has started, or is
+    /// gone, throws ``QueueError/alreadyStarted``; it is dropped from the queue held here at the
+    /// same time, since it is no longer waiting whichever it was.
+    public func editQueued(
+        id: String, text: String? = nil, model: ModelSelection? = nil,
+        reasoningEffort: String? = nil
+    ) async throws {
+        let heard = queueEventCount
+        do {
+            let snapshot = try await backend.editQueued(
+                sessionID: sessionID, id: id,
+                edit: QueuedPromptEdit(
+                    text: text, model: model, reasoningEffort: reasoningEffort))
+            adoptAnswer(snapshot, heardBefore: heard)
+        } catch QueueError.alreadyStarted {
+            dropFromQueue(id)
+            throw QueueError.alreadyStarted
+        }
+    }
+
+    /// Takes a prompt out of the server's queue. An id the server no longer holds is not an
+    /// error, so asking again after a lost answer is safe; a prompt that has started throws
+    /// ``QueueError/alreadyStarted`` and leaves the queue held here without it.
+    public func cancelQueued(id: String) async throws {
+        let heard = queueEventCount
+        do {
+            adoptAnswer(try await backend.cancelQueued(sessionID: sessionID, id: id), heardBefore: heard)
+        } catch QueueError.alreadyStarted {
+            dropFromQueue(id)
+            throw QueueError.alreadyStarted
+        }
+    }
+
+    /// Lifts the pause a Stop left on the queue. The server starts the head if the conversation
+    /// is idle and says so on the stream.
+    public func resumeQueue() async throws {
+        let heard = queueEventCount
+        adoptAnswer(try await backend.resumeQueue(sessionID: sessionID), heardBefore: heard)
+    }
+
+    private var queueSnapshot: QueueSnapshot { QueueSnapshot(items: queue, paused: queuePaused) }
+
+    private func adoptQueue(_ snapshot: QueueSnapshot) {
+        queue = snapshot.items
+        queuePaused = snapshot.paused
+    }
+
+    /// A queue the stream announced while a request was out is newer than the request's answer,
+    /// and stands over it.
+    private func adoptAnswer(_ snapshot: QueueSnapshot, heardBefore: Int) {
+        if queueEventCount == heardBefore { adoptQueue(snapshot) }
+        emit()
+    }
+
+    private func dropFromQueue(_ id: String) {
+        queue.removeAll { $0.id == id }
+        emit()
     }
 
     /// Winds the conversation back to `messageID`: that message and everything after it are set
@@ -1187,6 +1326,9 @@ public actor AgentConversation {
             revert = value
         case .revertCommitted(let messageID):
             commitRevert(at: messageID)
+        case .queue(let snapshot):
+            queueEventCount += 1
+            adoptQueue(snapshot)
         case .attached:
             markLive(generation: gen)
         case .detached:
@@ -1440,6 +1582,7 @@ public actor AgentConversation {
             backgroundWork = snapshot.backgroundWork
             retry = status == .running ? snapshot.retry : nil
             revert = snapshot.revert
+            if let served = snapshot.queue { adoptQueue(served) }
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
             if backend.capabilities.supportsGoals { self.goal = goal }

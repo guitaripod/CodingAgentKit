@@ -1108,6 +1108,71 @@
         }
       }
     },
+    "This message already started, so it can no longer be changed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This message already started, so it can no longer be changed."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Nachricht wurde bereits gestartet und kann nicht mehr geändert werden."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este mensaje ya se inició y ya no se puede cambiar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce message a déjà démarré et ne peut plus être modifié."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo messaggio è già stato avviato e non può più essere modificato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このメッセージはすでに開始されているため、変更できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 메시지는 이미 시작되어 더 이상 변경할 수 없습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta mensagem já foi iniciada e não pode mais ser alterada."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此消息已开始处理，无法再更改。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此訊息已開始處理，無法再變更。"
+          }
+        }
+      }
+    },
     "Unsupported by this backend: %@": {
       "extractionState": "manual",
       "localizations": {

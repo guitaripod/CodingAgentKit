@@ -86,6 +86,13 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var transcriptStatus: BackendStatus?
         var runningCompaction: CompactionActivity?
         var transcriptDelay: Duration = .zero
+        var queues: [String: QueueSnapshot] = [:]
+        var queuedPrompts: [String: EnqueuePrompt] = [:]
+        var startedQueueIDs: Set<String> = []
+        var enqueueRequests: [EnqueuePrompt] = []
+        var queueEdits: [String] = []
+        var queueCancels: [String] = []
+        var queueResumes = 0
     }
 
     public init(
@@ -120,7 +127,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         transcriptPrefix: Int? = nil,
         turnWaitSupport: TurnWaitSupport = .supported,
         turnWaitResults: [String: [TurnWaitResult]] = [:],
-        pushReceipt: DevicePushRegistration.Receipt = DevicePushRegistration.Receipt()
+        pushReceipt: DevicePushRegistration.Receipt = DevicePushRegistration.Receipt(),
+        serverQueue: Bool = false
     ) {
         self.agentType = agentType
         self.script = script
@@ -159,7 +167,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsMultipleSessions: true, supportsModelSelection: true,
                 supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true,
                 supportsQuestions: true, supportsCommands: !commands.isEmpty,
-                supportsCompaction: true, supportsCompactionInstructions: true)
+                supportsCompaction: true, supportsCompactionInstructions: true,
+                supportsServerQueue: serverQueue, supportsQueueEdit: serverQueue)
         mutable.withLock {
             $0.modelsFailures = modelsFailures
             $0.sessions =
@@ -292,7 +301,9 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         let messages = try await messages(for: sessionID)
         return TranscriptSnapshot(
             messages: messages, status: mutable.withLock { $0.transcriptStatus },
-            revert: mutable.withLock { $0.standingReverts[sessionID] })
+            revert: mutable.withLock { $0.standingReverts[sessionID] },
+            queue: capabilities.supportsServerQueue
+                ? mutable.withLock { $0.queues[sessionID] ?? .empty } : nil)
     }
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
@@ -335,6 +346,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     }
 
     public func abort(sessionID: String) async throws {
+        pauseQueueAfterStop(sessionID)
         guard interactive else { return }
         stream([MockScriptStep(.status(.idle), delay: .zero)], to: sessionID)
     }
@@ -365,6 +377,193 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         }
         guard interactive else { return }
         stream([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
+    }
+
+    /// Every prompt a client handed to the queue, in order, repeats included.
+    public var recordedEnqueues: [EnqueuePrompt] { mutable.withLock { $0.enqueueRequests } }
+    /// The ids of every queued prompt a client edited, in order.
+    public var recordedQueueEdits: [String] { mutable.withLock { $0.queueEdits } }
+    /// The ids of every queued prompt a client cancelled, in order.
+    public var recordedQueueCancels: [String] { mutable.withLock { $0.queueCancels } }
+    /// How many times a client lifted the pause.
+    public var recordedQueueResumes: Int { mutable.withLock { $0.queueResumes } }
+
+    /// What the server's queue holds for the session, the way a server that keeps one answers a
+    /// read. It is not announced: use ``announceQueue(for:)`` to tell the session's stream.
+    public func serveQueue(_ snapshot: QueueSnapshot, for sessionID: String) {
+        mutable.withLock { $0.queues[sessionID] = snapshot }
+    }
+
+    /// The queue as the server holds it now.
+    public func servedQueue(for sessionID: String) -> QueueSnapshot {
+        mutable.withLock { $0.queues[sessionID] ?? .empty }
+    }
+
+    /// Tells the session's live stream the queue as it stands. Announcements are never added to
+    /// the replayed log, so a reconnect does not replay a queue that is no longer the queue.
+    public func announceQueue(for sessionID: String) {
+        broadcast(.queue(servedQueue(for: sessionID)), to: sessionID)
+    }
+
+    /// Starts a waiting prompt the way the server does when its turn comes: it leaves the queue,
+    /// a later cancel or edit of it is refused, and the queue is announced. In an interactive mock
+    /// it also runs the turn.
+    public func startQueued(id: String, in sessionID: String) async {
+        let started = mutable.withLock { state in
+            takeQueued(id: id, in: sessionID, state: &state)
+        }
+        announceQueue(for: sessionID)
+        if let started { try? await send(started.prompt, to: sessionID) }
+    }
+
+    /// Enqueues like a server that keeps the queue: a repeat of an id changes nothing, a prompt
+    /// with nothing running starts at once and never appears in the queue, and the session is
+    /// busy exactly when ``serveTranscriptStatus(_:)`` says a turn is open. Enqueueing clears
+    /// the pause, and on an idle session with a queue the head starts.
+    public func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult {
+        guard capabilities.supportsServerQueue else { throw AgentError.unsupported("queue") }
+        let (result, starting, changed) = mutable.withLock { state in
+            state.enqueueRequests.append(prompt)
+            var queue = state.queues[sessionID] ?? .empty
+            if queue.items.contains(where: { $0.id == prompt.id }) {
+                return (EnqueueResult(started: false, queue: queue), [EnqueuePrompt](), false)
+            }
+            if state.startedQueueIDs.contains(prompt.id) {
+                return (EnqueueResult(started: true, queue: queue), [], false)
+            }
+            let idle = state.transcriptStatus != .running
+            if idle, queue.items.isEmpty {
+                state.startedQueueIDs.insert(prompt.id)
+                queue.paused = false
+                state.queues[sessionID] = queue
+                return (EnqueueResult(started: true, queue: queue), [prompt], true)
+            }
+            queue.paused = false
+            queue.items.append(Self.queued(prompt))
+            state.queuedPrompts[prompt.id] = prompt
+            state.queues[sessionID] = queue
+            var starting: [EnqueuePrompt] = []
+            if idle, let head = queue.items.first {
+                if let started = takeQueued(id: head.id, in: sessionID, state: &state) {
+                    starting.append(started)
+                }
+            }
+            return (
+                EnqueueResult(started: false, queue: state.queues[sessionID] ?? .empty), starting,
+                true
+            )
+        }
+        if changed { announceQueue(for: sessionID) }
+        for started in starting { try? await send(started.prompt, to: sessionID) }
+        return result
+    }
+
+    public func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
+        -> QueueSnapshot
+    {
+        guard capabilities.supportsQueueEdit else { throw AgentError.unsupported("queue") }
+        let snapshot = try mutable.withLock { state -> QueueSnapshot in
+            state.queueEdits.append(id)
+            var queue = state.queues[sessionID] ?? .empty
+            guard let index = queue.items.firstIndex(where: { $0.id == id }) else {
+                throw QueueError.alreadyStarted
+            }
+            if let text = edit.text { queue.items[index].text = text }
+            if let model = edit.model { queue.items[index].model = model.modelID }
+            if let effort = edit.reasoningEffort { queue.items[index].effort = effort }
+            state.queues[sessionID] = queue
+            return queue
+        }
+        announceQueue(for: sessionID)
+        return snapshot
+    }
+
+    public func cancelQueued(sessionID: String, id: String) async throws -> QueueSnapshot {
+        guard capabilities.supportsServerQueue else { throw AgentError.unsupported("queue") }
+        let (snapshot, removed) = try mutable.withLock { state -> (QueueSnapshot, Bool) in
+            state.queueCancels.append(id)
+            var queue = state.queues[sessionID] ?? .empty
+            guard let index = queue.items.firstIndex(where: { $0.id == id }) else {
+                if state.startedQueueIDs.contains(id) { throw QueueError.alreadyStarted }
+                return (queue, false)
+            }
+            queue.items.remove(at: index)
+            state.queuedPrompts[id] = nil
+            state.queues[sessionID] = queue
+            return (queue, true)
+        }
+        if removed { announceQueue(for: sessionID) }
+        return snapshot
+    }
+
+    public func resumeQueue(sessionID: String) async throws -> QueueSnapshot {
+        guard capabilities.supportsServerQueue else { throw AgentError.unsupported("queue") }
+        let (snapshot, starting) = mutable.withLock { state -> (QueueSnapshot, [EnqueuePrompt]) in
+            state.queueResumes += 1
+            var queue = state.queues[sessionID] ?? .empty
+            queue.paused = false
+            state.queues[sessionID] = queue
+            var starting: [EnqueuePrompt] = []
+            if state.transcriptStatus != .running, let head = queue.items.first,
+                let started = takeQueued(id: head.id, in: sessionID, state: &state)
+            {
+                starting.append(started)
+            }
+            return (state.queues[sessionID] ?? .empty, starting)
+        }
+        announceQueue(for: sessionID)
+        for started in starting { try? await send(started.prompt, to: sessionID) }
+        return snapshot
+    }
+
+    private func takeQueued(id: String, in sessionID: String, state: inout Mutable) -> EnqueuePrompt?
+    {
+        var queue = state.queues[sessionID] ?? .empty
+        guard let index = queue.items.firstIndex(where: { $0.id == id }) else { return nil }
+        let item = queue.items.remove(at: index)
+        state.queues[sessionID] = queue
+        state.startedQueueIDs.insert(id)
+        return state.queuedPrompts.removeValue(forKey: id) ?? Self.prompt(of: item)
+    }
+
+    /// The prompt a queue item stands for, for an item the server was handed in its served
+    /// queue rather than through an enqueue.
+    private static func prompt(of item: QueuedPrompt) -> EnqueuePrompt {
+        EnqueuePrompt(
+            id: item.id, kind: item.kind,
+            prompt: SendPrompt(
+                text: item.text,
+                model: item.model.map { ModelSelection(providerID: "mock", modelID: $0) },
+                reasoningEffort: item.effort))
+    }
+
+    /// A Stop ends the running turn and holds the queue back, the way the server does.
+    private func pauseQueueAfterStop(_ sessionID: String) {
+        let paused = mutable.withLock { state -> Bool in
+            guard capabilities.supportsServerQueue, var queue = state.queues[sessionID],
+                !queue.items.isEmpty
+            else { return false }
+            queue.paused = true
+            state.queues[sessionID] = queue
+            return true
+        }
+        if paused { announceQueue(for: sessionID) }
+    }
+
+    private static func queued(_ prompt: EnqueuePrompt) -> QueuedPrompt {
+        QueuedPrompt(
+            id: prompt.id, text: prompt.prompt.text, kind: prompt.kind,
+            model: prompt.prompt.model?.modelID, effort: prompt.prompt.reasoningEffort,
+            attachments: prompt.prompt.attachments.map {
+                QueuedAttachment(mime: $0.mime, filename: $0.filename, size: $0.data?.count)
+            },
+            createdAt: Date())
+    }
+
+    /// Yields an event to the session's live subscribers without adding it to the replayed log.
+    private func broadcast(_ event: BackendEvent, to sessionID: String) {
+        let targets = mutable.withLock { Array(($0.continuations[sessionID] ?? [:]).values) }
+        for continuation in targets { continuation.yield(event) }
     }
 
     public func registerDeviceTokenReceipt(

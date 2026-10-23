@@ -27,7 +27,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         supportsCompaction: true,
         reportsRunningCompaction: true,
         reportsInterruptions: true,
-        supportsRevert: true
+        supportsRevert: true,
+        supportsServerQueue: true
     )
 
     let client: OpenCodeV2Client
@@ -191,6 +192,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
 
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         async let record = try? client.session(sessionID)
+        async let inbox = try? client.inbox(sessionID: sessionID)
         let records = try await client.messages(sessionID: sessionID)
         await compactions.record(OpenCodeV2Mapping.compactionInFlight(records), for: sessionID)
         let running = await liveness()
@@ -203,7 +205,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
             messages: OpenCodeV2Mapping.transcript(records),
             status: isRunning.map { $0 ? .running : .idle },
             retry: isRunning == true ? OpenCodeV2Mapping.pendingRetry(records) : nil,
-            revert: session?.revert.map(OpenCodeV2Mapping.revert))
+            revert: session?.revert.map(OpenCodeV2Mapping.revert),
+            queue: await inbox.map(OpenCodeV2Mapping.queue))
     }
 
     /// A turn is only cut off when nothing on this server is running it and it has been silent
@@ -376,6 +379,29 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
             request: OC2PromptRequest(text: prompt.text, files: files.isEmpty ? nil : files))
     }
 
+    /// opencode takes every prompt into the session's inbox, and the session takes it up at once
+    /// when idle or after the running turn when not, so a prompt sent now is a queued one exactly
+    /// when something is running. The inbox is read either side of the send: what the send added
+    /// to it is the queue's new tail, and when nothing was running the prompt is about to start,
+    /// so the queue is what it was before. The server names the prompt itself, so the id offered
+    /// here is not kept and a repeat is a second prompt; the conversation answers repeats from
+    /// its own record.
+    ///
+    /// A command is a turn dispatched by name rather than a prompt, and has no place in the
+    /// inbox to wait in: it throws ``AgentError/unsupported(_:)`` and the client keeps it on the
+    /// device.
+    public func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult {
+        guard prompt.kind == .prompt else { throw AgentError.unsupported("queued command") }
+        let before = (try? await client.inbox(sessionID: sessionID)) ?? []
+        let running = await liveness().map { $0.contains(sessionID) }
+        try await send(prompt.prompt, to: sessionID)
+        guard running == true else {
+            return EnqueueResult(started: true, queue: OpenCodeV2Mapping.queue(before))
+        }
+        let after = (try? await client.inbox(sessionID: sessionID)) ?? before
+        return EnqueueResult(started: false, queue: OpenCodeV2Mapping.queue(after))
+    }
+
     private static func attachmentURL(_ attachment: PromptAttachment) -> String? {
         if let url = attachment.url { return url }
         if let data = attachment.data {
@@ -396,8 +422,14 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
                 var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
                 do {
                     for try await sse in client.eventStream() {
-                        for event in decoder.decode(sse) {
+                        let frame = OpenCodeV2EventDecoder.frame(sse)
+                        for event in frame.map({ decoder.decode($0) }) ?? [] {
                             continuation.yield(event)
+                        }
+                        if frame?.type == "server.connected",
+                            let waiting = try? await client.inbox(sessionID: sessionID)
+                        {
+                            for event in decoder.seed(waiting) { continuation.yield(event) }
                         }
                     }
                     continuation.finish()

@@ -9,6 +9,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     public var capabilities: BackendCapabilities {
         var value = Self.baseline
         value.compactionRunsAsTurn = agentType == .claudeCode
+        value.supportsServerQueue = queueSupport.isSupported
+        value.supportsQueueEdit = queueSupport.isSupported
         return value
     }
 
@@ -81,8 +83,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// Every level omp's own catalog names across its providers, cold to hot.
     static let ompEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
-    private let builder: RequestBuilder
-    private let http: HTTPClient
+    let builder: RequestBuilder
+    let http: HTTPClient
+    let queueSupport: BridgeQueueSupport
     private let stream: BridgeStream
     private let transcripts: BridgeTranscripts
     private let waitSupport = BridgeWaitSupport()
@@ -101,6 +104,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         self.stream = BridgeStreamRegistry.stream(config: config, builder: builder, http: http)
         self.stream.agentType = agentType
         self.transcripts = BridgeTranscriptRegistry.transcripts(config: config, agentType: agentType)
+        self.queueSupport = BridgeQueueRegistry.support(config: config, agentType: agentType)
     }
 
     /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
@@ -112,6 +116,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             _ = try await http.send(builder.request(.get, "/health"))
             return ServerHealth(healthy: true, version: nil)
         }
+        queueSupport.record((status.queue ?? 0) >= 1)
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
@@ -219,11 +224,13 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// exactly as it was read. A bridge too old to validate simply answers in full every time.
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         let held = transcripts.held(sessionID)
+        async let learned: Void = learnQueueSupport()
         let reply = try await http.sendConditional(
             builder.request(.get, "/sessions/\(sessionID)"), ifNoneMatch: held?.etag)
+        await learned
         switch reply {
         case .notModified:
-            if let held { return held.snapshot }
+            if let held { return await withCurrentQueue(held.snapshot, sessionID: sessionID) }
             transcripts.forget(sessionID)
             return try await transcript(for: sessionID)
         case .modified(let data, let etag):
@@ -233,7 +240,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
                 backgroundWork: BackgroundWork.reported(
                     tasks: session.backgroundTasks, task: session.backgroundTask,
-                    since: session.backgroundSince, stalled: session.backgroundStalled))
+                    since: session.backgroundSince, stalled: session.backgroundStalled),
+                queue: session.queue.map {
+                    QueueSnapshot(items: BRQueueItem.items($0), paused: session.queuePaused ?? false)
+                })
             transcripts.hold(sessionID, etag: etag, snapshot: snapshot, bytes: data.count)
             return snapshot
         }
@@ -705,6 +715,9 @@ struct BRSession: Decodable {
     let lastCostUSD: Double?
     let lastTokens: Int?
     let goal: BRGoal?
+    /// The shared queue, absent on a bridge that holds none.
+    let queue: [BRLenient<BRQueueItem>]?
+    let queuePaused: Bool?
     /// Something is moving in this conversation — its own turn, or agents still working for it.
     let active: Bool?
     /// The conversation's own turn is open. Narrower than `active`, and the reading a client
@@ -1133,11 +1146,26 @@ public struct BridgeEventDecoder {
                     task: object["task"] as? String,
                     since: (object["since"] as? String).flatMap(BridgeCoding.date),
                     stalled: object["stalled"] as? Bool))
+        case "queue", "hello":
+            return Self.queueEvent(object)
         case "error":
             return .failure(BackendFailure(message: object["error"] as? String ?? "error"))
         default:
             return nil
         }
+    }
+
+    /// A frame that carries the whole queue: the `queue` frame itself, and the hello a new
+    /// subscriber is greeted with when there is something waiting or held. A frame with no queue
+    /// array in it says nothing about the queue, and is never read as an empty one.
+    private static func queueEvent(_ object: [String: Any]) -> BackendEvent? {
+        guard let raw = object["queue"] as? [Any],
+            let data = try? JSONSerialization.data(withJSONObject: raw),
+            let items = try? BridgeCoding.decoder.decode([BRLenient<BRQueueItem>].self, from: data)
+        else { return nil }
+        return .queue(
+            QueueSnapshot(
+                items: BRQueueItem.items(items), paused: object["paused"] as? Bool ?? false))
     }
 
 }
@@ -1236,6 +1264,8 @@ struct BRStatus: Decodable {
     /// The protocol version of `GET /sessions/:id/wait`, absent on a bridge built before the
     /// route existed — read as "too old for it" rather than as version zero.
     let turnWait: Int?
+    /// The version of the shared queue, absent on a bridge built before it.
+    let queue: Int?
 }
 
 struct BRFileEntry: Decodable {

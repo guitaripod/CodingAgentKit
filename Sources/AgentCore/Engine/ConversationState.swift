@@ -57,6 +57,13 @@ public struct ConversationState: Sendable, Hashable, Codable {
     public var revert: SessionRevert?
     /// The messages a standing revert set aside, oldest first; empty when nothing is reverted.
     public var revertedMessages: [ChatMessage] = []
+    /// The prompts waiting on the server behind the running turn, in arrival order, as every
+    /// client of the conversation sees them. Empty on a backend that keeps no server queue
+    /// (``BackendCapabilities/supportsServerQueue``), where queueing is the client's own.
+    public var queue: [QueuedPrompt] = []
+    /// Whether the server holds the queue back after a Stop: the items stay and nothing starts
+    /// until a new message or ``AgentConversation/resumeQueue()``.
+    public var queuePaused: Bool = false
 
     public init(
         messages: [ChatMessage] = [],
@@ -73,7 +80,9 @@ public struct ConversationState: Sendable, Hashable, Codable {
         backgroundWork: BackgroundWork? = nil,
         retry: TurnRetry? = nil,
         revert: SessionRevert? = nil,
-        revertedMessages: [ChatMessage] = []
+        revertedMessages: [ChatMessage] = [],
+        queue: [QueuedPrompt] = [],
+        queuePaused: Bool = false
     ) {
         self.messages = messages
         self.status = status
@@ -90,6 +99,32 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.retry = retry
         self.revert = revert
         self.revertedMessages = revertedMessages
+        self.queue = queue
+        self.queuePaused = queuePaused
+    }
+
+    /// A state cached before the queue existed has no queue in it, and that is an empty queue
+    /// rather than a state that cannot be read.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        messages = try container.decode([ChatMessage].self, forKey: .messages)
+        status = try container.decode(BackendStatus.self, forKey: .status)
+        pendingPermissions = try container.decode(
+            [PermissionRequest].self, forKey: .pendingPermissions)
+        pendingQuestions = try container.decode([QuestionRequest].self, forKey: .pendingQuestions)
+        lastFailure = try container.decodeIfPresent(BackendFailure.self, forKey: .lastFailure)
+        connection = try container.decode(ConnectionPhase.self, forKey: .connection)
+        hasLoadedTranscript = try container.decode(Bool.self, forKey: .hasLoadedTranscript)
+        goal = try container.decodeIfPresent(SessionGoal.self, forKey: .goal)
+        compaction = try container.decodeIfPresent(CompactionActivity.self, forKey: .compaction)
+        interruption = try container.decodeIfPresent(TurnInterruption.self, forKey: .interruption)
+        backgroundWork = try container.decodeIfPresent(BackgroundWork.self, forKey: .backgroundWork)
+        connectionChangedAt = try container.decode(Date.self, forKey: .connectionChangedAt)
+        retry = try container.decodeIfPresent(TurnRetry.self, forKey: .retry)
+        revert = try container.decodeIfPresent(SessionRevert.self, forKey: .revert)
+        revertedMessages = try container.decode([ChatMessage].self, forKey: .revertedMessages)
+        queue = try container.decodeIfPresent([QueuedPrompt].self, forKey: .queue) ?? []
+        queuePaused = try container.decodeIfPresent(Bool.self, forKey: .queuePaused) ?? false
     }
 
     public var isBusy: Bool { status == .running }

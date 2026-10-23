@@ -14,7 +14,8 @@ import Foundation
 /// because the frame that makes it part of the conversation carries only its id; which message
 /// a running shell was given, because the frame that ends it names only the shell; and the wait
 /// the turn is in, because the provider's remedy arrives on one frame and the next attempt's
-/// clock on another.
+/// clock on another. The inbox is remembered too, as the queue: what waits in it is announced
+/// whole on every change, because a client takes the newest queue it was told as the queue.
 struct OpenCodeV2EventDecoder {
     let sessionID: String
     private var toolNames: [String: String] = [:]
@@ -25,6 +26,16 @@ struct OpenCodeV2EventDecoder {
     /// Whether this stream has seen the conversation under way, which is what makes a first
     /// model or agent choice a switch rather than the setup of a conversation about to start.
     private var underway = false
+    /// The prompts waiting in the session's inbox, oldest first.
+    private var waiting: [QueuedPrompt] = []
+    /// The waiting prompts that were enqueued with nothing running, which the session takes up in
+    /// the same breath. Announcing them would put a queue on screen for a few milliseconds
+    /// before it starts, so they stay out of what is announced.
+    private var hidden: Set<String> = []
+    private var announced: [String] = []
+    /// Whether the session is known to be idle. Unknown reads as not idle: an unannounced
+    /// prompt that is really waiting is worse than a queue that flashes.
+    private var idle = false
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -51,6 +62,7 @@ struct OpenCodeV2EventDecoder {
         switch frame.type {
         case "session.step.started":
             underway = true
+            idle = false
             guard let messageID = data?["assistantMessageID"]?.stringValue else { return [] }
             let model = data?["model"]
             let message = ChatMessage(
@@ -229,12 +241,15 @@ struct OpenCodeV2EventDecoder {
             return events
 
         case "session.execution.started":
+            idle = false
             return [.status(.running)]
 
         case "session.execution.succeeded", "session.execution.interrupted", "session.idle":
+            idle = true
             return settleRetry() + [.status(.idle)]
 
         case "session.execution.failed":
+            idle = true
             let reason = OpenCodeV2Mapping.errorMessage(data?["error"]) ?? "session error"
             return settleRetry() + [.failure(BackendFailure(message: reason)), .status(.idle)]
 
@@ -244,8 +259,10 @@ struct OpenCodeV2EventDecoder {
             }
             switch type {
             case "idle":
+                idle = true
                 return settleRetry() + [.status(.idle)]
             case "busy", "running":
+                idle = false
                 return settleRetry() + [.status(.running)]
             case "retry":
                 /// A turn waiting on the provider between attempts is a turn in flight: the
@@ -298,27 +315,35 @@ struct OpenCodeV2EventDecoder {
             else { return [] }
             prompts[inboxID] = .object(["type": .string(kind), "payload": payload])
             if kind == "user" { underway = true }
-            return []
+            guard
+                let queued = OpenCodeV2Mapping.queued(
+                    inboxID: inboxID, type: kind, payload: payload, created: frame.created)
+            else { return [] }
+            waiting.removeAll { $0.id == inboxID }
+            waiting.append(queued)
+            if idle { hidden.insert(inboxID) }
+            return announceQueue()
 
         case "session.inbox.delivered":
-            guard let inboxID = data?["inboxID"]?.stringValue,
-                let held = prompts.removeValue(forKey: inboxID), let payload = held["payload"]
-            else { return [] }
+            guard let inboxID = data?["inboxID"]?.stringValue else { return [] }
+            let left = forget(inboxID)
+            guard let held = prompts.removeValue(forKey: inboxID), let payload = held["payload"]
+            else { return left }
             if held["type"]?.stringValue == "synthetic" {
                 guard
                     let subject = OpenCodeV2Mapping.syntheticSubject(
                         description: payload["description"]?.stringValue,
                         metadata: payload["metadata"])
-                else { return [] }
+                else { return left }
                 return [
                     .messageUpserted(
                         OpenCodeV2Mapping.note(id: inboxID, created: frame.created, subject: subject),
                         replaceParts: true)
-                ]
+                ] + left
             }
-            return Self.prompt(id: inboxID, payload: payload, created: frame.created).map {
+            return (Self.prompt(id: inboxID, payload: payload, created: frame.created).map {
                 [.messageUpserted($0, replaceParts: true)]
-            } ?? []
+            } ?? []) + left
 
         case "session.shell.started":
             guard let shell = data?["shell"], let shellID = shell["id"]?.stringValue,
@@ -339,8 +364,9 @@ struct OpenCodeV2EventDecoder {
             ).map { [.messageUpserted($0, replaceParts: true)] } ?? []
 
         case "session.inbox.cancelled":
-            if let inboxID = data?["inboxID"]?.stringValue { prompts[inboxID] = nil }
-            return []
+            guard let inboxID = data?["inboxID"]?.stringValue else { return [] }
+            prompts[inboxID] = nil
+            return forget(inboxID)
 
         case "session.retry.scheduled":
             let attempt = data?["attempt"]?.intValue.map(Int.init) ?? 1
@@ -406,6 +432,37 @@ struct OpenCodeV2EventDecoder {
         default:
             return [.unknown(type: frame.type)]
         }
+    }
+
+    /// Takes the server's inbox as the queue, which is what a connection opens with: the stream
+    /// only ever says what changes, so a prompt that was already waiting would otherwise be
+    /// unknown to the delivery that takes it up. Always announced, because it is the server's own
+    /// account and everything said before it is older.
+    mutating func seed(_ items: [OC2InboxItem]) -> [BackendEvent] {
+        waiting = items.compactMap(OpenCodeV2Mapping.queued)
+        hidden = []
+        for item in items where item.type == "user" || item.type == "synthetic" {
+            guard let payload = item.payload else { continue }
+            prompts[item.id] = .object(["type": .string(item.type), "payload": payload])
+        }
+        announced = waiting.map(\.id)
+        return [.queue(QueueSnapshot(items: waiting))]
+    }
+
+    /// Drops a prompt that was delivered or cancelled from the inbox, announcing the queue if
+    /// that changed what a client was shown.
+    private mutating func forget(_ inboxID: String) -> [BackendEvent] {
+        waiting.removeAll { $0.id == inboxID }
+        hidden.remove(inboxID)
+        return announceQueue()
+    }
+
+    private mutating func announceQueue() -> [BackendEvent] {
+        let visible = waiting.filter { !hidden.contains($0.id) }
+        let ids = visible.map(\.id)
+        guard ids != announced else { return [] }
+        announced = ids
+        return [.queue(QueueSnapshot(items: visible))]
     }
 
     private func usage(_ tokens: JSONValue?) -> MessageUsage? {

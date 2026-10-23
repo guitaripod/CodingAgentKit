@@ -139,6 +139,24 @@ public struct OpenCodeBackend: FileBrowsingBackend, RestartableBackend, GitObser
         try await resolved().stopBackgroundWork(sessionID: sessionID)
     }
 
+    public func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult {
+        try await resolved().enqueue(sessionID: sessionID, prompt: prompt)
+    }
+
+    public func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
+        -> QueueSnapshot
+    {
+        try await resolved().editQueued(sessionID: sessionID, id: id, edit: edit)
+    }
+
+    public func cancelQueued(sessionID: String, id: String) async throws -> QueueSnapshot {
+        try await resolved().cancelQueued(sessionID: sessionID, id: id)
+    }
+
+    public func resumeQueue(sessionID: String) async throws -> QueueSnapshot {
+        try await resolved().resumeQueue(sessionID: sessionID)
+    }
+
     public func respond(to permission: PermissionRequest, decision: PermissionDecision) async throws
     {
         try await resolved().respond(to: permission, decision: decision)

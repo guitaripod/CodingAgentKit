@@ -100,6 +100,28 @@ struct OC2InboxItem: Decodable, Sendable {
     let id: String
     let type: String
     let payload: JSONValue?
+    let time: OC2MessageTime?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, type, payload, time
+    }
+
+    /// The clock is a nicety, so a server that writes it in a shape this client does not know
+    /// loses the item its timestamp rather than the whole inbox its readability.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        type = try container.decode(String.self, forKey: .type)
+        payload = try container.decodeIfPresent(JSONValue.self, forKey: .payload)
+        time = try? container.decodeIfPresent(OC2MessageTime.self, forKey: .time)
+    }
+
+    init(id: String, type: String, payload: JSONValue?, time: OC2MessageTime? = nil) {
+        self.id = id
+        self.type = type
+        self.payload = payload
+        self.time = time
+    }
 }
 
 /// The provider wait recorded on an assistant message: which attempt failed, when the next one

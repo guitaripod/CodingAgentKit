@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.43.0
+
+A message queued behind a running turn lives on the server, so every client of the conversation shows the same queue and can edit or cancel it.
+
+### Added
+- **`AgentConversation.enqueue(_:id:kind:model:reasoningEffort:agent:attachments:)`, `editQueued(id:text:model:reasoningEffort:)`, `cancelQueued(id:)` and `resumeQueue()`.** With nothing running an enqueue starts at once, as a send does, and the result says so; otherwise the prompt waits on the server and the server starts it when its turn comes. The id makes it safe to repeat: a call still out is shared, one that succeeded is answered without a second request, and one whose answer was lost goes out again under the same id, which the server recognises. A prompt that started refuses an edit or a cancel with `QueueError.alreadyStarted` (words for a person in every shipped language) and is dropped from the queue held here.
+- **`ConversationState.queue` and `queuePaused`, `BackendEvent.queue(QueueSnapshot)` and `TranscriptSnapshot.queue`.** The queue is always announced whole. A read outranks an event older than it and an event heard while a read or a request was out stands over it, the discipline the conversation already keeps for the rest of what a server says. A state cached before the queue existed still decodes, with an empty queue.
+- **`QueuedPrompt`, `QueueSnapshot`, `EnqueuePrompt`, `EnqueueResult`, `QueuedPromptEdit`, `QueueError`.** And on `CodingAgentBackend`, `enqueue(sessionID:prompt:)`, `editQueued(sessionID:id:edit:)`, `cancelQueued(sessionID:id:)` and `resumeQueue(sessionID:)`, which throw `AgentError.unsupported` by default.
+- **`BackendCapabilities.supportsServerQueue` and `supportsQueueEdit`**, false by default. Where they are false a client keeps its own device-local queue, as before.
+- **Claude Code and oh-my-pi.** Both bridges speak the queue on one wire: `queue` frames, the `queue` and `queuePaused` fields of the session read, and the routes under `/sessions/:id/queue`. The capability is on only when the bridge's `/status` reports `"queue": 1`, read once per server (from a health check or the first transcript read), shared by every backend for that server and read again after ten minutes; a bridge too old to say stays off, and one that could not be asked is asked again rather than written off. A `409 already_started` is `QueueError.alreadyStarted`. A transcript the bridge answers 304 still carries the queue as it is now, read from the queue route, because the validator was made for the transcript.
+- **opencode 2.** Its inbox is the queue: the transcript read carries `GET /api/session/:id/inbox`, the stream is seeded with it when a connection opens, and `session.inbox.enqueued`, `delivered` and `cancelled` become `.queue` events (a prompt enqueued while the session is known to be idle is not shown for the milliseconds before it starts). An opencode 2 prompt delivered after a connection opened onto a waiting queue now becomes its message instead of being lost. `supportsQueueEdit` is false, and cancelling, resuming and a queued slash command throw `AgentError.unsupported` because the server has no route for them that this client knows. opencode 1 is unchanged.
+- **`MockBackend(serverQueue:)`** keeps a scriptable server queue: `serveQueue`, `announceQueue`, `startQueued`, `serveTranscriptStatus` for busy or idle, idempotent enqueue, a Stop that pauses, and `recordedEnqueues`, `recordedQueueEdits`, `recordedQueueCancels` and `recordedQueueResumes`.
+
+### Changed
+- A prompt delivered by opencode 2 now also announces the queue it left, so its `session.inbox.delivered` decodes to a message followed by a `.queue` event.
 ## 0.42.3
 
 A compaction ends when the server says it has, on every backend.

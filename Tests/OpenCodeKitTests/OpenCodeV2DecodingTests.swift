@@ -41,13 +41,19 @@ private func decode(_ json: String) -> [BackendEvent] {
         let enqueued = decode(
             #"{"type":"session.inbox.enqueued","created":1790181060112,"data":{"inboxID":"msg_U","sessionID":"ses_S","item":{"type":"user","payload":{"text":"Reply with just: ok","files":[{"data":"AAAA","mime":"image/png","name":"a.png","source":{"type":"uri","uri":"file:///tmp/a.png"}}]},"delivery":"steer"}}}"#,
             decoder: &decoder)
-        #expect(enqueued.isEmpty)
+        guard case .queue(let waiting)? = enqueued.first, enqueued.count == 1 else {
+            Issue.record("expected the prompt announced as queued, got \(enqueued)")
+            return
+        }
+        #expect(waiting.items.map(\.id) == ["msg_U"])
 
         let delivered = decode(
             #"{"type":"session.inbox.delivered","created":1790181060127,"data":{"sessionID":"ses_S","inboxID":"msg_U"}}"#,
             decoder: &decoder)
-        guard case .messageUpserted(let message, let replaceParts)? = delivered.first, delivered.count == 1 else {
-            Issue.record("expected one messageUpserted, got \(delivered)")
+        guard case .messageUpserted(let message, let replaceParts)? = delivered.first,
+            delivered.count == 2, case .queue(let left)? = delivered.last, left.isEmpty
+        else {
+            Issue.record("expected a messageUpserted and an empty queue, got \(delivered)")
             return
         }
         #expect(replaceParts)

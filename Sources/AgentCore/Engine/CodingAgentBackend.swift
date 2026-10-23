@@ -75,6 +75,15 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// after it and the file changes the agent made since) and bring it back again
     /// (``CodingAgentBackend/revert(sessionID:to:)``, ``CodingAgentBackend/restoreRevert(sessionID:)``).
     public var supportsRevert: Bool
+    /// Whether the server holds a conversation's queue, so a message sent behind a running turn
+    /// lives on the server, every client of the conversation sees the same queue, and the server
+    /// drains it. False leaves queueing on the device, where it has always been.
+    public var supportsServerQueue: Bool
+    /// Whether a queued prompt can still be edited on the server
+    /// (``CodingAgentBackend/editQueued(sessionID:id:edit:)``). Cancelling is always offered with
+    /// ``supportsServerQueue``; a backend that cannot cancel throws
+    /// ``AgentError/unsupported(_:)`` from ``CodingAgentBackend/cancelQueued(sessionID:id:)``.
+    public var supportsQueueEdit: Bool
 
     public init(
         supportsFileBrowsing: Bool,
@@ -105,7 +114,9 @@ public struct BackendCapabilities: Sendable, Hashable {
         reportsInterruptions: Bool = false,
         supportsTranscriptSearch: Bool = false,
         supportsBackgroundStop: Bool = false,
-        supportsRevert: Bool = false
+        supportsRevert: Bool = false,
+        supportsServerQueue: Bool = false,
+        supportsQueueEdit: Bool = false
     ) {
         self.supportsFileBrowsing = supportsFileBrowsing
         self.supportsDiffs = supportsDiffs
@@ -136,6 +147,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsTranscriptSearch = supportsTranscriptSearch
         self.supportsBackgroundStop = supportsBackgroundStop
         self.supportsRevert = supportsRevert
+        self.supportsServerQueue = supportsServerQueue
+        self.supportsQueueEdit = supportsQueueEdit
     }
 }
 
@@ -861,6 +874,10 @@ public enum BackendEvent: Sendable {
     /// brings those messages back: these leave the transcript at once, rather than returning
     /// until a re-read finds them deleted.
     case revertCommitted(messageID: String)
+    /// The server's queue for this conversation changed: an enqueue, an edit, a cancel, an item
+    /// starting, a pause or a resume. Always the whole queue, never a delta, so the newest one
+    /// heard is the queue.
+    case queue(QueueSnapshot)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,
@@ -885,17 +902,22 @@ public struct TranscriptSnapshot: Sendable {
     public var retry: TurnRetry?
     /// The revert standing on the conversation, where the server holds one; `nil` otherwise.
     public var revert: SessionRevert?
+    /// The server's queue for the conversation, where it holds one. `nil` from a server that
+    /// keeps none or cannot say, which leaves the queue a client holds as it is; an empty
+    /// snapshot is the server saying nothing is waiting.
+    public var queue: QueueSnapshot?
 
     public init(
         messages: [ChatMessage], status: BackendStatus? = nil,
         backgroundWork: BackgroundWork? = nil, retry: TurnRetry? = nil,
-        revert: SessionRevert? = nil
+        revert: SessionRevert? = nil, queue: QueueSnapshot? = nil
     ) {
         self.messages = messages
         self.status = status
         self.backgroundWork = backgroundWork
         self.retry = retry
         self.revert = revert
+        self.queue = queue
     }
 }
 
@@ -1097,6 +1119,24 @@ public protocol CodingAgentBackend: Sendable {
     /// Undoes the revert standing on the conversation: the messages come back into effect and the
     /// files return to how the agent left them.
     func restoreRevert(sessionID: String) async throws
+    /// Hands a prompt to the server. When nothing is running it starts at once and the result
+    /// says so; otherwise it joins the server's queue behind the running turn and the server
+    /// starts it when its turn comes. The prompt's id makes this safe to repeat: asking again with
+    /// the same id changes nothing and answers the current queue. Throws
+    /// ``AgentError/unsupported(_:)`` by default; check ``BackendCapabilities/supportsServerQueue``.
+    func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult
+    /// Changes a prompt still waiting in the queue and answers the queue as it now stands. Throws
+    /// ``QueueError/alreadyStarted`` when the prompt started or is gone, and
+    /// ``AgentError/unsupported(_:)`` by default; check ``BackendCapabilities/supportsQueueEdit``.
+    func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
+        -> QueueSnapshot
+    /// Takes a prompt out of the queue and answers the queue as it now stands. An id that is
+    /// already gone changes nothing, so a retry is safe; a prompt that has started throws
+    /// ``QueueError/alreadyStarted``. Throws ``AgentError/unsupported(_:)`` by default.
+    func cancelQueued(sessionID: String, id: String) async throws -> QueueSnapshot
+    /// Lifts the pause a Stop left on the queue and starts its head if the conversation is idle.
+    /// Throws ``AgentError/unsupported(_:)`` by default.
+    func resumeQueue(sessionID: String) async throws -> QueueSnapshot
     /// A self-contained, side-effect-free request that answers only once this session's turn ends
     /// or needs the person — safe to hand to a background `URLSession` this process does not
     /// itself drive. `nil` when ``turnWaitSupport()`` is not ``TurnWaitSupport/supported``.
@@ -1124,6 +1164,24 @@ extension CodingAgentBackend {
 
     public func abort(sessionID: String) async throws {
         throw AgentError.unsupported("abort")
+    }
+
+    public func enqueue(sessionID: String, prompt: EnqueuePrompt) async throws -> EnqueueResult {
+        throw AgentError.unsupported("queue")
+    }
+
+    public func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
+        -> QueueSnapshot
+    {
+        throw AgentError.unsupported("queue")
+    }
+
+    public func cancelQueued(sessionID: String, id: String) async throws -> QueueSnapshot {
+        throw AgentError.unsupported("queue")
+    }
+
+    public func resumeQueue(sessionID: String) async throws -> QueueSnapshot {
+        throw AgentError.unsupported("queue")
     }
 
     public func stopBackgroundWork(sessionID: String) async throws {

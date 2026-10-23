@@ -79,8 +79,8 @@ public struct MessageReducer: Sendable {
         case .messageRemoved(let messageID):
             remove(messageID)
         case .status, .goal, .compaction, .interruption, .backgroundWork, .retry, .revert,
-            .revertCommitted, .attached, .detached, .resync, .permission, .permissionResolved,
-            .question, .questionResolved, .failure, .unknown:
+            .revertCommitted, .queue, .attached, .detached, .resync, .permission,
+            .permissionResolved, .question, .questionResolved, .failure, .unknown:
             break
         }
     }
