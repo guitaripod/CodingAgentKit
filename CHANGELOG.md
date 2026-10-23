@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.3
+
+A compaction ends when the server says it has, on every backend.
+
+### Fixed
+- **"Compacting" no longer outlives the compaction.** A chat could keep its compaction card, and hold every prompt queued behind it, until the app was restarted. A compaction now ends when the transcript holds its seam even if the finish was never heard; on Claude Code, when the turn it ran in closes; on opencode, when a read says nothing is being summarized, an answer now asked after the transcript it is worked out of so a finished compaction is no longer handed back as running; and in any case after half an hour without a word. A repeated start trailing a finish no longer reopens the card, and a seam that ended one compaction never ends the next.
+
 ## 0.42.2
 
 An opencode 2 server's folders open and its levels stick.
