@@ -27,15 +27,30 @@ private func capabilities(
         reportsRunningCompaction: reportsRunning, reportsMessageCompletion: false)
 }
 
+/// A clock that stands still until a test moves it.
+private final class SteppedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = Date(timeIntervalSince1970: 1_000_000)
+
+    var now: Date { lock.withLock { current } }
+
+    func advance(by interval: TimeInterval) {
+        lock.withLock { current = current.addingTimeInterval(interval) }
+    }
+}
+
 /// A conversation held open the way a client holds one, so its state can be polled.
 private struct Watched {
     let conversation: AgentConversation
     let observer: Task<Void, Never>
 
-    init(_ backend: MockBackend) {
+    init(_ backend: MockBackend, clock: SteppedClock? = nil) {
         conversation = AgentConversation(backend: backend, sessionID: "mock", policy: fastPolicy)
         let conversation = conversation
-        observer = Task { for await _ in await conversation.states() {} }
+        observer = Task {
+            if let clock { await conversation.useCompactionClock { clock.now } }
+            for await _ in await conversation.states() {}
+        }
     }
 
     func becomes(_ predicate: @Sendable (ConversationState) -> Bool) async -> Bool {
@@ -80,13 +95,15 @@ private struct Watched {
                 MockScriptStep(.compaction(CompactionActivity(startedAt: Date()))),
                 MockScriptStep(.messageUpserted(seam(at: Date().addingTimeInterval(1)), replaceParts: true)),
                 MockScriptStep(.compaction(nil)),
-                MockScriptStep(.compaction(CompactionActivity(startedAt: Date())), delay: .milliseconds(2_400)),
             ],
             interactive: true,
             capabilities: capabilities())
-        let watched = Watched(backend)
+        let clock = SteppedClock()
+        let watched = Watched(backend, clock: clock)
 
         #expect(await watched.becomes { $0.messages.contains { $0.id == "seam" } })
+        clock.advance(by: 2.4)
+        backend.say(.compaction(CompactionActivity(startedAt: Date())), in: "mock")
         #expect(await watched.becomes { $0.activeCompaction != nil },
             "a compaction that began well after the last one ended was taken for its tail")
         watched.observer.cancel()

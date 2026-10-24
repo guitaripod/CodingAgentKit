@@ -65,6 +65,7 @@ public actor AgentConversation {
     private var queuedRefresh: QueuedRefresh?
     private let refreshPriorityBox = RefreshPriorityBox()
     private var refreshGate = RefreshGate.shared
+    private var now: @Sendable () -> Date = { Date() }
     private var recoveryRefreshInFlight = false
     private var droppedDeltaDuringRecovery = false
     private var reachedTerminal = false
@@ -104,6 +105,12 @@ public actor AgentConversation {
 
     func useRefreshGate(_ gate: RefreshGate) {
         refreshGate = gate
+    }
+
+    /// Replaces the clock that decides whether a compaction report trails the finish of the one
+    /// before it, so a test can move time instead of waiting for it.
+    func useCompactionClock(_ clock: @escaping @Sendable () -> Date) {
+        now = clock
     }
 
     public var state: ConversationState {
@@ -317,7 +324,7 @@ public actor AgentConversation {
     }
 
     private func noteCompactionEnded() {
-        compactionEndedAt = Date()
+        compactionEndedAt = now()
         seamsAnsweredBefore = Set(landedSeamMessages().map(\.id))
     }
 
@@ -329,7 +336,7 @@ public actor AgentConversation {
 
     private func isTailOfCompactionJustEnded() -> Bool {
         guard let ended = compactionEndedAt else { return false }
-        return Date().timeIntervalSince(ended) < Self.compactionTailWindow
+        return now().timeIntervalSince(ended) < Self.compactionTailWindow
     }
 
     /// The transcript outranks the stream on whether a compaction is still running.
