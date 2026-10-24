@@ -327,10 +327,13 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     }
 
     public func send(_ prompt: SendPrompt, to sessionID: String) async throws {
-        let turn: [MockScriptStep]? = mutable.withLock { state in
+        let outcome: (committed: [MockScriptStep], turn: [MockScriptStep], targets: [Subscriber])? =
+            mutable.withLock { state in
             state.sentPrompts.append(prompt)
             guard interactive else { return nil }
-            var steps = commitStandingRevert(on: sessionID, in: &state)
+            let committed = commitStandingRevert(on: sessionID, in: &state)
+            let targets = record(committed, for: sessionID, in: &state)
+            var steps: [MockScriptStep] = []
             state.mintCounter += 1
             let suffix = "#\(state.mintCounter)"
             var parts = [MessagePart(id: "t", kind: .text(prompt.text))]
@@ -359,16 +362,25 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             if let index = state.sessions.firstIndex(where: { $0.id == sessionID }) {
                 state.sessions[index].updatedAt = Date()
             }
-            return steps
+            return (committed, steps, targets)
         }
-        guard let turn else { return }
-        stream(turn, to: sessionID)
+        guard let outcome else { return }
+        yield(outcome.committed, to: outcome.targets)
+        stream(outcome.turn, to: sessionID)
     }
 
     public func abort(sessionID: String) async throws {
         pauseQueueAfterStop(sessionID)
         guard interactive else { return }
         stream([MockScriptStep(.status(.idle), delay: .zero)], to: sessionID)
+    }
+
+    /// Tells the session's live stream `event` now, after the script has played out, and records it
+    /// in the session's log like any event the demo world raises. A test that needs an event to
+    /// arrive at a moment of its choosing raises it here instead of scripting a delay.
+    public func say(_ event: BackendEvent, in sessionID: String) {
+        guard interactive else { return }
+        deliverNow([MockScriptStep(event, delay: .zero)], to: sessionID)
     }
 
     /// Winds the session back to `messageID`, putting back the files the demo's diffs name so a
@@ -386,7 +398,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             state.reverts.append(messageID)
             state.standingReverts[sessionID] = revert
         }
-        if interactive { stream([MockScriptStep(.revert(revert), delay: .zero)], to: sessionID) }
+        if interactive { deliverNow([MockScriptStep(.revert(revert), delay: .zero)], to: sessionID) }
         return revert
     }
 
@@ -396,7 +408,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             state.standingReverts[sessionID] = nil
         }
         guard interactive else { return }
-        stream([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
+        deliverNow([MockScriptStep(.revert(nil), delay: .zero)], to: sessionID)
     }
 
     /// Every prompt a client handed to the queue, in order, repeats included.
@@ -860,6 +872,29 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             }
         }
         return open
+    }
+
+    private typealias Subscriber = AsyncThrowingStream<BackendEvent, Error>.Continuation
+
+    /// Writes steps into the session's log in one stroke and returns who is listening. Steps that
+    /// have to read as one change, like a revert made final and the messages it set aside, are
+    /// recorded together so a re-read never lands between them.
+    private func record(
+        _ steps: [MockScriptStep], for sessionID: String, in state: inout Mutable
+    ) -> [Subscriber] {
+        state.appendedEvents[sessionID, default: []].append(contentsOf: steps)
+        return Array((state.continuations[sessionID] ?? [:]).values)
+    }
+
+    private func yield(_ steps: [MockScriptStep], to targets: [Subscriber]) {
+        for step in steps { for target in targets { target.yield(step.event) } }
+    }
+
+    /// Records steps and tells the session's subscribers before returning, in the order the caller
+    /// made them, where `stream` would hand them to a task that may run after a later call.
+    private func deliverNow(_ steps: [MockScriptStep], to sessionID: String) {
+        let targets = mutable.withLock { record(steps, for: sessionID, in: &$0) }
+        yield(steps, to: targets)
     }
 
     /// Streams steps to the session's live subscribers with per-step delays, recording each into
