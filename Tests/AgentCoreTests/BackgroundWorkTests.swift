@@ -12,6 +12,13 @@ private let fastPolicy = ConnectionPolicy(
     sessionRecordInterval: .milliseconds(20)
 )
 
+private let silentRecordPolicy = ConnectionPolicy(
+    reconnectBaseDelay: .milliseconds(5),
+    reconnectMaxDelay: .milliseconds(20),
+    reconnectJitter: 0,
+    sessionRecordInterval: .seconds(3600)
+)
+
 private let settled = [
     ChatMessage(
         id: "u1", role: .user, agentType: .claudeCode,
@@ -124,7 +131,8 @@ private func waitUntil(
 
     @Test func theStreamsOwnLevelSetsAndClearsIt() async {
         let server = CarryingServer(carrying: nil)
-        let conversation = AgentConversation(backend: server, sessionID: "s", policy: fastPolicy)
+        let conversation = AgentConversation(
+            backend: server, sessionID: "s", policy: silentRecordPolicy)
         let states = await conversation.states()
         await waitUntil { server.isSubscribed }
         await waitUntil { await conversation.state.hasLoadedTranscript }
