@@ -27,6 +27,34 @@ private func eventually(
     return await condition()
 }
 
+/// A door a test holds shut to keep a read in flight for exactly as long as the test wants, so an
+/// order of events is decided by the test and not by how fast the machine runs.
+private final class Latch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let passes = lock.withLock { () -> Bool in
+                if isOpen { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if passes { continuation.resume() }
+        }
+    }
+
+    func open() {
+        let released = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            isOpen = true
+            defer { waiters = [] }
+            return waiters
+        }
+        for waiter in released { waiter.resume() }
+    }
+}
+
 /// A server that answers every transcript read after a delay and keeps count of how many reads
 /// were out at once and in what order they began.
 private final class CountingServer: CodingAgentBackend, @unchecked Sendable {
@@ -38,13 +66,15 @@ private final class CountingServer: CodingAgentBackend, @unchecked Sendable {
 
     private let lock = NSLock()
     private let delay: Duration
+    private let hold: Latch?
     private var inFlight = 0
     private var peak = 0
     private var started: [String] = []
     private var content: [ChatMessage]
 
-    init(delay: Duration = .milliseconds(40), content: [ChatMessage] = []) {
+    init(delay: Duration = .milliseconds(40), hold: Latch? = nil, content: [ChatMessage] = []) {
         self.delay = delay
+        self.hold = hold
         self.content = content
     }
 
@@ -68,6 +98,7 @@ private final class CountingServer: CodingAgentBackend, @unchecked Sendable {
             return content
         }
         defer { lock.withLock { inFlight -= 1 } }
+        if let hold { await hold.wait() }
         try await Task.sleep(for: delay)
         return served
     }
@@ -79,18 +110,22 @@ private final class CountingServer: CodingAgentBackend, @unchecked Sendable {
 
 private actor CountingCache: SessionCache {
     private(set) var stored: [[ChatMessage]] = []
+    private(set) var readsStarted = 0
+    private(set) var readsReturned = 0
     private let seed: [ChatMessage]
-    private let readDelay: Duration
+    private let hold: Latch?
 
-    init(seed: [ChatMessage] = [], readDelay: Duration = .zero) {
+    init(seed: [ChatMessage] = [], hold: Latch? = nil) {
         self.seed = seed
-        self.readDelay = readDelay
+        self.hold = hold
     }
 
     func sessions(for agentType: AgentType) async -> [AgentSession] { [] }
     func store(_ sessions: [AgentSession], for agentType: AgentType) async {}
     func messages(for sessionID: String) async -> [ChatMessage] {
-        try? await Task.sleep(for: readDelay)
+        readsStarted += 1
+        if let hold { await hold.wait() }
+        readsReturned += 1
         return seed
     }
     func store(_ messages: [ChatMessage], for sessionID: String) async {
@@ -347,49 +382,53 @@ private actor CountingCache: SessionCache {
 @Suite struct ConversationSeedTests {
     @Test func aCacheThatIsSlowToReadDoesNotDelayTheLiveRead() async throws {
         let stale = [answer("old", "from the cache")]
-        let cache = CountingCache(seed: stale, readDelay: .seconds(2))
+        let cacheRead = Latch()
+        let cache = CountingCache(seed: stale, hold: cacheRead)
         let server = CountingServer(delay: .milliseconds(5), content: [answer("new", "from the server")])
         let conversation = AgentConversation(
             backend: server, sessionID: "s", policy: fastPolicy, cache: cache)
         let stream = await conversation.states()
-        let started = ContinuousClock.now
 
-        #expect(
-            await eventually(timeout: .seconds(1)) {
-                await conversation.messages.first?.id == "new"
-            })
-        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(await eventually { await cache.readsStarted == 1 })
+        #expect(await eventually { await conversation.messages.first?.id == "new" })
+        #expect(await cache.readsReturned == 0)
 
-        try? await Task.sleep(for: .seconds(2))
+        cacheRead.open()
+        #expect(await eventually { await cache.readsReturned == 1 })
+        for _ in 0..<20 { await Task.yield() }
         #expect(await conversation.messages.map(\.id) == ["new"])
         _ = stream
     }
 
     @Test func aCacheThatIsFastPaintsBeforeTheServerAnswers() async throws {
         let cache = CountingCache(seed: [answer("old", "from the cache")])
-        let server = CountingServer(delay: .seconds(1), content: [answer("new", "from the server")])
+        let serverRead = Latch()
+        let server = CountingServer(
+            delay: .milliseconds(5), hold: serverRead, content: [answer("new", "from the server")])
         let conversation = AgentConversation(
             backend: server, sessionID: "s", policy: fastPolicy, cache: cache)
         let stream = await conversation.states()
 
-        #expect(
-            await eventually(timeout: .milliseconds(500)) {
-                await conversation.messages.first?.id == "old"
-            })
+        #expect(await eventually { server.readCount == 1 })
+        #expect(await eventually { await conversation.messages.first?.id == "old" })
+
+        serverRead.open()
         #expect(await eventually { await conversation.messages.first?.id == "new" })
         _ = stream
     }
 
     @Test func aCacheNeverOverwritesAServerThatSaidTheConversationIsEmpty() async throws {
-        let cache = CountingCache(
-            seed: [answer("old", "from the cache")], readDelay: .milliseconds(300))
+        let cacheRead = Latch()
+        let cache = CountingCache(seed: [answer("old", "from the cache")], hold: cacheRead)
         let server = CountingServer(delay: .milliseconds(5), content: [])
         let conversation = AgentConversation(
             backend: server, sessionID: "s", policy: fastPolicy, cache: cache)
         let stream = await conversation.states()
         #expect(await eventually { await conversation.state.hasLoadedTranscript })
 
-        try? await Task.sleep(for: .milliseconds(500))
+        cacheRead.open()
+        #expect(await eventually { await cache.readsReturned == 1 })
+        for _ in 0..<20 { await Task.yield() }
 
         #expect(await conversation.messages.isEmpty)
         _ = stream
