@@ -399,8 +399,9 @@ public protocol SelfUpdatingBackend: CodingAgentBackend {
     /// Asks the server to update itself. Returns as soon as the work has been handed off; the
     /// server will stop answering for a moment when it restarts.
     func startUpdate() async throws -> ServerUpdate
-    /// Asks the server to load a build already sitting on its disk. No fetch and no rebuild — the
-    /// machine waits until nothing is running on it and then hands itself to its supervisor.
+    /// Asks the server to start over, onto a build already sitting on its disk when there is one.
+    /// No fetch and no rebuild — the machine waits until nothing is running on it and then hands
+    /// itself to its supervisor, so a restart never takes a turn with it.
     func restartServer() async throws -> ServerUpdate
     /// Turns unattended updating on or off *on the server*, which is where it belongs: a device-
     /// local flag would mean the machine only stays current while that device keeps asking.

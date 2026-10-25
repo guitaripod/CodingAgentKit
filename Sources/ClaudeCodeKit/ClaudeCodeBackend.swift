@@ -1366,8 +1366,15 @@ extension ClaudeCodeBackend: SelfUpdatingBackend {
         try await accepted("/update", refusal: "update itself")
     }
 
+    /// Asks the route that restarts with or without a build waiting. A bridge from before it only
+    /// knows the one that loads a waiting build, and answers `404` to this, so it is asked that
+    /// instead and says in its own words when nothing is waiting.
     public func restartServer() async throws -> ServerUpdate {
-        try await accepted("/update/restart", refusal: "restart itself")
+        do {
+            return try await accepted("/restart", refusal: "restart itself")
+        } catch AgentError.http(let status, _) where status == 404 {
+            return try await accepted("/update/restart", refusal: "restart itself")
+        }
     }
 
     public func setAutoUpdate(_ enabled: Bool) async throws -> ServerUpdate {

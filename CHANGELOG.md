@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.45.0
+
+A bridge can be asked to start over whether or not a newer build is waiting.
+
+### Changed
+- **`SelfUpdatingBackend.restartServer()` restarts with or without a build waiting.** `ClaudeCodeBackend` asks `POST /restart`, which a bridge holds behind its own quiet wait exactly as a restart onto a new build, and falls back to `POST /update/restart` only when the bridge answers `404` because it is from before the route. A refusal (`409`) comes back as the status that explains it either way.
+
 ## 0.44.0
 
 Coming back to a conversation shows its latest messages after one small read instead of after the whole transcript.
