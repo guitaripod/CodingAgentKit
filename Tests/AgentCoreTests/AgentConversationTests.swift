@@ -155,6 +155,9 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
 @Suite struct StreamPersistenceTests {
     private actor RecordingCache: SessionCache {
         var stored: [[ChatMessage]] = []
+        private let reportedBytes: Int
+        init(reportedBytes: Int = 0) { self.reportedBytes = reportedBytes }
+        func lastStoredBytes(for sessionID: String) async -> Int { reportedBytes }
         func sessions(for agentType: AgentType) async -> [AgentSession] { [] }
         func store(_ sessions: [AgentSession], for agentType: AgentType) async {}
         func messages(for sessionID: String) async -> [ChatMessage] { [] }
@@ -215,6 +218,38 @@ private func assistant(_ id: String, _ text: String) -> BackendEvent {
             await cache.stored.count == 1,
             "a transcript growing inside the write floor was rewritten whole more than once")
         _ = conversation
+    }
+
+    private func writesAfterATurnEnds(transcriptBytes: Int) async -> Int {
+        let cache = RecordingCache(reportedBytes: transcriptBytes)
+        let backend = MockBackend(
+            agentType: .openCode,
+            script: [
+                MockScriptStep(assistant("a", "first")),
+                MockScriptStep(.status(.running)),
+                MockScriptStep(assistant("a", "first second"), delay: .milliseconds(400)),
+                MockScriptStep(.status(.idle), delay: .milliseconds(100)),
+            ], transcriptPrefix: 0)
+        let conversation = AgentConversation(
+            backend: backend, sessionID: "s", policy: fastPolicy, cache: cache)
+
+        for await state in await conversation.states()
+        where state.messages.first?.text == "first second" && state.status == .idle {
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        _ = conversation
+        return await cache.stored.count
+    }
+
+    @Test func aLightTranscriptIsWrittenAgainWhenTheTurnEnds() async {
+        #expect(await writesAfterATurnEnds(transcriptBytes: 0) == 2)
+    }
+
+    @Test func aHeavyTranscriptIsNotRewrittenWhenTheTurnEndsInsideItsBudget() async {
+        #expect(
+            await writesAfterATurnEnds(transcriptBytes: 64 * 1_048_576) == 1,
+            "a transcript that weighs sixty-four megabytes was written again within its budget")
     }
 
     @Test func aQueuedPromptLeavesARunningCompactionAlone() async {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.46.0
+
+A long conversation no longer rewrites its whole transcript to the phone's flash every half minute.
+
+### Changed
+- **A heavy transcript is written no faster than a flash budget allows.** A write replaces the whole file, so a conversation that grew to tens of megabytes cost that much each time `AgentConversation` persisted it: at the thirty-second streaming floor a forty-four-megabyte one wrote a gigabyte in twelve minutes, and iOS reported the app for writing over a gigabyte in a day. A transcript under a megabyte is written as before; a heavier one goes without another write for as long as its weight divided by thirty-two kilobytes a second, mid-stream and at the end of a turn alike, and the write it owes is made when that time is up with the newest transcript rather than dropped (`TranscriptWriteBudget`).
+
+### Added
+- **`SessionCache.lastStoredBytes(for:)`**, zero by default. `FileSessionCache` reports what its last write of a transcript put on disk, which is what the conversation spaces its next write by.
+
 ## 0.45.0
 
 A bridge can be asked to start over whether or not a newer build is waiting.

@@ -52,6 +52,8 @@ public actor AgentConversation {
     private var streamTask: Task<Void, Never>?
     private var persistTask: Task<Void, Never>?
     private var lastStreamPersist = Date.distantPast
+    private var lastPersistBytes = 0
+    private var trailingPersist: Task<Void, Never>?
     private var persistedStamp: PersistStamp?
     private let persistLedger = PersistLedger()
     private var reducerEpoch = 0
@@ -1660,8 +1662,11 @@ public actor AgentConversation {
     /// How long a turn may stream between writes of its transcript. A write is the whole
     /// conversation, encoded and replaced — a long working session is megabytes — so at five
     /// seconds a phone left streaming wrote over a gigabyte a day and iOS said so in a diagnostic.
-    /// The turn's own end writes at once, and a relaunch mid-turn re-reads the server, so the cache
-    /// only has to be recent, not current.
+    /// A transcript heavy enough to matter is spaced further by what it weighs
+    /// (`TranscriptWriteBudget`): at thirty seconds a forty-megabyte one still wrote a gigabyte in
+    /// twelve minutes of streaming. The turn's own end writes at once while the transcript is
+    /// light, and a relaunch mid-turn re-reads the server, so the cache only has to be recent, not
+    /// current.
     private static let streamPersistInterval: TimeInterval = 30
 
     /// A turn can stream for an hour; a cache written only at idle restores an hour stale. Every
@@ -1687,17 +1692,47 @@ public actor AgentConversation {
         guard let cache else { return }
         let stamp = PersistStamp(epoch: reducerEpoch, revision: reducer.revision)
         guard stamp != persistedStamp else { return }
+        let wait = TranscriptWriteBudget.wait(
+            sinceLastWrite: Date().timeIntervalSince(lastStreamPersist), lastBytes: lastPersistBytes)
+        guard wait <= 0 else {
+            persistLater(after: wait)
+            return
+        }
+        trailingPersist?.cancel()
+        trailingPersist = nil
         persistedStamp = stamp
         lastStreamPersist = Date()
         let snapshot = reducer.snapshot
         let sessionID = sessionID
         let ledger = persistLedger
-        persistTask = Task { [previous = persistTask] in
+        persistTask = Task { [previous = persistTask, weak self] in
             await previous?.value
             guard !Task.isCancelled else { return }
             guard await ledger.admit(snapshot) else { return }
             await cache.store(snapshot, for: sessionID)
+            let bytes = await cache.lastStoredBytes(for: sessionID)
+            await self?.noteWritten(bytes)
         }
+    }
+
+    private func noteWritten(_ bytes: Int) {
+        lastPersistBytes = bytes
+    }
+
+    /// One write of whatever the transcript is by then, when the budget lets the next one out.
+    /// Asking again while it waits changes nothing: the write that comes takes the newest.
+    private func persistLater(after wait: TimeInterval) {
+        guard trailingPersist == nil else { return }
+        trailingPersist = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            await self?.persistWhenDue()
+        }
+    }
+
+    private func persistWhenDue() {
+        trailingPersist = nil
+        persist()
     }
 
     private func installReducer(_ replacement: MessageReducer) {
@@ -1735,8 +1770,30 @@ public actor AgentConversation {
         streamTask = nil
         persistTask?.cancel()
         persistTask = nil
+        trailingPersist?.cancel()
+        trailingPersist = nil
         for continuation in subscribers.values { continuation.finish() }
         subscribers.removeAll()
+    }
+}
+
+/// How often a transcript of a given weight may be written. A write replaces the whole file, so
+/// the bytes a conversation costs a phone's flash are its weight times its writes, and iOS reports
+/// an app that writes more than a gigabyte in a day. Light transcripts are not limited here at
+/// all; a heavy one is spaced so that it averages no more than `bytesPerSecond` however long its
+/// turn streams, and the write it owes is made when that time is up rather than dropped.
+enum TranscriptWriteBudget {
+    static let bytesPerSecond = 32_000.0
+    static let freeBelow = 1_048_576
+
+    /// How long a transcript this heavy goes without another write.
+    static func quiet(after bytes: Int) -> TimeInterval {
+        bytes < freeBelow ? 0 : Double(bytes) / bytesPerSecond
+    }
+
+    /// How much longer a write must wait, `elapsed` seconds after one of `lastBytes`.
+    static func wait(sinceLastWrite elapsed: TimeInterval, lastBytes: Int) -> TimeInterval {
+        max(0, quiet(after: lastBytes) - elapsed)
     }
 }
 

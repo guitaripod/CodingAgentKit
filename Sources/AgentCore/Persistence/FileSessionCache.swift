@@ -5,6 +5,7 @@ import Foundation
 public actor FileSessionCache: SessionCache {
     private let directory: URL
     private var inUse: Set<String> = []
+    private var storedBytes: [String: Int] = [:]
 
     /// - Parameter pruning: What a cache directory may keep, applied once per process to each
     ///   directory, off the caller's path. Pass `nil` to keep everything.
@@ -39,7 +40,11 @@ public actor FileSessionCache: SessionCache {
     public func store(_ messages: [ChatMessage], for sessionID: String) async {
         let name = "messages-\(sanitize(sessionID)).json"
         inUse.insert(name)
-        save(messages, to: name)
+        storedBytes[sessionID] = save(messages, to: name)
+    }
+
+    public func lastStoredBytes(for sessionID: String) async -> Int {
+        storedBytes[sessionID] ?? 0
     }
 
     /// Removes transcripts nobody has opened for a long time, then the least recently used until
@@ -109,12 +114,14 @@ public actor FileSessionCache: SessionCache {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    func save<T: Encodable>(_ value: T, to name: String) {
-        guard let data = try? JSONEncoder().encode(value) else { return }
+    @discardableResult
+    func save<T: Encodable>(_ value: T, to name: String) -> Int {
+        guard let data = try? JSONEncoder().encode(value) else { return 0 }
         let url = directory.appendingPathComponent(name)
-        guard (try? data.write(to: url, options: Self.fileWriteOptions)) != nil else { return }
+        guard (try? data.write(to: url, options: Self.fileWriteOptions)) != nil else { return 0 }
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return data.count
     }
 
     /// Write options for a cache file. Transcripts routinely carry secrets
