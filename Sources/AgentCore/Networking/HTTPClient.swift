@@ -35,6 +35,7 @@ public struct HTTPClient: Sendable {
         self.logger = logger
     }
 
+    @discardableResult
     public func send(_ request: URLRequest) async throws -> Data {
         try await send(request, timeout: policy.requestTimeout)
     }
