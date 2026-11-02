@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.47.0
+
+A machine's schedules and the ACP agents a claude-bridge hosts are spoken here.
+
+### Added
+- **`MachineScheduling`** (claude-bridge, omp-bridge): a machine's schedules, made, changed, run now and deleted (`MachineSchedule`, `ScheduleRule` with the machine's own next-time arithmetic, `ScheduleRun`, `ScheduleDraft`, `ScheduleChange`); `BackendCapabilities.supportsSchedules` from `/status`.
+- **`MachineAgentHosting`** (claude-bridge): the ACP agents a machine runs beside its own — added, proved, installed from the registry, given a brain or a key, signed in over a relayed terminal (`MachineAgent`, `LocalBrain`, `RegistryAgent`, `AgentSignInRelay`, `AgentBrainChoice`); `BackendCapabilities.supportsMachineAgents`.
+- **Agent models in the catalog.** A claude-bridge that hosts agents lists their models with `ModelInfo.agentName`, the agent's id as provider, and a turn on one is sent as `agent/model`. `AgentSession.agentID`, `agentName` and `isScheduled` say which agent a conversation is with and whether a schedule made it.
+- **`MockBackend`** keeps schedules, agents and a registry in memory for the demo.
+
+### Changed
+- **`HTTPClient.send`** has a discardable result.
+
 ## 0.46.0
 
 A long conversation no longer rewrites its whole transcript to the phone's flash every half minute.
