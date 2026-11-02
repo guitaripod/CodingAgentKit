@@ -67,7 +67,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let pushReceipt: DevicePushRegistration.Receipt
     private let mutable = Mutex(Mutable())
 
-    private struct Mutable {
+    struct Mutable {
         var subscriptions = 0
         var sentPrompts: [SendPrompt] = []
         var backgroundStops: [String] = []
@@ -95,6 +95,15 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var queueEdits: [String] = []
         var queueCancels: [String] = []
         var queueResumes = 0
+        var machineSchedules: [MachineSchedule]?
+        var machineAgents: MachineAgentsReport?
+        var signIns: [String: AgentSignInRelay] = [:]
+    }
+
+    let agentRegistry: [RegistryAgent]
+
+    func withMachine<T>(_ body: (inout Mutable) throws -> T) rethrows -> T {
+        try mutable.withLock { try body(&$0) }
     }
 
     public init(
@@ -130,8 +139,12 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         turnWaitSupport: TurnWaitSupport = .supported,
         turnWaitResults: [String: [TurnWaitResult]] = [:],
         pushReceipt: DevicePushRegistration.Receipt = DevicePushRegistration.Receipt(),
-        serverQueue: Bool = false
+        serverQueue: Bool = false,
+        schedules: [MachineSchedule]? = nil,
+        machineAgents: MachineAgentsReport? = nil,
+        agentRegistry: [RegistryAgent] = []
     ) {
+        self.agentRegistry = agentRegistry
         self.agentType = agentType
         self.script = script
         self.transcriptPrefix = transcriptPrefix
@@ -170,8 +183,11 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsAttachments: true, supportsAbort: true, supportsSessionUsage: true,
                 supportsQuestions: true, supportsCommands: !commands.isEmpty,
                 supportsCompaction: true, supportsCompactionInstructions: true,
+                supportsSchedules: schedules != nil, supportsMachineAgents: machineAgents != nil,
                 supportsServerQueue: serverQueue, supportsQueueEdit: serverQueue)
         mutable.withLock {
+            $0.machineSchedules = schedules
+            $0.machineAgents = machineAgents
             $0.modelsFailures = modelsFailures
             $0.sessions =
                 sessions
@@ -802,7 +818,16 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             return owed
         }
         if failures > 0 { throw BackendFailure(message: "mock failure", retryable: true) }
-        return models
+        let agentModels = mutable.withLock { $0.machineAgents?.agents ?? [] }
+            .filter { $0.added && $0.state == .ready }
+            .flatMap { agent in
+                agent.models.map {
+                    ModelInfo(
+                        id: $0.id, name: $0.name, providerID: agent.id,
+                        variants: agent.efforts.isEmpty ? nil : agent.efforts.map(\.id), agentName: agent.name)
+                }
+            }
+        return models + agentModels
     }
 
     public func defaultModel() async throws -> ModelSelection? {

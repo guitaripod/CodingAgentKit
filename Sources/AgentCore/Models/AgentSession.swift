@@ -95,6 +95,12 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// ``updatedAt`` is read on — so a chat is unread exactly when it has moved on past this, whatever
     /// the clock of the device that looked. Nil when no device has marked the chat either way.
     public var readAt: Date?
+    /// The ACP agent this conversation is with, when it is not the server's own agent — Hermes or
+    /// Gemini CLI hosted by a claude-bridge — by its id and its name. Nil for the server's own.
+    public var agentID: String?
+    public var agentName: String?
+    /// A schedule on the machine made this conversation and runs into it.
+    public var isScheduled: Bool?
 
     /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
     /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
@@ -136,7 +142,10 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         pinned: Bool? = nil,
         pinnedAt: Date? = nil,
         archived: Bool? = nil,
-        readAt: Date? = nil
+        readAt: Date? = nil,
+        agentID: String? = nil,
+        agentName: String? = nil,
+        isScheduled: Bool? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -158,6 +167,9 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.pinnedAt = pinnedAt
         self.archived = archived
         self.readAt = readAt
+        self.agentID = agentID
+        self.agentName = agentName
+        self.isScheduled = isScheduled
     }
 
     /// Whether the server reports this person's marks at all. A listing that says `false` for a

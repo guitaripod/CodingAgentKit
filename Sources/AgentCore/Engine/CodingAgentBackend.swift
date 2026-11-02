@@ -71,6 +71,10 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// started and stepped back from that is never going to finish. Distinct from
     /// ``supportsAbort``, which stops a turn: the work this ends is what goes on after the turn.
     public var supportsBackgroundStop: Bool
+    /// The server keeps schedules and asks them itself (``MachineScheduling``).
+    public var supportsSchedules: Bool
+    /// The server hosts ACP agents beside its own (``MachineAgentHosting``).
+    public var supportsMachineAgents: Bool
     /// Whether the backend can wind a conversation back to a message (setting aside what came
     /// after it and the file changes the agent made since) and bring it back again
     /// (``CodingAgentBackend/revert(sessionID:to:)``, ``CodingAgentBackend/restoreRevert(sessionID:)``).
@@ -114,6 +118,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         reportsInterruptions: Bool = false,
         supportsTranscriptSearch: Bool = false,
         supportsBackgroundStop: Bool = false,
+        supportsSchedules: Bool = false,
+        supportsMachineAgents: Bool = false,
         supportsRevert: Bool = false,
         supportsServerQueue: Bool = false,
         supportsQueueEdit: Bool = false
@@ -146,6 +152,8 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.reportsInterruptions = reportsInterruptions
         self.supportsTranscriptSearch = supportsTranscriptSearch
         self.supportsBackgroundStop = supportsBackgroundStop
+        self.supportsSchedules = supportsSchedules
+        self.supportsMachineAgents = supportsMachineAgents
         self.supportsRevert = supportsRevert
         self.supportsServerQueue = supportsServerQueue
         self.supportsQueueEdit = supportsQueueEdit

@@ -84,10 +84,14 @@ public struct ModelInfo: Identifiable, Sendable, Hashable, Codable {
     /// How many tokens the model can hold at once, as the server's catalog states it. Nil means
     /// the catalog did not say, and a client may fall back to what it knows about the name.
     public var contextWindow: Int?
+    /// The ACP agent that runs this model, by name, when the model is reached through an agent the
+    /// server hosts (Hermes, Gemini CLI) rather than through the server's own. Its ``providerID``
+    /// is then the agent's id, and a conversation started on it is a conversation with that agent.
+    public var agentName: String?
 
     public init(
         id: String, name: String, providerID: String, capabilities: ModelCapabilities? = nil,
-        variants: [String]? = nil, contextWindow: Int? = nil
+        variants: [String]? = nil, contextWindow: Int? = nil, agentName: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -95,7 +99,10 @@ public struct ModelInfo: Identifiable, Sendable, Hashable, Codable {
         self.capabilities = capabilities
         self.variants = variants
         self.contextWindow = contextWindow
+        self.agentName = agentName
     }
+
+    public var isAgentModel: Bool { agentName != nil }
 
     public var selection: ModelSelection { ModelSelection(providerID: providerID, modelID: id) }
 }

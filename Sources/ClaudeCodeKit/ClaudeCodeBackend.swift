@@ -11,6 +11,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         value.compactionRunsAsTurn = agentType == .claudeCode
         value.supportsServerQueue = queueSupport.isSupported
         value.supportsQueueEdit = queueSupport.isSupported
+        value.supportsSchedules = machineFacts.keepsSchedules
+        value.supportsMachineAgents = machineFacts.hostsAgents
         return value
     }
 
@@ -86,6 +88,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     let builder: RequestBuilder
     let http: HTTPClient
     let queueSupport: BridgeQueueSupport
+    let machineFacts: BridgeMachineFacts
     private let stream: BridgeStream
     private let transcripts: BridgeTranscripts
     private let waitSupport = BridgeWaitSupport()
@@ -105,6 +108,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         self.stream.agentType = agentType
         self.transcripts = BridgeTranscriptRegistry.transcripts(config: config, agentType: agentType)
         self.queueSupport = BridgeQueueRegistry.support(config: config, agentType: agentType)
+        self.machineFacts = BridgeMachineRegistry.facts(config: config, agentType: agentType)
     }
 
     /// `/status` doubles as the liveness check: it costs the same round trip as `/health` and
@@ -117,6 +121,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             return ServerHealth(healthy: true, version: nil)
         }
         queueSupport.record((status.queue ?? 0) >= 1)
+        machineFacts.record(schedules: (status.schedules ?? 0) >= 1, agents: (status.agents ?? 0) >= 1)
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
@@ -345,10 +350,19 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         let body = try BridgeCoding.encoder.encode(
             BRSend(
-                text: prompt.text, model: prompt.model?.modelID, effort: prompt.reasoningEffort,
+                text: prompt.text, model: prompt.model.map(wireModel), effort: prompt.reasoningEffort,
                 attachments: attachments.isEmpty ? nil : attachments))
         _ = try await http.send(
             builder.request(.post, "/sessions/\(sessionID)/message", body: body))
+    }
+
+    /// How a model is named on the wire: Claude's by its own id, and an agent's — Hermes, Gemini
+    /// CLI — as `<agent id>/<model id>`, which is how the bridge knows which agent a turn is for.
+    func wireModel(_ selection: ModelSelection) -> String {
+        guard agentType == .claudeCode, machineFacts.isAgent(selection.providerID) else {
+            return selection.modelID
+        }
+        return "\(selection.providerID)/\(selection.modelID)"
     }
 
     /// Claude asks through the `AskUserQuestion` tool, which blocks on its own
@@ -430,7 +444,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     }
 
     public func availableModels() async throws -> [ModelInfo] {
-        guard agentType == .omp else { return Self.models }
+        guard agentType == .omp else {
+            guard machineFacts.hostsAgents else { return Self.models }
+            return Self.models + (await agentModels())
+        }
         do {
             let data = try await http.send(builder.request(.get, "/models"))
             let remote = try BridgeCoding.decoder.decode([BRRemoteModel].self, from: data)
@@ -651,6 +668,9 @@ struct BRSummary: Decodable {
     let backgroundTask: String?
     let backgroundSince: Date?
     let backgroundStalled: Bool?
+    let agent: String?
+    let agentName: String?
+    let scheduled: Bool?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -664,7 +684,8 @@ struct BRSummary: Decodable {
             backgroundWork: BackgroundWork.reported(
                 tasks: backgroundTasks, task: backgroundTask, since: backgroundSince,
                 stalled: backgroundStalled),
-            pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt)
+            pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt,
+            agentID: agent, agentName: agentName, isScheduled: scheduled)
     }
 }
 
@@ -677,6 +698,9 @@ struct BRSummary: Decodable {
 enum BridgeModelName {
     static func split(_ model: String?, agentType: AgentType) -> (providerID: String?, modelID: String?) {
         guard let model, !model.isEmpty else { return (nil, nil) }
+        if agentType == .claudeCode, let slash = model.firstIndex(of: "/"), slash != model.startIndex {
+            return (String(model[..<slash]), String(model[model.index(after: slash)...]))
+        }
         guard agentType == .omp, let selection = ModelSelection(string: model) else { return (nil, model) }
         return (selection.providerID, selection.modelID)
     }
@@ -728,6 +752,9 @@ struct BRSession: Decodable {
     let backgroundTask: String?
     let backgroundSince: Date?
     let backgroundStalled: Bool?
+    let agent: String?
+    let agentName: String?
+    let scheduleID: String?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -736,7 +763,8 @@ struct BRSession: Decodable {
             createdAt: createdAt ?? updatedAt ?? .distantPast,
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
             model: named.modelID, modelProviderID: named.providerID,
-            reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort)
+            reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
+            agentID: agent, agentName: agentName, isScheduled: scheduleID == nil ? nil : true)
     }
 }
 
@@ -1266,6 +1294,10 @@ struct BRStatus: Decodable {
     let turnWait: Int?
     /// The version of the shared queue, absent on a bridge built before it.
     let queue: Int?
+    /// The versions of the schedules a machine keeps and of the other agents it hosts, absent on
+    /// a bridge that has neither.
+    let schedules: Int?
+    let agents: Int?
 }
 
 struct BRFileEntry: Decodable {
