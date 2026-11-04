@@ -254,7 +254,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         case .modified(let data, let etag):
             let session = try BridgeCoding.decoder.decode(BRSession.self, from: data)
             let snapshot = TranscriptSnapshot(
-                messages: session.messages.map { $0.chat(agentType: agentType) },
+                messages: session.messages.compactMap(\.value).map { $0.chat(agentType: agentType) },
                 status: (session.turnOpen ?? session.active).map { $0 ? .running : .idle },
                 backgroundWork: BackgroundWork.reported(
                     tasks: session.backgroundTasks, task: session.backgroundTask,
@@ -748,7 +748,9 @@ struct BRSession: Decodable {
     let createdAt: Date?
     let updatedAt: Date?
     let claudeSessionID: String?
-    let messages: [BRMessage]
+    /// Each message on its own: one this client cannot read is left out rather than failing every
+    /// read of the conversation it belongs to.
+    let messages: [BRLenient<BRMessage>]
     let lastCostUSD: Double?
     let lastTokens: Int?
     let goal: BRGoal?
