@@ -201,7 +201,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         let isRunning = running.map { $0.contains(sessionID) }
         let cutOff = await settled(
             Self.cutOff(records, session: session, running: isRunning), sessionID)
-        await cutOffs.record(cutOff, for: sessionID)
+        if isRunning != nil { await cutOffs.record(cutOff, for: sessionID) }
         return TranscriptSnapshot(
             messages: OpenCodeV2Mapping.transcript(records),
             status: isRunning.map { $0 ? .running : .idle },
