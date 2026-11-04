@@ -33,6 +33,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     )
 
     let client: OpenCodeV2Client
+    /// The server's one event connection, shared with every other backend watching it.
+    var events: OpenCodeV2EventHub { OpenCodeV2EventHubRegistry.hub(for: client) }
     let compactions = CompactionWatch()
     let directories = DirectoryCache()
     let local = OpenCodeLocalEvents()
@@ -436,7 +438,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
                 defer { Task { await self.local.drop(sessionID, token) } }
                 var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
                 do {
-                    for try await sse in client.eventStream() {
+                    for try await sse in await events.subscribe() {
                         let frame = OpenCodeV2EventDecoder.frame(sse)
                         for event in frame.map({ decoder.decode($0) }) ?? [] {
                             continuation.yield(event)
@@ -804,7 +806,7 @@ extension OpenCodeV2Backend: SessionListStreaming {
                 while !Task.isCancelled {
                     continuation.yield(.invalidated)
                     do {
-                        for try await sse in client.eventStream() {
+                        for try await sse in await events.subscribe() {
                             if Task.isCancelled { return }
                             for change in await self.changes(from: sse, memory: memory) {
                                 continuation.yield(change)
