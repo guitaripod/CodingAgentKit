@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.48.0
+
+A refresh reads a conversation once, a list that has not moved costs a header, and a turn waiting on its provider says so on every server.
+
+### Added
+- **`TranscriptSnapshot.sidecar`** (`TranscriptSidecar`: the goal and the cut-off turn) and **`BackendCapabilities.transcriptCarriesSidecar`**. A bridge that reports `"detail": 1` and opencode 2 answer both beside the messages, so `AgentConversation` asks for neither separately; on a bridge the goal lookup was the whole conversation downloaded a second time, and on opencode 2 the interruption walked the transcript again.
+- **Provider retries from the bridges.** A `retry` frame and the session read's `retry` become `BackendEvent.retry` and `TranscriptSnapshot.retry` for Claude Code and omp, the state opencode's retries already fed.
+
+### Changed
+- **`ClaudeCodeBackend.listSessions`** reads conditionally and hands back the held rows on a 304; `goal(for:)` goes through the validated transcript read on a bridge that carries the sidecar.
+- **A bridge transcript is decoded a message at a time**, so one unreadable message is left out instead of failing every read of its conversation.
+- **opencode 2's session list follows its cursor** (up to ten pages); one page of 500 dropped the oldest conversations.
+- **An omp machine offers no goals and no background stop**, which its bridge does not have.
+
+### Fixed
+- **A superseded stream connection no longer reports itself detached**, which could flip every open chat to reconnecting after a redial.
+
 ## 0.47.0
 
 A machine's schedules and the ACP agents a claude-bridge hosts are spoken here.
