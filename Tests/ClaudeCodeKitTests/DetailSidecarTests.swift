@@ -111,6 +111,24 @@ final class DetailBridge: @unchecked Sendable {
         #expect(!backend.capabilities.transcriptCarriesSidecar)
     }
 
+    @Test func aCopyHeldWithoutTheSidecarIsReadAgainOnceTheBridgeSaysItCarriesOne() async throws {
+        let host = "latesidecar.test"
+        DetailBridge.shared.publish(#"{"queue":1}"#, at: host + "/status")
+        DetailBridge.shared.publish(Self.session, at: host + "/sessions/c1")
+        let backend = Self.backend(host: host)
+        let before = try await backend.transcript(for: "c1")
+        #expect(before.sidecar == nil)
+
+        backend.detailSupport.record(true)
+        let after = try await backend.transcript(for: "c1")
+
+        #expect(after.sidecar?.goal?.condition == "tests pass")
+        #expect(DetailBridge.shared.fullReads(host + "/sessions/c1") == 2)
+        let again = try await backend.transcript(for: "c1")
+        #expect(again.sidecar != nil)
+        #expect(DetailBridge.shared.fullReads(host + "/sessions/c1") == 2)
+    }
+
     @Test func anUnchangedListCostsAHeader() async throws {
         let host = "list.test"
         DetailBridge.shared.publish(

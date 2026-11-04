@@ -249,7 +249,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     ///
     /// Read conditionally: the copy this process last read goes out as its validator, and a bridge
     /// that has nothing newer answers 304 in place of the whole conversation, which is handed back
-    /// exactly as it was read. A bridge too old to validate simply answers in full every time.
+    /// exactly as it was read. A bridge too old to validate simply answers in full every time. A
+    /// copy read before this process learned that the bridge carries the sidecar has none, and is
+    /// read again whole rather than handed back without its goal.
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         let held = transcripts.held(sessionID)
         async let learned: Void = learnQueueSupport()
@@ -258,7 +260,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         await learned
         switch reply {
         case .notModified:
-            if let held { return held.snapshot }
+            if let held, held.snapshot.sidecar != nil || !detailSupport.isSupported {
+                return held.snapshot
+            }
             transcripts.forget(sessionID)
             return try await transcript(for: sessionID)
         case .modified(let data, let etag):
@@ -345,8 +349,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     /// answered with a 304 rather than downloaded again whole for one field of it.
     public func goal(for sessionID: String) async throws -> SessionGoal? {
         await learnQueueSupport()
-        if detailSupport.isSupported {
-            return try await transcript(for: sessionID).sidecar?.goal
+        if detailSupport.isSupported, let sidecar = try await transcript(for: sessionID).sidecar {
+            return sidecar.goal
         }
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).goal?.goal
