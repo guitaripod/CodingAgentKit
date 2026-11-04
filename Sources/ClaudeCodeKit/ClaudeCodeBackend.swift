@@ -14,6 +14,10 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         value.supportsSchedules = machineFacts.keepsSchedules
         value.supportsMachineAgents = machineFacts.hostsAgents
         value.transcriptCarriesSidecar = detailSupport.isSupported
+        if agentType == .omp {
+            value.supportsGoals = false
+            value.supportsBackgroundStop = false
+        }
         return value
     }
 
