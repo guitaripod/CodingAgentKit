@@ -71,6 +71,9 @@ public struct BackendCapabilities: Sendable, Hashable {
     /// started and stepped back from that is never going to finish. Distinct from
     /// ``supportsAbort``, which stops a turn: the work this ends is what goes on after the turn.
     public var supportsBackgroundStop: Bool
+    /// The transcript read answers the conversation's goal and cut-off turn as well
+    /// (``TranscriptSnapshot/sidecar``), so a refresh asks for neither separately.
+    public var transcriptCarriesSidecar: Bool
     /// The server keeps schedules and asks them itself (``MachineScheduling``).
     public var supportsSchedules: Bool
     /// The server hosts ACP agents beside its own (``MachineAgentHosting``).
@@ -116,6 +119,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         reportsRunningCompaction: Bool = false,
         reportsMessageCompletion: Bool = true,
         reportsInterruptions: Bool = false,
+        transcriptCarriesSidecar: Bool = false,
         supportsTranscriptSearch: Bool = false,
         supportsBackgroundStop: Bool = false,
         supportsSchedules: Bool = false,
@@ -150,6 +154,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.reportsRunningCompaction = reportsRunningCompaction
         self.reportsMessageCompletion = reportsMessageCompletion
         self.reportsInterruptions = reportsInterruptions
+        self.transcriptCarriesSidecar = transcriptCarriesSidecar
         self.supportsTranscriptSearch = supportsTranscriptSearch
         self.supportsBackgroundStop = supportsBackgroundStop
         self.supportsSchedules = supportsSchedules
@@ -914,11 +919,15 @@ public struct TranscriptSnapshot: Sendable {
     /// keeps none or cannot say, which leaves the queue a client holds as it is; an empty
     /// snapshot is the server saying nothing is waiting.
     public var queue: QueueSnapshot?
+    /// The conversation's goal and its cut-off turn, where the server answers them in this same
+    /// read. `nil` from one that does not, which leaves each to a lookup of its own.
+    public var sidecar: TranscriptSidecar?
 
     public init(
         messages: [ChatMessage], status: BackendStatus? = nil,
         backgroundWork: BackgroundWork? = nil, retry: TurnRetry? = nil,
-        revert: SessionRevert? = nil, queue: QueueSnapshot? = nil
+        revert: SessionRevert? = nil, queue: QueueSnapshot? = nil,
+        sidecar: TranscriptSidecar? = nil
     ) {
         self.messages = messages
         self.status = status
@@ -926,6 +935,20 @@ public struct TranscriptSnapshot: Sendable {
         self.retry = retry
         self.revert = revert
         self.queue = queue
+        self.sidecar = sidecar
+    }
+}
+
+/// What a transcript read can carry beside the messages, so a refresh needs no second and third
+/// round trip to learn them. Each field is the server's whole answer: `nil` is *none*, never
+/// *cannot say* — a server that cannot say leaves ``TranscriptSnapshot/sidecar`` itself `nil`.
+public struct TranscriptSidecar: Sendable, Hashable {
+    public var goal: SessionGoal?
+    public var interruption: TurnInterruption?
+
+    public init(goal: SessionGoal? = nil, interruption: TurnInterruption? = nil) {
+        self.goal = goal
+        self.interruption = interruption
     }
 }
 

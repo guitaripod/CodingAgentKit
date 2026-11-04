@@ -27,6 +27,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         supportsCompaction: true,
         reportsRunningCompaction: true,
         reportsInterruptions: true,
+        transcriptCarriesSidecar: true,
         supportsRevert: true,
         supportsServerQueue: true
     )
@@ -198,15 +199,16 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         let running = await liveness()
         let session = await record
         let isRunning = running.map { $0.contains(sessionID) }
-        await cutOffs.record(
-            await settled(Self.cutOff(records, session: session, running: isRunning), sessionID),
-            for: sessionID)
+        let cutOff = await settled(
+            Self.cutOff(records, session: session, running: isRunning), sessionID)
+        await cutOffs.record(cutOff, for: sessionID)
         return TranscriptSnapshot(
             messages: OpenCodeV2Mapping.transcript(records),
             status: isRunning.map { $0 ? .running : .idle },
             retry: isRunning == true ? OpenCodeV2Mapping.pendingRetry(records) : nil,
             revert: session?.revert.map(OpenCodeV2Mapping.revert),
-            queue: await inbox.map(OpenCodeV2Mapping.queue))
+            queue: await inbox.map(OpenCodeV2Mapping.queue),
+            sidecar: isRunning == nil ? nil : TranscriptSidecar(interruption: cutOff))
     }
 
     /// The end of the conversation and whether a turn is running, two small reads that go out

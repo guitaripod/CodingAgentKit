@@ -37,8 +37,12 @@ enum BridgeQueueRegistry {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var supports: [String: BridgeQueueSupport] = [:]
 
-    static func support(config: ServerConfig, agentType: AgentType) -> BridgeQueueSupport {
-        let key = config.baseURL.absoluteString + "|" + agentType.rawValue + "|"
+    /// `fact` names what is being remembered — the queue, or whether the session read carries
+    /// its goal and cut-off turn — so each is learned and held on its own.
+    static func support(
+        config: ServerConfig, agentType: AgentType, fact: String = "queue"
+    ) -> BridgeQueueSupport {
+        let key = config.baseURL.absoluteString + "|" + agentType.rawValue + "|" + fact + "|"
             + (config.credentials?.username ?? "") + ":" + (config.credentials?.password ?? "")
         return lock.withLock {
             if let existing = supports[key] { return existing }
@@ -136,6 +140,7 @@ extension ClaudeCodeBackend {
         }
         let status = try? BridgeCoding.decoder.decode(BRStatus.self, from: data)
         queueSupport.record((status?.queue ?? 0) >= 1)
+        detailSupport.record((status?.detail ?? 0) >= 1)
     }
 
     private func requireQueue() async throws {

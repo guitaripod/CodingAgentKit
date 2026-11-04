@@ -13,6 +13,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         value.supportsQueueEdit = queueSupport.isSupported
         value.supportsSchedules = machineFacts.keepsSchedules
         value.supportsMachineAgents = machineFacts.hostsAgents
+        value.transcriptCarriesSidecar = detailSupport.isSupported
         return value
     }
 
@@ -88,6 +89,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
     let builder: RequestBuilder
     let http: HTTPClient
     let queueSupport: BridgeQueueSupport
+    /// Whether this bridge's session read carries the goal and the cut-off turn (`detail`).
+    let detailSupport: BridgeQueueSupport
     let machineFacts: BridgeMachineFacts
     private let stream: BridgeStream
     private let transcripts: BridgeTranscripts
@@ -108,6 +111,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         self.stream.agentType = agentType
         self.transcripts = BridgeTranscriptRegistry.transcripts(config: config, agentType: agentType)
         self.queueSupport = BridgeQueueRegistry.support(config: config, agentType: agentType)
+        self.detailSupport = BridgeQueueRegistry.support(
+            config: config, agentType: agentType, fact: "detail")
         self.machineFacts = BridgeMachineRegistry.facts(config: config, agentType: agentType)
     }
 
@@ -121,6 +126,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             return ServerHealth(healthy: true, version: nil)
         }
         queueSupport.record((status.queue ?? 0) >= 1)
+        detailSupport.record((status.detail ?? 0) >= 1)
         machineFacts.record(schedules: (status.schedules ?? 0) >= 1, agents: (status.agents ?? 0) >= 1)
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
@@ -262,7 +268,11 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 retry: session.retry?.retry,
                 queue: session.queue.map {
                     QueueSnapshot(items: BRQueueItem.items($0), paused: session.queuePaused ?? false)
-                })
+                },
+                sidecar: detailSupport.isSupported
+                    ? TranscriptSidecar(
+                        goal: session.goal?.goal, interruption: session.interruption?.interruption)
+                    : nil)
             transcripts.hold(sessionID, etag: etag, snapshot: snapshot, bytes: data.count)
             return snapshot
         }
@@ -327,7 +337,13 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
             scanned: response.scanned, truncated: response.truncated)
     }
 
+    /// Read through the same validated read as the transcript, so a conversation already held is
+    /// answered with a 304 rather than downloaded again whole for one field of it.
     public func goal(for sessionID: String) async throws -> SessionGoal? {
+        await learnQueueSupport()
+        if detailSupport.isSupported {
+            return try await transcript(for: sessionID).sidecar?.goal
+        }
         let data = try await http.send(builder.request(.get, "/sessions/\(sessionID)"))
         return try BridgeCoding.decoder.decode(BRSession.self, from: data).goal?.goal
     }
@@ -755,6 +771,7 @@ struct BRSession: Decodable {
     let lastCostUSD: Double?
     let lastTokens: Int?
     let goal: BRGoal?
+    let interruption: BRInterruption?
     /// The wait between attempts the open turn is in, from a bridge that reports one.
     let retry: BRRetry?
     /// The shared queue, absent on a bridge that holds none.
@@ -1339,6 +1356,9 @@ struct BRStatus: Decodable {
     /// a bridge that has neither.
     let schedules: Int?
     let agents: Int?
+    /// The version of the session read's sidecar: from 1, `GET /sessions/:id` carries the goal and
+    /// the cut-off turn as the whole answer about each, so a refresh needs no separate lookups.
+    let detail: Int?
 }
 
 struct BRFileEntry: Decodable {

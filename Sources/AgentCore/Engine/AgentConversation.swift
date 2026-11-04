@@ -1575,7 +1575,9 @@ public actor AgentConversation {
     /// The fetches ride concurrently: the transcript, the questions, the goal and the
     /// interruption. On a bridge answering a heavy machine, or a phone reaching it through a relay,
     /// each round trip can cost real time, and paying them in sequence is what made a freshly
-    /// opened chat sit on its placeholder.
+    /// opened chat sit on its placeholder. A server whose transcript read already answers the goal
+    /// and the interruption (``BackendCapabilities/transcriptCarriesSidecar``) is asked neither
+    /// separately: on a bridge the goal lookup was the whole conversation downloaded a second time.
     ///
     /// The running compaction is the one question asked after the transcript is in, never beside
     /// it. A backend works the answer out of the transcript it reads (opencode), so asked beside the
@@ -1616,13 +1618,23 @@ public actor AgentConversation {
         refreshInFlight = true
         let preRefresh = reducer.snapshot
         do {
+            let carried = backend.capabilities.transcriptCarriesSidecar
             async let questionsFetch = fetchQuestions()
-            async let goalFetch = fetchGoal()
-            async let cutOffFetch = fetchInterruption()
+            async let goalFetch = carried ? nil : fetchGoal()
+            async let cutOffFetch = carried ? InterruptionReading.cannotSay : fetchInterruption()
             let snapshot = try await backend.transcript(for: sessionID)
             let compacting = try? await backend.runningCompaction(for: sessionID)
-            let (questions, goal) = await (questionsFetch, goalFetch)
-            let cutOff = await cutOffFetch
+            let questions = await questionsFetch
+            var goal = await goalFetch
+            var cutOff = await cutOffFetch
+            if let sidecar = snapshot.sidecar {
+                goal = backend.capabilities.supportsGoals ? sidecar.goal : nil
+                cutOff = .answered(sidecar.interruption)
+            } else if carried {
+                async let lateGoal = fetchGoal()
+                async let lateCutOff = fetchInterruption()
+                (goal, cutOff) = await (lateGoal, lateCutOff)
+            }
             guard gen == generation else { return nil }
             guard !reachedTerminal else {
                 drainBufferedEvents(generation: gen)
