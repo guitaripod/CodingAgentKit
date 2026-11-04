@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.49.0
+
+One event connection per opencode 2 server, and a Claude conversation's window as its agent measures it.
+
+### Added
+- **`MeasuredContext` and `ContextMeasuring`.** `ClaudeCodeBackend.measuredContext(for:)` asks claude-bridge (`GET /sessions/:id/context`) what fills a conversation's window, as the Claude Code CLI counts it: system prompt, tools, memory files, skills, agents, messages split by kind, the autocompact buffer, the window size and the auto-compaction threshold. `nil` is *cannot say*; an omp backend never asks.
+
+### Changed
+- **opencode 2 shares one `/api/event` connection per server** (`OpenCodeV2EventHub`). Every conversation, watched session and the chat list joins it; a late subscriber is handed the `server.connected` frame it missed; the last to leave hangs up.
+- **opencode 2's model catalog is read at most every five minutes per server**, with concurrent reads sharing one request and a failed read not held.
+
 ## 0.48.1
 
 ### Fixed
