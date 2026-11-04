@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.1
+
+### Fixed
+- **A transcript held from before the sidecar was known** is read again whole instead of handed back on a 304 without its goal, so the goal chip no longer stays empty after a bridge is upgraded under a running app or its first `/status` read failed.
+- **opencode 2's cut-off card survives a liveness read that failed.** The transcript read recorded "nothing cut off" even when it could not tell, and the interruption lookup after it answered from that record and took a real card down.
+
 ## 0.48.0
 
 A refresh reads a conversation once, a list that has not moved costs a header, and a turn waiting on its provider says so on every server.
