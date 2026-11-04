@@ -246,6 +246,7 @@ actor BridgeStream {
             } catch is CancellationError {
                 return
             } catch {
+                guard generation == connectionGeneration, !Task.isCancelled else { return }
                 connected = false
                 failures += 1
                 if let refusal = error as? AgentError, !refusal.isRetryable {
