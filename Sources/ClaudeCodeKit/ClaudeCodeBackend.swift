@@ -125,10 +125,23 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
+    /// Read conditionally, like a transcript: a bridge whose list has not moved since this process
+    /// last read it answers 304, and the rows read then are handed back as they were.
     public func listSessions() async throws -> [AgentSession] {
-        let data = try await http.send(builder.request(.get, "/sessions"))
-        return try BridgeCoding.decoder.decode([BRLenient<BRSummary>].self, from: data)
-            .compactMap(\.value).map { $0.session(agentType: agentType) }
+        let held = transcripts.heldList
+        switch try await http.sendConditional(
+            builder.request(.get, "/sessions"), ifNoneMatch: held?.etag)
+        {
+        case .notModified:
+            if let held { return held.sessions }
+            transcripts.holdList(etag: nil, sessions: [])
+            return try await listSessions()
+        case .modified(let data, let etag):
+            let sessions = try BridgeCoding.decoder.decode([BRLenient<BRSummary>].self, from: data)
+                .compactMap(\.value).map { $0.session(agentType: agentType) }
+            transcripts.holdList(etag: etag, sessions: sessions)
+            return sessions
+        }
     }
 
     public func createSession(title: String?, directory: String?) async throws -> AgentSession {

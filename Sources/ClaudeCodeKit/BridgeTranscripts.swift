@@ -27,6 +27,16 @@ final class BridgeTranscripts: @unchecked Sendable {
     private var held: [String: Held] = [:]
     private var order: [String] = []
     private var heldBytes = 0
+    private var list: (etag: String, sessions: [AgentSession])?
+
+    /// The session list as last read, with its validator. A list is re-read on every stream
+    /// reconnect and every invalidation, and on a machine with hundreds of conversations most of
+    /// those reads find it exactly as it was.
+    var heldList: (etag: String, sessions: [AgentSession])? { lock.withLock { list } }
+
+    func holdList(etag: String?, sessions: [AgentSession]) {
+        lock.withLock { list = etag.map { ($0, sessions) } }
+    }
 
     func held(_ sessionID: String) -> Held? {
         lock.withLock { held[sessionID] }
