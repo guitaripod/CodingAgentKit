@@ -208,3 +208,18 @@ extension ClaudeCodeBackend: MachineAgentHosting {
             ?? id
     }
 }
+
+/// claude-bridge measures a Claude conversation's window by asking its CLI. omp-bridge has no
+/// such question, so an omp backend never asks.
+extension ClaudeCodeBackend: ContextMeasuring {
+    public func measuredContext(for sessionID: String) async throws -> MeasuredContext? {
+        guard agentType == .claudeCode else { return nil }
+        let data: Data
+        do {
+            data = try await http.send(builder.request(.get, "/sessions/\(sessionID)/context"))
+        } catch AgentError.http(let status, _) where status == 404 {
+            return nil
+        }
+        return try BridgeCoding.decoder.decode(MeasuredContext.self, from: data)
+    }
+}
