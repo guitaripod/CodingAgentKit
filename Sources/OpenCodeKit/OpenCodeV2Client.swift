@@ -45,16 +45,31 @@ public struct OpenCodeV2Client: Sendable {
     /// Every session the server holds, across every workspace, newest first. `parentID` of
     /// `"null"` asks for the conversations alone — a spawned agent's transcript is parented to
     /// the chat that spawned it — and a session id there asks for that chat's agents.
+    ///
+    /// The route pages like the message route, so a machine with more sessions than one page
+    /// holds is walked with the cursor; reading one page dropped the oldest conversations from
+    /// every list without a word. The walk stops at ``sessionPages`` pages, which is history no
+    /// list scrolls to.
     func listSessions(limit: Int, directory: String? = nil, parentID: String? = nil) async throws
         -> [OC2Session]
     {
-        var query = [URLQueryItem(name: "limit", value: "\(limit)")]
-        if let directory { query.append(URLQueryItem(name: "directory", value: directory)) }
-        if let parentID { query.append(URLQueryItem(name: "parentID", value: parentID)) }
-        let page: OC2Page<OC2Session> = try decode(
-            await http.send(builder.request(.get, "/api/session", query: query)))
-        return page.data
+        var collected: [OC2Session] = []
+        var cursor: String?
+        for _ in 0..<Self.sessionPages {
+            var query = [URLQueryItem(name: "limit", value: "\(limit)")]
+            if let directory { query.append(URLQueryItem(name: "directory", value: directory)) }
+            if let parentID { query.append(URLQueryItem(name: "parentID", value: parentID)) }
+            if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+            let page: OC2Page<OC2Session> = try decode(
+                await http.send(builder.request(.get, "/api/session", query: query)))
+            collected.append(contentsOf: page.data)
+            guard page.data.count >= limit, let next = page.cursor?.next, next != cursor else { break }
+            cursor = next
+        }
+        return collected
     }
+
+    static let sessionPages = 10
 
     /// Which sessions have a turn open right now, process-wide.
     func activeSessions() async throws -> [String: OC2SessionStatus] {
