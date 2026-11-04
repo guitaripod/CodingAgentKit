@@ -564,7 +564,10 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     public func providers() async throws -> [Provider] {
         async let named = client.providers()
         async let fallback = client.defaultModel()
-        let models = try await client.models().filter { $0.enabled ?? true }
+        let client = self.client
+        let models = try await OpenCodeV2ModelCatalogRegistry.catalog(for: client)
+            .models { try await client.models() }
+            .filter { $0.enabled ?? true }
         let names = Dictionary(
             (try? await named)?.map { ($0.id, $0.name ?? $0.id) } ?? [], uniquingKeysWith: { a, _ in a })
         let preferred = try? await fallback
