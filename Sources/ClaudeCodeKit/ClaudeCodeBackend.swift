@@ -259,6 +259,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 backgroundWork: BackgroundWork.reported(
                     tasks: session.backgroundTasks, task: session.backgroundTask,
                     since: session.backgroundSince, stalled: session.backgroundStalled),
+                retry: session.retry?.retry,
                 queue: session.queue.map {
                     QueueSnapshot(items: BRQueueItem.items($0), paused: session.queuePaused ?? false)
                 })
@@ -754,6 +755,8 @@ struct BRSession: Decodable {
     let lastCostUSD: Double?
     let lastTokens: Int?
     let goal: BRGoal?
+    /// The wait between attempts the open turn is in, from a bridge that reports one.
+    let retry: BRRetry?
     /// The shared queue, absent on a bridge that holds none.
     let queue: [BRLenient<BRQueueItem>]?
     let queuePaused: Bool?
@@ -796,6 +799,23 @@ struct BRRevision: Decodable {
 
 /// The route answers `{"interruption": …}` with the key present and null when nothing was cut off,
 /// so that a server which *can* answer is distinguishable from one that cannot.
+/// A turn waiting on its provider between attempts, as both bridges send it on the stream and on
+/// the session read.
+struct BRRetry: Decodable {
+    let attempt: Int?
+    let maxRetries: Int?
+    let reason: String?
+    let status: Int?
+    let nextAttemptAt: Date?
+
+    var retry: TurnRetry {
+        TurnRetry(
+            attempt: max(1, attempt ?? 1),
+            reason: reason ?? "",
+            nextAttemptAt: nextAttemptAt)
+    }
+}
+
 struct BRInterruptionEnvelope: Decodable {
     let interruption: BRInterruption?
 }
@@ -1189,6 +1209,12 @@ public struct BridgeEventDecoder {
                     task: object["task"] as? String,
                     since: (object["since"] as? String).flatMap(BridgeCoding.date),
                     stalled: object["stalled"] as? Bool))
+        case "retry":
+            guard let raw = object["retry"] else { return .retry(nil) }
+            guard let data = try? JSONSerialization.data(withJSONObject: raw),
+                let wait = try? BridgeCoding.decoder.decode(BRRetry.self, from: data)
+            else { return .retry(nil) }
+            return .retry(wait.retry)
         case "queue", "hello":
             return Self.queueEvent(object)
         case "error":
