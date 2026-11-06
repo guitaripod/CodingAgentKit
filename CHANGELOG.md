@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.50.0
+
+A device tells a bridge what it wants to hear about, and a wait can be held until the work is over rather than the turn.
+
+### Added
+- **`DevicePushRules` on `DevicePushRegistration`.** The device's notification choices as a bridge reads them: when finished work is news (`settled`, `everyTurn`, `failures`, `never`), the shortest work worth a push, whether approvals and questions are, and the muted chats. Left out, the bridge keeps its own default.
+- **`turnWaitRequest(for:until:)` and `TurnWaitUntil`.** `.workSettles` asks claude-bridge and omp-bridge (`until=settled`) to hold the wait until nothing is running, carried or queued for the conversation; `TurnWaitResult.settled` is `true` when the bridge did, and `duration` and `toolCount` then cover the whole stretch of work. A bridge that predates it answers at the turn's end and leaves `settled` out. A protocol requirement with a default, so a call through `any CodingAgentBackend` reaches the Claude backend's own.
+
 ## 0.49.0
 
 One event connection per opencode 2 server, and a Claude conversation's window as its agent measures it.
