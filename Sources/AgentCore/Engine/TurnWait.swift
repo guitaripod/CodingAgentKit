@@ -25,6 +25,15 @@ public struct TurnWaitRequest: Sendable {
     }
 }
 
+/// What a wait is held for. A turn ending frees the prompt; the work settling means the agent and
+/// everything it started have stopped and nothing is about to start again, which is what a person
+/// who walked away is waiting to hear. A server that does not know the difference answers at the
+/// turn's end either way, and says so by leaving ``TurnWaitResult/settled`` out.
+public enum TurnWaitUntil: String, Sendable, Equatable {
+    case turnEnds
+    case workSettles
+}
+
 /// Whether, and why not, a session can be waited on right now.
 public enum TurnWaitSupport: Sendable, Equatable {
     case supported
@@ -88,11 +97,15 @@ public struct TurnWaitResult: Sendable, Equatable, Codable {
     public var duration: TimeInterval?
     public var lastMessageID: String?
     public var endedAt: Date?
+    /// The server held the answer until the work settled, so `duration` is the whole stretch of
+    /// work and nothing is running, carried or queued. Nil from a server that answered at the
+    /// turn's end, whatever was asked.
+    public var settled: Bool?
 
     public init(
         state: State, waited: Bool, ending: Ending? = nil, title: String? = nil,
         toolCount: Int? = nil, background: Int? = nil, duration: TimeInterval? = nil,
-        lastMessageID: String? = nil, endedAt: Date? = nil
+        lastMessageID: String? = nil, endedAt: Date? = nil, settled: Bool? = nil
     ) {
         self.state = state
         self.waited = waited
@@ -103,10 +116,12 @@ public struct TurnWaitResult: Sendable, Equatable, Codable {
         self.duration = duration
         self.lastMessageID = lastMessageID
         self.endedAt = endedAt
+        self.settled = settled
     }
 
     private enum CodingKeys: String, CodingKey {
         case state, waited, ending, title, toolCount, background, duration, lastMessageID, endedAt
+        case settled
     }
 
     public init(from decoder: Decoder) throws {
@@ -127,6 +142,7 @@ public struct TurnWaitResult: Sendable, Equatable, Codable {
         self.lastMessageID = try container.decodeIfPresent(String.self, forKey: .lastMessageID)
         self.endedAt = try container.decodeIfPresent(String.self, forKey: .endedAt)
             .flatMap(TurnWaitDate.parse)
+        self.settled = try container.decodeIfPresent(Bool.self, forKey: .settled)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -142,6 +158,7 @@ public struct TurnWaitResult: Sendable, Equatable, Codable {
         if let endedAt {
             try container.encode(TurnWaitDate.format(endedAt), forKey: .endedAt)
         }
+        try container.encodeIfPresent(settled, forKey: .settled)
     }
 }
 
@@ -170,6 +187,14 @@ extension CodingAgentBackend {
     /// ask at all. Callers check ``turnWaitSupport()`` first to tell those apart before arming
     /// anything on the strength of a `nil`.
     public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? { nil }
+
+    /// The same request, held for what the caller is waiting to hear. A backend whose server has
+    /// no notion of work outlasting a turn answers with the plain wait.
+    public func turnWaitRequest(
+        for sessionID: String, until: TurnWaitUntil
+    ) async throws -> TurnWaitRequest? {
+        try await turnWaitRequest(for: sessionID)
+    }
 
     public func turnWaitSupport() async -> TurnWaitSupport { .unavailable(.none) }
 

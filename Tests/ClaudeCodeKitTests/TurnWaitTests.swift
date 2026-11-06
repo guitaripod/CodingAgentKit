@@ -133,6 +133,50 @@ final class WaitBridge: @unchecked Sendable {
         #expect(request?.request.httpMethod == "GET")
     }
 
+    @Test func aWaitForSettledWorkAsksTheBridgeToHoldItsAnswer() async throws {
+        let bridge = WaitBridge.shared
+        bridge.publish(200, #"{"healthy":true,"turnWait":1}"#, at: "/status")
+        let backend = Self.backend()
+        let existential: any CodingAgentBackend = backend
+        let settled = try await existential.turnWaitRequest(for: "c1", until: .workSettles)
+        #expect(settled?.request.url?.path == "/sessions/c1/wait")
+        #expect(settled?.request.url?.query == "until=settled")
+        let plain = try await backend.turnWaitRequest(for: "c1", until: .turnEnds)
+        #expect(plain?.request.url?.query == nil)
+    }
+
+    @Test func aSettledAnswerSaysSoAndAnOlderOneDoesNot() async throws {
+        let backend = Self.backend()
+        let held = try await backend.turnWaitResult(
+            status: 200, headers: [:],
+            body: Data(#"{"state":"ended","waited":true,"ending":"finished","duration":742,"settled":true}"#.utf8),
+            sessionID: "c1")
+        #expect(held.settled == true)
+        #expect(held.duration == 742)
+        let older = try await backend.turnWaitResult(
+            status: 200, headers: [:],
+            body: Data(#"{"state":"ended","waited":true,"ending":"finished","background":2}"#.utf8),
+            sessionID: "c1")
+        #expect(older.settled == nil)
+        #expect(older.background == 2)
+    }
+
+    @Test func aRegistrationCarriesTheRulesOnlyWhenGiven() throws {
+        let bare = try BridgeCoding.encoder.encode(
+            DevicePushRegistration(token: "t", environment: "production"))
+        #expect(!String(decoding: bare, as: UTF8.self).contains("rules"))
+        let ruled = try BridgeCoding.encoder.encode(
+            DevicePushRegistration(
+                token: "t", environment: "production",
+                rules: DevicePushRules(finish: "settled", minimumWork: 120, needsYou: true, muted: ["s1"])))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: ruled) as? [String: Any])
+        let rules = try #require(object["rules"] as? [String: Any])
+        #expect(rules["finish"] as? String == "settled")
+        #expect(rules["minimumWork"] as? Int == 120)
+        #expect(rules["muted"] as? [String] == ["s1"])
+    }
+
     @Test func aTooOldBridgeOffersNoRequest() async throws {
         let bridge = WaitBridge.shared
         bridge.publish(200, #"{"healthy":true}"#, at: "/status")

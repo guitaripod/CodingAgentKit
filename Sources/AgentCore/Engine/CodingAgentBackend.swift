@@ -1177,6 +1177,10 @@ public protocol CodingAgentBackend: Sendable {
     /// or needs the person — safe to hand to a background `URLSession` this process does not
     /// itself drive. `nil` when ``turnWaitSupport()`` is not ``TurnWaitSupport/supported``.
     func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest?
+    /// The same request, held for what the caller is waiting to hear: the turn ending, or the work
+    /// it belongs to settling. Defaults to ``turnWaitRequest(for:)`` for a server that cannot tell
+    /// the two apart.
+    func turnWaitRequest(for sessionID: String, until: TurnWaitUntil) async throws -> TurnWaitRequest?
     /// Whether, and why not, this session's server can be waited on right now. Defaults to
     /// ``TurnWaitSupport/unavailable(_:)`` with ``TurnWaitSupport/Reason/none``.
     func turnWaitSupport() async -> TurnWaitSupport

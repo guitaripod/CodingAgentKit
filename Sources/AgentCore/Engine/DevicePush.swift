@@ -5,10 +5,14 @@ import Foundation
 public struct DevicePushRegistration: Sendable, Codable {
     public var token: String
     public var environment: String
+    /// What the person wants to hear about, so the server that holds the work pushes only that.
+    /// Nil leaves the server's own default, which is what a device that predates the rules sends.
+    public var rules: DevicePushRules?
 
-    public init(token: String, environment: String) {
+    public init(token: String, environment: String, rules: DevicePushRules? = nil) {
         self.token = token
         self.environment = environment
+        self.rules = rules
     }
 
     /// What registering actually left the bridge able to do. A bridge can answer `{"ok":true}`
@@ -23,6 +27,25 @@ public struct DevicePushRegistration: Sendable, Codable {
         public init(delivers: Bool? = nil) {
             self.delivers = delivers
         }
+    }
+}
+
+/// A device's notification choices as a bridge reads them. Words are the device's own; this is
+/// only the decision: when finished work is news (`settled`, `everyTurn`, `failures`, `never`),
+/// the shortest work worth a notice in seconds, whether approvals and questions are, and the
+/// chats whose finished work says nothing. A field a bridge does not know is left alone, and one
+/// a device leaves out is the bridge's default.
+public struct DevicePushRules: Sendable, Codable, Equatable {
+    public var finish: String
+    public var minimumWork: Int?
+    public var needsYou: Bool?
+    public var muted: [String]?
+
+    public init(finish: String, minimumWork: Int? = nil, needsYou: Bool? = nil, muted: [String]? = nil) {
+        self.finish = finish
+        self.minimumWork = minimumWork
+        self.needsYou = needsYou
+        self.muted = muted
     }
 }
 

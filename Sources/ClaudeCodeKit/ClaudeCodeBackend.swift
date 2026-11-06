@@ -1569,9 +1569,19 @@ actor BridgeWaitSupport {
 /// implementation.
 extension ClaudeCodeBackend {
     public func turnWaitRequest(for sessionID: String) async throws -> TurnWaitRequest? {
+        try await turnWaitRequest(for: sessionID, until: .turnEnds)
+    }
+
+    /// `until=settled` asks the bridge to hold the answer until nothing is running, carried or
+    /// queued; a bridge that predates it ignores the query and answers at the turn's end, which its
+    /// answer says by leaving `settled` out.
+    public func turnWaitRequest(
+        for sessionID: String, until: TurnWaitUntil
+    ) async throws -> TurnWaitRequest? {
         guard await turnWaitSupport() == .supported else { return nil }
+        let query = until == .workSettles ? [URLQueryItem(name: "until", value: "settled")] : []
         return TurnWaitRequest(
-            request: try builder.request(.get, "/sessions/\(sessionID)/wait"),
+            request: try builder.request(.get, "/sessions/\(sessionID)/wait", query: query),
             uploadsEmptyBody: false)
     }
 
