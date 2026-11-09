@@ -122,7 +122,7 @@ public struct HTTPClient: Sendable {
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
-            throw AgentError.connection(String(describing: error))
+            throw AgentError.transport(error)
         }
         guard let http = response as? HTTPURLResponse else {
             throw AgentError.connection("Non-HTTP response")
@@ -167,7 +167,7 @@ public struct HTTPClient: Sendable {
             } catch let error as HTTPClientError where error == .cancelled {
                 throw CancellationError()
             } catch {
-                throw AgentError.connection(String(describing: error))
+                throw AgentError.transport(error)
             }
             let status = Int(response.status.code)
             logger.debug("← \(status) \(request.url?.path ?? "")")
@@ -229,7 +229,7 @@ public struct HTTPClient: Sendable {
                     } catch let error as AgentError {
                         continuation.finish(throwing: error)
                     } catch {
-                        continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                        continuation.finish(throwing: AgentError.transport(error))
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
@@ -262,7 +262,7 @@ public struct HTTPClient: Sendable {
                     } catch let error as AgentError {
                         continuation.finish(throwing: error)
                     } catch {
-                        continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                        continuation.finish(throwing: AgentError.transport(error))
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
@@ -344,7 +344,7 @@ public struct HTTPClient: Sendable {
                     } catch let error as AgentError {
                         continuation.finish(throwing: error)
                     } catch {
-                        continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                        continuation.finish(throwing: AgentError.transport(error))
                     }
                 }
                 continuation.onTermination = { _ in task.cancel() }
@@ -414,7 +414,7 @@ public struct HTTPClient: Sendable {
                 } else if let error = error as? URLError, error.code == .cancelled {
                     continuation.finish()
                 } else if let error {
-                    continuation.finish(throwing: AgentError.connection(String(describing: error)))
+                    continuation.finish(throwing: AgentError.transport(error))
                 } else {
                     continuation.finish()
                 }
