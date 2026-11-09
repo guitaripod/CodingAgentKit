@@ -891,6 +891,10 @@ public enum BackendEvent: Sendable {
     /// starting, a pause or a resume. Always the whole queue, never a delta, so the newest one
     /// heard is the queue.
     case queue(QueueSnapshot)
+    /// The conversation's chapters changed: one opened, one was renamed or summed up, or a clear
+    /// dropped them. Always the whole list with the server's count of changes to it, so a list
+    /// counted lower than one already held is older and is never adopted.
+    case chapters([ConversationChapter], revision: Int)
     case permission(PermissionRequest)
     /// An approval stopped being pending — answered here, on another device, or in the terminal.
     /// Without it a second client keeps a live approval card for a tool the first already allowed,
@@ -922,12 +926,19 @@ public struct TranscriptSnapshot: Sendable {
     /// The conversation's goal and its cut-off turn, where the server answers them in this same
     /// read. `nil` from one that does not, which leaves each to a lookup of its own.
     public var sidecar: TranscriptSidecar?
+    /// The conversation's chapters, oldest first, where the server keeps them. `nil` from one that
+    /// keeps none, which a reader takes as no chapters.
+    public var chapters: [ConversationChapter]?
+    /// The server's count of changes to ``chapters``, so a read that left before a newer list was
+    /// announced and arrives after it is known to be older.
+    public var chaptersRevision: Int
 
     public init(
         messages: [ChatMessage], status: BackendStatus? = nil,
         backgroundWork: BackgroundWork? = nil, retry: TurnRetry? = nil,
         revert: SessionRevert? = nil, queue: QueueSnapshot? = nil,
-        sidecar: TranscriptSidecar? = nil
+        sidecar: TranscriptSidecar? = nil, chapters: [ConversationChapter]? = nil,
+        chaptersRevision: Int = 0
     ) {
         self.messages = messages
         self.status = status
@@ -936,6 +947,8 @@ public struct TranscriptSnapshot: Sendable {
         self.revert = revert
         self.queue = queue
         self.sidecar = sidecar
+        self.chapters = chapters
+        self.chaptersRevision = chaptersRevision
     }
 }
 

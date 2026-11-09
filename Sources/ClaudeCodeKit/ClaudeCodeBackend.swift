@@ -280,7 +280,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 sidecar: detailSupport.isSupported
                     ? TranscriptSidecar(
                         goal: session.goal?.goal, interruption: session.interruption?.interruption)
-                    : nil)
+                    : nil,
+                chapters: session.chapters?.compactMap(\.value),
+                chaptersRevision: session.chaptersRevision ?? 0)
             transcripts.hold(sessionID, etag: etag, snapshot: snapshot, bytes: data.count)
             return snapshot
         }
@@ -798,6 +800,10 @@ struct BRSession: Decodable {
     let agent: String?
     let agentName: String?
     let scheduleID: String?
+    /// The conversation's chapters, from a bridge that keeps them; each on its own, so one this
+    /// client cannot read is left out rather than losing the rest.
+    let chapters: [BRLenient<ConversationChapter>]?
+    let chaptersRevision: Int?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -1240,6 +1246,14 @@ public struct BridgeEventDecoder {
                 let wait = try? BridgeCoding.decoder.decode(BRRetry.self, from: data)
             else { return .retry(nil) }
             return .retry(wait.retry)
+        case "chapters":
+            guard let raw = object["chapters"] as? [Any],
+                let data = try? JSONSerialization.data(withJSONObject: raw),
+                let list = try? BridgeCoding.decoder.decode(
+                    [BRLenient<ConversationChapter>].self, from: data)
+            else { return nil }
+            return .chapters(
+                list.compactMap(\.value), revision: (object["revision"] as? NSNumber)?.intValue ?? 0)
         case "queue", "hello":
             return Self.queueEvent(object)
         case "error":

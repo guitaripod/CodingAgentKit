@@ -64,6 +64,10 @@ public struct ConversationState: Sendable, Hashable, Codable {
     /// Whether the server holds the queue back after a Stop: the items stay and nothing starts
     /// until a new message or ``AgentConversation/resumeQueue()``.
     public var queuePaused: Bool = false
+    /// The stretches the conversation has been through, one per topic, oldest first, as the
+    /// server keeps them. Empty on a backend that keeps none, and for a conversation still in its
+    /// first chapter only that one.
+    public var chapters: [ConversationChapter] = []
 
     public init(
         messages: [ChatMessage] = [],
@@ -82,7 +86,8 @@ public struct ConversationState: Sendable, Hashable, Codable {
         revert: SessionRevert? = nil,
         revertedMessages: [ChatMessage] = [],
         queue: [QueuedPrompt] = [],
-        queuePaused: Bool = false
+        queuePaused: Bool = false,
+        chapters: [ConversationChapter] = []
     ) {
         self.messages = messages
         self.status = status
@@ -101,6 +106,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
         self.revertedMessages = revertedMessages
         self.queue = queue
         self.queuePaused = queuePaused
+        self.chapters = chapters
     }
 
     /// A state cached before the queue existed has no queue in it, and that is an empty queue
@@ -125,6 +131,7 @@ public struct ConversationState: Sendable, Hashable, Codable {
         revertedMessages = try container.decode([ChatMessage].self, forKey: .revertedMessages)
         queue = try container.decodeIfPresent([QueuedPrompt].self, forKey: .queue) ?? []
         queuePaused = try container.decodeIfPresent(Bool.self, forKey: .queuePaused) ?? false
+        chapters = try container.decodeIfPresent([ConversationChapter].self, forKey: .chapters) ?? []
     }
 
     public var isBusy: Bool { status == .running }

@@ -68,6 +68,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let mutable = Mutex(Mutable())
 
     struct Mutable {
+        var chapters: [String: [ConversationChapter]] = [:]
+        var chapterRevisions: [String: Int] = [:]
         var subscriptions = 0
         var sentPrompts: [SendPrompt] = []
         var backgroundStops: [String] = []
@@ -142,7 +144,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         serverQueue: Bool = false,
         schedules: [MachineSchedule]? = nil,
         machineAgents: MachineAgentsReport? = nil,
-        agentRegistry: [RegistryAgent] = []
+        agentRegistry: [RegistryAgent] = [],
+        chapters: [String: [ConversationChapter]] = [:]
     ) {
         self.agentRegistry = agentRegistry
         self.agentType = agentType
@@ -186,6 +189,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsSchedules: schedules != nil, supportsMachineAgents: machineAgents != nil,
                 supportsServerQueue: serverQueue, supportsQueueEdit: serverQueue)
         mutable.withLock {
+            $0.chapters = chapters
             $0.machineSchedules = schedules
             $0.machineAgents = machineAgents
             $0.modelsFailures = modelsFailures
@@ -330,7 +334,24 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
             messages: messages, status: mutable.withLock { $0.transcriptStatus },
             revert: mutable.withLock { $0.standingReverts[sessionID] },
             queue: capabilities.supportsServerQueue
-                ? mutable.withLock { $0.queues[sessionID] ?? .empty } : nil)
+                ? mutable.withLock { $0.queues[sessionID] ?? .empty } : nil,
+            chapters: mutable.withLock { $0.chapters[sessionID] },
+            chaptersRevision: mutable.withLock { $0.chapterRevisions[sessionID] ?? 0 })
+    }
+
+    /// How many times a conversation's events have been subscribed to, so a test can wait for a
+    /// live subscriber before announcing something only the stream carries.
+    public var subscriptionCount: Int { mutable.withLock { $0.subscriptions } }
+
+    /// Replaces a conversation's chapters the way a server that keeps them does when a topic
+    /// moves: the next read serves them, and every live subscriber hears the whole list now.
+    public func setChapters(_ chapters: [ConversationChapter], for sessionID: String) {
+        let revision = mutable.withLock { state in
+            state.chapters[sessionID] = chapters
+            state.chapterRevisions[sessionID, default: 0] += 1
+            return state.chapterRevisions[sessionID] ?? 0
+        }
+        broadcast(.chapters(chapters, revision: revision), to: sessionID)
     }
 
     public func recentTranscript(for sessionID: String, limit: Int) async throws -> TranscriptSnapshot? {

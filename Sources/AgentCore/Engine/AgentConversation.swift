@@ -40,6 +40,8 @@ public actor AgentConversation {
     private var revert: SessionRevert?
     private var queue: [QueuedPrompt] = []
     private var queuePaused = false
+    private var chapters: [ConversationChapter] = []
+    private var chaptersRevision = 0
     /// How many queue announcements the stream has made, so that a request which was answered
     /// while the stream spoke can tell the stream's account was written after its own.
     private var queueEventCount = 0
@@ -135,8 +137,17 @@ public actor AgentConversation {
             revert: revert,
             revertedMessages: boundary.map { Array(transcript[$0...]) } ?? [],
             queue: queue,
-            queuePaused: queuePaused
+            queuePaused: queuePaused,
+            chapters: chapters
         )
+    }
+
+    /// Takes a chapter list unless one counted higher is already held: a read that left before a
+    /// rename was announced and lands after it carries the older list, and must not undo it.
+    private func adoptChapters(_ list: [ConversationChapter], revision: Int) {
+        guard revision >= chaptersRevision else { return }
+        chaptersRevision = revision
+        chapters = list
     }
 
     /// Where a standing revert cuts the transcript: at the message it names, or, when that record
@@ -1335,6 +1346,8 @@ public actor AgentConversation {
             revert = value
         case .revertCommitted(let messageID):
             commitRevert(at: messageID)
+        case .chapters(let list, let revision):
+            adoptChapters(list, revision: revision)
         case .queue(let snapshot):
             queueEventCount += 1
             adoptQueue(snapshot)
@@ -1648,6 +1661,7 @@ public actor AgentConversation {
             backgroundWork = snapshot.backgroundWork
             retry = status == .running ? snapshot.retry : nil
             revert = snapshot.revert
+            adoptChapters(snapshot.chapters ?? [], revision: snapshot.chaptersRevision)
             if let served = snapshot.queue { adoptQueue(served) }
             if capabilitiesSupportQuestions { pendingQuestions = questions }
             syncTranscriptQuestions()
