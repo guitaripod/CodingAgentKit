@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.51.0
+
+A conversation's chapters, from the servers that keep them.
+
+### Added
+- **`ConversationChapter`.** One stretch of a conversation under one title: where it began (the person's message, by turn and id), when, who named it (`Namer`: prompt, model, person, agent, schedule, fork, kept; an unknown word reads as `model`) and, once the next began, a one-sentence gist of what it came to.
+- **`ConversationState.chapters`**, adopted from `TranscriptSnapshot.chapters` on every read and from `BackendEvent.chapters(_:revision:)` on the stream. claude-bridge 1.22 and later serve them; every other backend leaves the list empty. A list counted lower than one already held (`chaptersRevision`) is never adopted, so a read that left before a rename and lands after it cannot undo it.
+- **`MockBackend(chapters:)` and `setChapters(_:for:)`**, and `subscriptionCount`, for demos and tests.
+
 ## 0.50.0
 
 A device tells a bridge what it wants to hear about, and a wait can be held until the work is over rather than the turn.
