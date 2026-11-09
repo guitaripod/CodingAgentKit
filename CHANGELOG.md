@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.51.1
+
+A dropped connection says so in a sentence.
+
+### Fixed
+- **`AgentError.connection` carries a sentence, never an error dump.** `HTTPClient` used to put `String(describing:)` of the transport error in it, so a send that dropped on a cellular network read `Not sent — Connection error: Error Domain=NSURLErrorDomain Code=-1005 … UserInfo={_kCFStreamErrorCodeKey=-4, …}` and a connect screen read `Unreachable: Error Domain=…`. `TransportWords.sentence(for:)` names the situation (the connection dropped, the server took too long, this device is offline, nothing is answering at that address, the address could not be found, no secure connection, an unreadable answer) in all ten languages, for `URLError` on every platform and for AsyncHTTPClient and SwiftNIO errors on Linux; the error itself goes to the `http` log. Retryability is unchanged.
+- **"The server can't be reached right now." is translated.**
+
 ## 0.51.0
 
 A conversation's chapters, from the servers that keep them.
