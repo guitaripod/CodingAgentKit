@@ -55,3 +55,17 @@ import Testing
         #expect(decoder.decode(SSEvent(id: nil, type: nil, data: #"{"type":"chapters","chapters":"x"}"#)) == nil)
     }
 }
+
+@Suite struct BridgeMessageErrorTests {
+    @Test func aFailedTurnTheBridgeKeptReadsAsAFailedAnswer() throws {
+        let json = #"{"id":"a1","role":"assistant","parts":[],"createdAt":"2026-11-10T07:27:11Z","error":"HTTP 402 from https://ollama.com/api/chat"}"#
+        let message = try BridgeCoding.decoder.decode(BRMessage.self, from: Data(json.utf8))
+            .chat(agentType: .omp)
+        #expect(message.error == "HTTP 402 from https://ollama.com/api/chat")
+        let plain = try BridgeCoding.decoder.decode(
+            BRMessage.self,
+            from: Data(#"{"id":"a2","role":"assistant","parts":[],"createdAt":"2026-11-10T07:27:11Z","error":""}"#.utf8))
+            .chat(agentType: .omp)
+        #expect(plain.error == nil)
+    }
+}

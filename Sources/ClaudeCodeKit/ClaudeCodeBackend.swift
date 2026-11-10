@@ -936,6 +936,10 @@ struct BRMessage: Decodable {
     let usage: BRTokens?
     let context: BRTokens?
     let costUSD: Double?
+    /// Why the turn this answer belongs to failed, from a bridge that keeps it on the message, so
+    /// a client that opens the chat afterwards still sees the failed turn rather than a prompt
+    /// that was never answered.
+    let error: String?
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
     /// get an index suffix so `messageID:partID` row identifiers stay unique. The
@@ -953,7 +957,8 @@ struct BRMessage: Decodable {
         let named = BridgeModelName.split(model, agentType: agentType)
         return ChatMessage(
             id: id, role: MessageRole(rawValue: role) ?? .assistant, agentType: agentType,
-            parts: uniqueParts, createdAt: createdAt, costUSD: costUSD,
+            parts: uniqueParts, createdAt: createdAt,
+            error: (error?.isEmpty ?? true) ? nil : error, costUSD: costUSD,
             providerID: named.providerID, modelID: named.modelID,
             totalTokens: tiers.map(\.total), usage: tiers, context: context?.usage,
             duration: seconds)
