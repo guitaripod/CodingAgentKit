@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.52.0
+
+A failed turn a bridge kept reads as failed.
+
+### Added
+- **`ChatMessage.error` from a bridge's answer.** A message that claude-bridge or omp-bridge serves with an `error` (omp-bridge 0.13.0 keeps the provider's words on a turn that failed — a provider out of credits answering HTTP 402, say) carries it, so a chat opened after its turn failed shows the failed card with its reason instead of a prompt nobody answered. An empty error is none.
+
+### Notes
+- omp-bridge 0.13.0 keeps chapters on the same wire as claude-bridge 1.22; `ConversationState.chapters` fills for omp chats with no Kit change.
+
 ## 0.51.1
 
 A dropped connection says so in a sentence.
