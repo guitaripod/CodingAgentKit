@@ -37,7 +37,7 @@ opencode and the bridges all expose an HTTP surface with a Server-Sent Events st
 ## Install
 
 ```swift
-.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.33.0")
+.package(url: "https://github.com/guitaripod/CodingAgentKit.git", from: "0.52.0")
 ```
 
 Then depend on the umbrella, or just the pieces you need:
@@ -125,20 +125,32 @@ Model and reasoning effort are chosen **per prompt** via `SendPrompt.model` / `S
 | Interrupted turns | `reportsInterruptions` | — | ✅ | ✅ |
 | Stop background work | `supportsBackgroundStop` | — | — | ✅ ⁵ |
 | Live usage quota (rate-limit gauges) | — ³ | — | — | ✅ ⁵ |
+| Server-held queue | `supportsServerQueue` | — | ✅ | ✅ |
+| Session marks (saved/pinned/archived/read) | `supportsSessionMarks` | — | — | ✅ |
+| Schedules on the machine | `supportsSchedules` | — | — | ✅ |
+| ACP agents hosted by the server | `supportsMachineAgents` | — | — | ✅ ⁵ |
+| Conversation chapters | — ⁷ | — | — | ✅ |
+| Measured context window | — ⁸ | — | — | ✅ ⁵ |
 | Wait on a turn from another process | — ⁶ | — | ✅ | ✅ |
 
 ¹ The Claude bridge serves file listing and content (`listFiles`/`fileContent`); `diff`, `find`, and `providers` have no bridge equivalent yet and return empty.
 ² The bridge's questions arrive in the transcript rather than as a protocol prompt, and `answersQuestionsByMessage` is `true`: answer by sending an ordinary message, not by calling a respond endpoint. `QuestionRequest.awaitingAnswer` derives what is still open from the transcript.
 ³ No `BackendCapabilities` flag — probe by calling `usageQuota()` / `additionalUsageQuotas()`, which return `nil`/empty when the backend has no usage API.
 ⁴ Probe by calling `sessionSpend(_:)`, which returns `nil` when the backend cannot price a conversation.
-⁵ claude-bridge only: omp has no `/goal`, no background shells and no plan gauges.
-⁶ Ask `turnWaitSupport()`. `turnWaitRequest(for:)` vends a fully authorised request with no side effect that the server answers only when the session's turn ends or stops for the person — made to be handed to a background `URLSession` owned by the system, which may re-send it — and `turnWaitResult(status:headers:body:sessionID:)` reads the answer. The bridges hold `GET /sessions/:id/wait` open; opencode 2.x has its own `POST /api/experimental/session/{id}/wait`; opencode 1.x has no way to wait without sending a prompt, so it is never offered one. A transport failure reads `.undetermined`, never `.serverTooOld`.
+⁵ claude-bridge only: omp has no `/goal`, no background shells, no plan gauges, no measured-context route and hosts no ACP agents.
+⁶ Ask `turnWaitSupport()`. `turnWaitRequest(for:until:)` vends a fully authorised request with no side effect that the server answers only when the session's turn ends or stops for the person — made to be handed to a background `URLSession` owned by the system, which may re-send it — and `turnWaitResult(status:headers:body:sessionID:)` reads the answer. Ask for `until: .workSettles` and a bridge that holds it waits for the whole stretch — nothing running, carried or queued, and ten seconds of quiet — answering `TurnWaitResult.settled` true, with `duration` and `toolCount` covering all of it; an older bridge answers at the turn's end and leaves `settled` out. The bridges hold `GET /sessions/:id/wait` open; opencode 2.x has its own `POST /api/experimental/session/{id}/wait`; opencode 1.x has no way to wait without sending a prompt, so it is never offered one. A transport failure reads `.undetermined`, never `.serverTooOld`.
+⁷ No capability flag: `ConversationState.chapters` is adopted from every transcript read and every stream frame. claude-bridge 1.22+ and omp-bridge 0.13+ serve chapters; every other backend leaves the list empty.
+⁸ Conformance to `MeasuredContext`: `measuredContext(for:)` asks claude-bridge's `GET /sessions/:id/context` what fills the window as the CLI itself counts it, and `nil` is "cannot say". No other backend conforms.
 
 ### Beyond messages
 
 A transcript is more than text and tool calls, and the Kit models the rest as first-class parts and reads rather than leaving them for each client to re-derive:
 
 - **`Compaction`** — a context compaction is a seam in the conversation: tokens before/after, how long it took, how many messages carried over, and the CLI's own summary. It arrives as a `MessagePart`, not as a wall of prose in the chat.
+- **`ConversationChapter`** — the stretches a conversation has been through, oldest first: where each began (the person's message, by turn and id), when, who named it (`prompt`, `model`, `person`, `agent`, `schedule`, `fork`, `kept`) and, once the next began, a one-sentence gist of what it came to. `ConversationState.chapters` takes them from every read and every `chapters` frame, and a revision counted lower than one already held is never adopted, so a slow read cannot undo a rename.
+- **`MeasuredContext`** — what fills a Claude conversation's window as the CLI itself counts it: system prompt, tools, memory files, skills, agents, the messages split by kind, the buffer held back and where auto-compaction starts. `nil` is "cannot say", never an estimate.
+- **`DevicePushRules`** — a phone's own notification choices on its push registration: whether finished work is news (`settled`, `everyTurn`, `failures`, `never`), the shortest work worth a push, whether asks are, and the muted chats.
+- **`ChatMessage.error`** — a turn a bridge ended with an error keeps the provider's own words, live and on a later read, so a failed turn shows as failed instead of a prompt nobody answered.
 - **`QuestionRequest`** — structured multi-question, multi-option asks with free-text "Other", plus the transcript-derived answer state above.
 - **Subagents** — `subagents(for:)` and `subagentMessages(sessionID:agentID:)` fetch a spawned agent's own transcript, keyed back to the tool call that spawned it.
 - **`AgentCommand`** — what a turn will actually resolve on that machine: built-ins, user, project and plugin commands, with argument hints.
