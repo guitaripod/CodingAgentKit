@@ -10,6 +10,10 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
     public var updatedAt: Date
     public var isActive: Bool
     public var isCompleted: Bool
+    /// The workflow run that fanned this agent out, when the backend can say: the same id the
+    /// Workflow call answered with as its `Run ID`. A workflow agent has no spawning call, so this
+    /// is the only fact that ties it to the run it belongs to rather than to a guess from its clock.
+    public var workflowRunID: String?
     /// What a live agent is doing right now, when the backend can say: how far through its todo
     /// list it is, how many tools it has run, and the one running at the moment.
     public var startedAt: Date?
@@ -23,7 +27,8 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         id: String, title: String, agentType: String? = nil, toolUseID: String? = nil,
         updatedAt: Date, isActive: Bool = false, isCompleted: Bool = false,
         startedAt: Date? = nil, toolCount: Int? = nil, currentTool: String? = nil,
-        todosDone: Int? = nil, todosTotal: Int? = nil, currentTodo: String? = nil
+        todosDone: Int? = nil, todosTotal: Int? = nil, currentTodo: String? = nil,
+        workflowRunID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -38,6 +43,7 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         self.todosDone = todosDone
         self.todosTotal = todosTotal
         self.currentTodo = currentTodo
+        self.workflowRunID = workflowRunID
     }
 
     /// Fallback display title for a subagent the backend never named.

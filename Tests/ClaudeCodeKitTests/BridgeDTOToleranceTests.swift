@@ -37,6 +37,22 @@ import Testing
         #expect(tool.background?.answer == "no record")
     }
 
+    /// A workflow agent names the run that fanned it out, which is the only fact that seats it on
+    /// that run's card; an older bridge names none, and the agent decodes all the same.
+    @Test func aWorkflowAgentNamesItsRun() throws {
+        let named = try decode(
+            BRSubagent.self,
+            #"{"id":"ab7b","title":"review:fi","agentType":"workflow-subagent","active":false,"completed":true,"updatedAt":"\#(Self.fixedTimestamp)","runID":"wf_7a12b74a-d8f"}"#
+        ).summary
+        #expect(named.workflowRunID == "wf_7a12b74a-d8f")
+        let older = try decode(
+            BRSubagent.self,
+            #"{"id":"ab7b","title":"review:fi","agentType":"workflow-subagent","active":false,"completed":true,"updatedAt":"\#(Self.fixedTimestamp)"}"#
+        ).summary
+        #expect(older.workflowRunID == nil)
+        #expect(older.isCompleted)
+    }
+
     /// A listing says how long the machine has been at its background work and whether the
     /// server found it stuck; an older bridge says neither, and that is no work at all rather
     /// than stuck work.

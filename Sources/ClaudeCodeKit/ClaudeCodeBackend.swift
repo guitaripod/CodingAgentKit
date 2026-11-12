@@ -1081,13 +1081,15 @@ struct BRSubagent: Decodable {
     let todosDone: Int?
     let todosTotal: Int?
     let currentTodo: String?
+    let runID: String?
 
     var summary: SubagentSummary {
         SubagentSummary(
             id: id, title: title, agentType: agentType, toolUseID: toolUseID,
             updatedAt: updatedAt, isActive: active, isCompleted: completed ?? false,
             startedAt: startedAt, toolCount: toolCount, currentTool: currentTool,
-            todosDone: todosDone, todosTotal: todosTotal, currentTodo: currentTodo)
+            todosDone: todosDone, todosTotal: todosTotal, currentTodo: currentTodo,
+            workflowRunID: runID)
     }
 }
 
