@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.53.0
+
+A workflow agent knows which run it belongs to.
+
+### Added
+- **`SubagentSummary.workflowRunID`.** claude-bridge 1.24.0 names the run that fanned each workflow agent out (`runID` on `GET /sessions/:id/agents`, the `Run ID` its Workflow call answered with), and the Kit carries it, so a client seats every agent on the run that ran it instead of guessing from timestamps. An older bridge names none and the agent decodes as before.
+
 ## 0.52.0
 
 A failed turn a bridge kept reads as failed.
