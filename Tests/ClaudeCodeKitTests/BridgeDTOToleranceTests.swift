@@ -163,6 +163,16 @@ import Testing
         #expect(first.updatedAt == second.updatedAt)
     }
 
+    @Test func aSummaryCarriesWhatTheLastAnswerSaidAndAnEmptyQuoteIsNone() throws {
+        let quoted = try decode(
+            BRSummary.self, #"{"id":"s4","title":"t","lastWords":"Shipped 1.84 (222); it is VALID."}"#)
+        #expect(quoted.session(agentType: .claudeCode).lastWords == "Shipped 1.84 (222); it is VALID.")
+        let silent = try decode(BRSummary.self, #"{"id":"s5","title":"t"}"#)
+        #expect(silent.session(agentType: .claudeCode).lastWords == nil)
+        let empty = try decode(BRSummary.self, #"{"id":"s6","title":"t","lastWords":""}"#)
+        #expect(empty.session(agentType: .claudeCode).lastWords == nil)
+    }
+
     @Test func summaryEmptyEffortStringMapsToNil() throws {
         let summary = try decode(BRSummary.self, #"{"id":"s2","title":"t","effort":""}"#)
         #expect(summary.session(agentType: .claudeCode).reasoningEffort == nil)

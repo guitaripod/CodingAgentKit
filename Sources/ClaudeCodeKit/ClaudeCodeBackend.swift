@@ -711,6 +711,7 @@ struct BRSummary: Decodable {
     let agent: String?
     let agentName: String?
     let scheduled: Bool?
+    let lastWords: String?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -725,7 +726,8 @@ struct BRSummary: Decodable {
                 tasks: backgroundTasks, task: backgroundTask, since: backgroundSince,
                 stalled: backgroundStalled),
             pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt,
-            agentID: agent, agentName: agentName, isScheduled: scheduled)
+            agentID: agent, agentName: agentName, isScheduled: scheduled,
+            lastWords: (lastWords?.isEmpty ?? true) ? nil : lastWords)
     }
 }
 
