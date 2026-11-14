@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.54.0
+
+A listing row can quote the answer nobody has read yet.
+
+### Added
+- **`AgentSession.lastWords`.** claude-bridge 1.26.0 puts the opening of the answer that closed a chat's last turn on its listing row as one plain line (`lastWords`), and only on a row that may still be unread, so a list can say what an agent said instead of only that it finished. The Kit carries it; a server that does not quote, and a row that has been read, leave it nil.
+
 ## 0.53.0
 
 A workflow agent knows which run it belongs to.
