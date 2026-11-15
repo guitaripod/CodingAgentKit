@@ -633,11 +633,17 @@ public struct UsageQuota: Sendable, Hashable, Codable {
         /// provider reports them. A renderer can then say "$0.61 of $40" instead of "2%".
         public var usedUSD: Double?
         public var limitUSD: Double?
+        /// The provider's own verdict on this window as of the last response a turn got, where the
+        /// server heard one: `true` while requests through it are being refused, `false` while they
+        /// are answered (a window can run past its cap and still be served), nil when nobody knows.
+        /// ``fraction`` already reads `1` for a refusal; this is what tells that refusal apart from
+        /// a reading rounded up to a whole 100 %.
+        public var refused: Bool?
 
         public init(
             key: String, label: String, fraction: Double, resetsAt: Date?, trustedReset: Bool,
             usedUSD: Double? = nil, limitUSD: Double? = nil, currency: String? = nil,
-            startsAt: Date? = nil
+            startsAt: Date? = nil, refused: Bool? = nil
         ) {
             self.key = key
             self.label = label
@@ -648,6 +654,7 @@ public struct UsageQuota: Sendable, Hashable, Codable {
             self.usedUSD = usedUSD
             self.limitUSD = limitUSD
             self.currency = currency
+            self.refused = refused
         }
 
         /// The ISO code of the money `usedUSD`/`limitUSD` carry, when it is not USD — a prepaid

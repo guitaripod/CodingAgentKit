@@ -573,7 +573,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                 UsageQuota.Gauge(
                     key: $0.key, label: $0.label, fraction: $0.fraction,
                     resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
-                    usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
+                    usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt,
+                    refused: $0.refused)
             },
             details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
             error: snapshot.error,
@@ -601,7 +602,8 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
                         UsageQuota.Gauge(
                             key: $0.key, label: $0.label, fraction: $0.fraction,
                             resetsAt: $0.resetsAt, trustedReset: $0.trustedReset,
-                            usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt)
+                            usedUSD: $0.usedUSD, limitUSD: $0.limitUSD, startsAt: $0.startsAt,
+                            refused: $0.refused)
                     },
                     details: snapshot.details.map { UsageQuota.Detail(key: $0.key, value: $0.value) },
                     error: snapshot.error,
@@ -635,7 +637,7 @@ private struct BRSearch: Decodable {
     let truncated: Bool
 }
 
-private struct BRUsage: Decodable {
+struct BRUsage: Decodable {
     struct Gauge: Decodable {
         let key: String
         let label: String
@@ -645,6 +647,7 @@ private struct BRUsage: Decodable {
         let trustedReset: Bool
         let usedUSD: Double?
         let limitUSD: Double?
+        let refused: Bool?
     }
     struct Detail: Decodable {
         let key: String

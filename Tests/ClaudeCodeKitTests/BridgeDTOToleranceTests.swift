@@ -15,6 +15,34 @@ import Testing
         ISO8601DateFormatter().date(from: fixedTimestamp)!
     }
 
+    /// A bridge that heard the limiter's verdict on a window says so beside its figure, because a
+    /// refusal and a reading rounded up to 100 % are the same fraction; an older bridge, and a
+    /// window no turn has spoken about, say nothing, and the gauge decodes as before.
+    @Test func aUsageGaugeCarriesTheLimitersVerdict() throws {
+        let usage = try decode(
+            BRUsage.self,
+            #"""
+            {"providerName":"Claude","subtitle":"Max","source":"api.anthropic.com · live","live":true,
+             "gauges":[
+               {"key":"weekly_all","label":"Weekly · all models","fraction":1,"resetsAt":"\#(Self.fixedTimestamp)","trustedReset":true,"refused":true},
+               {"key":"session","label":"5-hour session","fraction":0.999,"trustedReset":true,"refused":false},
+               {"key":"weekly_scoped","label":"Weekly · Fable","fraction":0.4,"trustedReset":true}
+             ],"details":[]}
+            """#)
+        #expect(usage.gauges.map(\.refused) == [true, false, nil])
+
+        let stored = try decode(
+            UsageQuota.Gauge.self,
+            #"{"key":"weekly_all","label":"Weekly","fraction":0.5,"trustedReset":true}"#)
+        #expect(stored.refused == nil)
+        let carried = UsageQuota.Gauge(
+            key: "weekly_all", label: "Weekly", fraction: 1, resetsAt: nil, trustedReset: true,
+            refused: true)
+        let roundTrip = try BridgeCoding.decoder.decode(
+            UsageQuota.Gauge.self, from: JSONEncoder().encode(carried))
+        #expect(roundTrip.refused == true)
+    }
+
     /// A call that handed its work to the background answers in milliseconds and the work runs for
     /// minutes, so the ending arrives long afterwards as its own field. A client that cannot read
     /// it is a client holding a launch with no record that anything ever stopped.
