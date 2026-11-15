@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.55.0
+
+A usage window says whether the provider is refusing it.
+
+### Added
+- **`UsageQuota.Gauge.refused`.** claude-bridge 1.27.0 reads Anthropic's own verdict off the last response a turn got and sends it beside the window's figure: `true` while requests through the window are refused, `false` while they are answered, even past the cap. A refusal and a reading rounded up to 100 % are the same fraction, so this is what lets a client folding several machines' readings keep a real wall and drop a rounded one. An older bridge, and a window no turn has spoken about, leave it nil, and stored gauges decode as before.
+
 ## 0.54.0
 
 A listing row can quote the answer nobody has read yet.
