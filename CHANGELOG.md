@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.59.0
+
+A desk says when its person is at it, and a phone can stay quiet while they are.
+
+### Added
+- **`DeskReport`, `DeskPresence` and three backend calls.** A desktop client reports how long since the last input on its desktop, whether the screen is locked, whether it is leaving and the conversations it had on screen (`reportDesk`, `POST /presence`, false from a bridge that keeps no desks); a device reads what a server knows (`deskPresence`, nil from one that keeps none), merges several servers' answers (`DeskPresence.merged`), judges who is at a desk by its own patience (`occupied(awayAfter:)`) and holds a background wait until nobody is (`deskAwayRequest`, `GET /presence/wait`). claude-bridge 1.32.0 and omp-bridge 0.17.0 answer them; protocol requirements, so they dispatch through `any CodingAgentBackend`.
+- **`DevicePushRules.quietAtDesk` and `awayAfter`.** A device asks a bridge to hold its pushes while its person is at a desk and to hand over what is still unread once they leave.
+
 ## 0.58.0
 
 A listing says whether a conversation's own turn is open, and a bridge says it starts cards.
