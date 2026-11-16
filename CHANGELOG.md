@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.57.0
+
+A server can start a Live Activity for a turn the phone did not send.
+
+### Added
+- **`LiveActivityStarter`, on `DevicePushRegistration.liveActivity`.** A device hands claude-bridge 1.30.0 its ActivityKit push-to-start token with which installation it is, the profile and the name it gives that machine, whether it follows turns started elsewhere, how many cards may stand at once and the chats it muted, so the bridge can start a card on the phone for a turn sent from a desktop, a queue, a schedule or the machine itself. Nil, as from every device before it, starts nothing.
+- **`LiveActivityRegistration.deviceID`.** A card's registration names its installation, so a server pushes one conversation's card to every device following it and never starts a second card where one stands.
+
 ## 0.56.0
 
 A Live Activity's server can open the Dynamic Island when a turn ends.
