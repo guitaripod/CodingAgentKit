@@ -1111,6 +1111,10 @@ public protocol CodingAgentBackend: Sendable {
     /// desk for `awayAfter` seconds, answered with ``DeskPresence`` (`away: true`). Nil from a
     /// server that keeps no desks.
     func deskAwayRequest(awayAfter: TimeInterval) async throws -> TurnWaitRequest?
+    /// Hands a notice this device would hold while its person is at a desk to the server that
+    /// pushes to it, which sends it once they leave. `false` from a server that cannot: one with
+    /// no push key, one that does not know this device, or one built before it.
+    func holdNotice(_ notice: DeskHeldNotice) async throws -> Bool
     /// Live quotas for other providers the backend's host machine is signed into (the bridge
     /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
     func additionalUsageQuotas() async throws -> [UsageQuota]

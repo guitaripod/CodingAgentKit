@@ -27,6 +27,10 @@ public struct DeskReport: Sendable, Codable, Equatable {
     /// by session id. A notice held back while they were here is no longer news once its chat was
     /// on their screen.
     public var looked: [String]
+    /// How many seconds before this report each of `looked` was last on screen, so a server can
+    /// tell a look from before a notice it held from one after it. Nil from a desk that predates
+    /// it, whose looks a server dates to the start of the window they came from.
+    public var lookedAgo: [String: Int]?
 
     /// How often a running desk reports. A server forgets one after ``DeskPresence/staleAfter``,
     /// three of these, so a single dropped report changes nothing.
@@ -34,7 +38,7 @@ public struct DeskReport: Sendable, Codable, Equatable {
 
     public init(
         desk: String, name: String, idle: Int?, locked: Bool = false, leaving: Bool = false,
-        looked: [String] = []
+        looked: [String] = [], lookedAgo: [String: Int]? = nil
     ) {
         self.desk = desk
         self.name = name
@@ -42,6 +46,7 @@ public struct DeskReport: Sendable, Codable, Equatable {
         self.locked = locked
         self.leaving = leaving
         self.looked = looked
+        self.lookedAgo = lookedAgo
     }
 }
 
@@ -99,10 +104,11 @@ public struct DeskPresence: Sendable, Codable, Equatable {
             .min { ($0.idle ?? .max) < ($1.idle ?? .max) }
     }
 
-    /// Whether a desk showed this conversation at or after `moment`.
+    /// Whether a desk showed this conversation at or after `moment`. A server writes its dates
+    /// in whole seconds, so a look in the same second as the moment counts.
     public func looked(at sessionID: String, since moment: Date) -> Bool {
         guard let seen = looked[sessionID] else { return false }
-        return seen >= moment
+        return seen.timeIntervalSince1970 >= moment.timeIntervalSince1970.rounded(.down)
     }
 
     /// Several servers' answers as one: every desk once, by its freshest report, and every
@@ -131,9 +137,26 @@ public struct DeskPresence: Sendable, Codable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         desks = try container.decodeIfPresent([Desk].self, forKey: .desks) ?? []
-        let raw = try container.decodeIfPresent([String: String].self, forKey: .looked) ?? [:]
-        looked = raw.compactMapValues(TurnWaitDate.parse)
+        var looks: [String: Date] = [:]
+        if container.contains(.looked),
+            let entries = try? container.nestedContainer(keyedBy: AnyKey.self, forKey: .looked)
+        {
+            for key in entries.allKeys {
+                guard let text = try? entries.decode(String.self, forKey: key),
+                    let date = TurnWaitDate.parse(text)
+                else { continue }
+                looks[key.stringValue] = date
+            }
+        }
+        looked = looks
         away = try container.decodeIfPresent(Bool.self, forKey: .away)
+    }
+
+    private struct AnyKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -157,7 +180,40 @@ public struct DeskPresence: Sendable, Codable, Equatable {
     }
 }
 
+/// A notice a device raised itself while its person was at a desk, handed to a server that holds
+/// the device's pushes, so it goes out through APNs once they leave rather than waiting on the
+/// device to wake. The words and the fields a tap reads are the device's own.
+public struct DeskHeldNotice: Sendable, Codable, Equatable {
+    /// The device's APNs token, as registered with this server.
+    public var token: String
+    /// The notification's identifier, which collapses a later notice for the same thing.
+    public var identifier: String
+    public var title: String
+    public var body: String
+    public var sessionID: String?
+    public var threadID: String?
+    public var category: String?
+    /// The fields the notification carries for a tap, as one JSON object.
+    public var userInfo: String?
+
+    public init(
+        token: String, identifier: String, title: String, body: String, sessionID: String? = nil,
+        threadID: String? = nil, category: String? = nil, userInfo: String? = nil
+    ) {
+        self.token = token
+        self.identifier = identifier
+        self.title = title
+        self.body = body
+        self.sessionID = sessionID
+        self.threadID = threadID
+        self.category = category
+        self.userInfo = userInfo
+    }
+}
+
 extension CodingAgentBackend {
+    public func holdNotice(_ notice: DeskHeldNotice) async throws -> Bool { false }
+
     public func reportDesk(_ report: DeskReport) async throws -> Bool { false }
 
     public func deskPresence() async throws -> DeskPresence? { nil }

@@ -56,6 +56,13 @@ import Testing
     }
 
     @Test func aHeldAnswerReadsPastTheHeartbeats() throws {
+        let lenient = try DeskPresence.decode(
+            status: 200, body: Data(#"{"desks":[],"looked":{"a":"2026-11-16T12:00:00Z","b":null,"c":3}}"#.utf8))
+        #expect(Array(lenient.looked.keys) == ["a"], "one look a newer server wrote oddly costs only itself")
+        let second = Date(timeIntervalSince1970: 1_800_000_000)
+        let sameSecond = DeskPresence(looked: ["s": second])
+        #expect(sameSecond.looked(at: "s", since: second.addingTimeInterval(0.4)))
+        #expect(!sameSecond.looked(at: "s", since: second.addingTimeInterval(1.2)))
         let body = Data("\n\n\n{\"desks\":[],\"looked\":{},\"away\":true}".utf8)
         let presence = try DeskPresence.decode(status: 200, body: body)
         #expect(presence.away == true)
@@ -91,6 +98,18 @@ import Testing
         #expect(merged.looked(at: "s1", since: late))
         #expect(!merged.looked(at: "s2", since: late))
         #expect(merged.away == true)
+    }
+
+    @Test func aHeldNoticeIsTakenOnlyWhenTheBridgeSaysSo() async throws {
+        let notice = DeskHeldNotice(
+            token: "ab", identifier: "done:s1", title: "Fix", body: "Done", sessionID: "s1",
+            userInfo: #"{"sessionID":"s1"}"#)
+        WaitBridge.shared.publish(200, #"{"ok":true,"held":true}"#, at: "/push/hold")
+        #expect(try await Self.backend().holdNotice(notice))
+        WaitBridge.shared.publish(200, #"{"ok":true,"held":false}"#, at: "/push/hold")
+        #expect(try await Self.backend().holdNotice(notice) == false)
+        WaitBridge.shared.publish(404, nil, at: "/push/hold")
+        #expect(try await Self.backend().holdNotice(notice) == false)
     }
 
     @Test func rulesCarryTheDeskWishOnlyWhenGiven() throws {

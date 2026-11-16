@@ -11,15 +11,19 @@ public struct DevicePushRegistration: Sendable, Codable {
     /// How the server may start this installation's Live Activities itself; nil from a device
     /// that cannot, or that predates it, and the server then starts none.
     public var liveActivity: LiveActivityStarter?
+    /// Which installation this is, the same id its Live Activity registrations carry, so a server
+    /// applies the device's rules to its cards whether or not it can start them.
+    public var deviceID: String?
 
     public init(
         token: String, environment: String, rules: DevicePushRules? = nil,
-        liveActivity: LiveActivityStarter? = nil
+        liveActivity: LiveActivityStarter? = nil, deviceID: String? = nil
     ) {
         self.token = token
         self.environment = environment
         self.rules = rules
         self.liveActivity = liveActivity
+        self.deviceID = deviceID
     }
 
     /// What registering actually left the bridge able to do. A bridge can answer `{"ok":true}`

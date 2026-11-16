@@ -667,6 +667,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         return TurnWaitRequest(request: request, uploadsEmptyBody: false)
     }
 
+    public func holdNotice(_ notice: DeskHeldNotice) async throws -> Bool { false }
+
     /// The reports desks have sent this mock, oldest first.
     public var reportedDesks: [DeskReport] { mutable.withLock { $0.deskReports } }
 

@@ -1586,6 +1586,16 @@ extension ClaudeCodeBackend {
         }
     }
 
+    public func holdNotice(_ notice: DeskHeldNotice) async throws -> Bool {
+        let body = try BridgeCoding.encoder.encode(notice)
+        do {
+            let data = try await http.send(builder.request(.post, "/push/hold", body: body))
+            return (try? BridgeCoding.decoder.decode(BRHeld.self, from: data))?.held ?? false
+        } catch AgentError.http(let status, _) where status == 404 || status == 405 {
+            return false
+        }
+    }
+
     public func deskAwayRequest(awayAfter: TimeInterval) async throws -> TurnWaitRequest? {
         let seconds = max(1, Int(awayAfter.rounded()))
         return TurnWaitRequest(
@@ -1594,6 +1604,10 @@ extension ClaudeCodeBackend {
                 query: [URLQueryItem(name: "awayAfter", value: String(seconds))]),
             uploadsEmptyBody: false)
     }
+}
+
+struct BRHeld: Decodable {
+    let held: Bool?
 }
 
 struct BRPushReceipt: Decodable {
