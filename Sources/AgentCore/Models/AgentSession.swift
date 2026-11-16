@@ -105,6 +105,10 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     /// on a row nobody has read. Nil while a turn is open, once the chat has been read, and from a
     /// server that does not quote (opencode, a bridge before claude-bridge 1.26).
     public var lastWords: String?
+    /// The conversation's own turn is open — narrower than ``isActive``, which agents or work left
+    /// running between turns also make true. Nil from a server that does not say (opencode,
+    /// omp-bridge, a claude-bridge listing before it), where ``isActive`` is all there is.
+    public var turnOpen: Bool?
 
     /// The ``ConnectionProfile`` id of the machine this session came from, stamped by
     /// ``FederatedSessionList`` as it merges hosts — a backend cannot know its own host id, and a
@@ -150,7 +154,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         agentID: String? = nil,
         agentName: String? = nil,
         isScheduled: Bool? = nil,
-        lastWords: String? = nil
+        lastWords: String? = nil,
+        turnOpen: Bool? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -176,6 +181,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.agentName = agentName
         self.isScheduled = isScheduled
         self.lastWords = lastWords
+        self.turnOpen = turnOpen
     }
 
     /// Whether the server reports this person's marks at all. A listing that says `false` for a

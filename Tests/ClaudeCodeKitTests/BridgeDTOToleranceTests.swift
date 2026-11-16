@@ -18,6 +18,22 @@ import Testing
     /// A bridge that heard the limiter's verdict on a window says so beside its figure, because a
     /// refusal and a reading rounded up to 100 % are the same fraction; an older bridge, and a
     /// window no turn has spoken about, say nothing, and the gauge decodes as before.
+    /// A listing tells a conversation running its own turn from one whose only activity is agents
+    /// or background work left running between turns; a server that does not say leaves it nil.
+    @Test func aListingRowCarriesWhetherItsOwnTurnIsOpen() throws {
+        let busy = try decode(
+            BRSummary.self, #"{"id":"s1","title":"Hi","active":true,"turnOpen":false,"agents":2}"#)
+        #expect(busy.session(agentType: .claudeCode).turnOpen == false)
+        #expect(busy.session(agentType: .claudeCode).isActive == true)
+        let running = try decode(BRSummary.self, #"{"id":"s2","title":"Hi","active":true,"turnOpen":true}"#)
+        #expect(running.session(agentType: .claudeCode).turnOpen == true)
+        let older = try decode(BRSummary.self, #"{"id":"s3","title":"Hi","active":true}"#)
+        #expect(older.session(agentType: .claudeCode).turnOpen == nil)
+        let receipt = try decode(BRPushReceipt.self, #"{"ok":true,"delivers":true,"startsCards":true}"#)
+        #expect(receipt.startsCards == true)
+        #expect(try decode(BRPushReceipt.self, #"{"ok":true,"delivers":true}"#).startsCards == nil)
+    }
+
     @Test func aUsageGaugeCarriesTheLimitersVerdict() throws {
         let usage = try decode(
             BRUsage.self,

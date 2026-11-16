@@ -700,6 +700,8 @@ struct BRSummary: Decodable {
     let createdAt: Date?
     let updatedAt: Date?
     let active: Bool?
+    /// The conversation's own turn is open, narrower than `active`.
+    let turnOpen: Bool?
     let agents: Int?
     let agentTask: String?
     let saved: Bool?
@@ -730,7 +732,7 @@ struct BRSummary: Decodable {
                 stalled: backgroundStalled),
             pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt,
             agentID: agent, agentName: agentName, isScheduled: scheduled,
-            lastWords: (lastWords?.isEmpty ?? true) ? nil : lastWords)
+            lastWords: (lastWords?.isEmpty ?? true) ? nil : lastWords, turnOpen: turnOpen)
     }
 }
 
@@ -1556,13 +1558,15 @@ extension ClaudeCodeBackend {
         let body = try BridgeCoding.encoder.encode(registration)
         let data = try await http.send(builder.request(.post, "/push/device", body: body))
         let response = try? BridgeCoding.decoder.decode(BRPushReceipt.self, from: data)
-        return DevicePushRegistration.Receipt(delivers: response?.delivers)
+        return DevicePushRegistration.Receipt(
+            delivers: response?.delivers, startsCards: response?.startsCards)
     }
 }
 
 struct BRPushReceipt: Decodable {
     let ok: Bool?
     let delivers: Bool?
+    let startsCards: Bool?
 }
 
 /// Whether this bridge answers the turn-wait route at all, remembered for a while so arming a wait

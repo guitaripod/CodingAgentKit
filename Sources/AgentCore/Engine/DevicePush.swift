@@ -30,9 +30,15 @@ public struct DevicePushRegistration: Sendable, Codable {
         /// Whether this bridge holds an APNs client and will really push to this token. `nil` from
         /// a bridge built before it said either way, which must not be read as `false`.
         public var delivers: Bool?
+        /// Whether the bridge took the device's push-to-start token and will start Live
+        /// Activities for turns the device did not send. Nil from a bridge that cannot, which a
+        /// device hands the token to again whenever it comes forward, so a bridge updated since
+        /// learns it without the app being relaunched.
+        public var startsCards: Bool?
 
-        public init(delivers: Bool? = nil) {
+        public init(delivers: Bool? = nil, startsCards: Bool? = nil) {
             self.delivers = delivers
+            self.startsCards = startsCards
         }
     }
 }
