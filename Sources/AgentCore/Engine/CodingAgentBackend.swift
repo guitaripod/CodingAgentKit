@@ -1102,6 +1102,15 @@ public protocol CodingAgentBackend: Sendable {
     func registerDeviceTokenReceipt(
         _ registration: DevicePushRegistration
     ) async throws -> DevicePushRegistration.Receipt
+    /// Tells this server whether the person is at this desktop. `false` from a server that keeps no
+    /// desks, so a desk stops telling it for a while instead of failing every report.
+    func reportDesk(_ report: DeskReport) async throws -> Bool
+    /// What this server knows about the desks reporting to it; nil from a server that keeps none.
+    func deskPresence() async throws -> DeskPresence?
+    /// A side-effect-free request a background `URLSession` can hold until nobody has been at a
+    /// desk for `awayAfter` seconds, answered with ``DeskPresence`` (`away: true`). Nil from a
+    /// server that keeps no desks.
+    func deskAwayRequest(awayAfter: TimeInterval) async throws -> TurnWaitRequest?
     /// Live quotas for other providers the backend's host machine is signed into (the bridge
     /// serves Grok's billing quota alongside Claude's). Empty when unsupported.
     func additionalUsageQuotas() async throws -> [UsageQuota]

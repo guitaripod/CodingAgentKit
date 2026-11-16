@@ -1563,6 +1563,39 @@ extension ClaudeCodeBackend {
     }
 }
 
+/// `POST /presence`, `GET /presence` and `GET /presence/wait`: the desks a bridge keeps, the same
+/// routes on claude-bridge and omp-bridge. A bridge built before them answers 404, which reads as
+/// "keeps no desks" rather than as a failure.
+extension ClaudeCodeBackend {
+    public func reportDesk(_ report: DeskReport) async throws -> Bool {
+        let body = try BridgeCoding.encoder.encode(report)
+        do {
+            _ = try await http.send(builder.request(.post, "/presence", body: body))
+            return true
+        } catch AgentError.http(let status, _) where status == 404 || status == 405 {
+            return false
+        }
+    }
+
+    public func deskPresence() async throws -> DeskPresence? {
+        do {
+            let data = try await http.send(builder.request(.get, "/presence"))
+            return try DeskPresence.decode(status: 200, body: data)
+        } catch AgentError.http(let status, _) where status == 404 || status == 405 {
+            return nil
+        }
+    }
+
+    public func deskAwayRequest(awayAfter: TimeInterval) async throws -> TurnWaitRequest? {
+        let seconds = max(1, Int(awayAfter.rounded()))
+        return TurnWaitRequest(
+            request: try builder.request(
+                .get, "/presence/wait",
+                query: [URLQueryItem(name: "awayAfter", value: String(seconds))]),
+            uploadsEmptyBody: false)
+    }
+}
+
 struct BRPushReceipt: Decodable {
     let ok: Bool?
     let delivers: Bool?

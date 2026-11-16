@@ -73,6 +73,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var subscriptions = 0
         var sentPrompts: [SendPrompt] = []
         var backgroundStops: [String] = []
+        var desks: DeskPresence?
+        var deskReports: [DeskReport] = []
         var reverts: [String] = []
         var restores: [String] = []
         var standingReverts: [String: SessionRevert] = [:]
@@ -141,6 +143,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         turnWaitSupport: TurnWaitSupport = .supported,
         turnWaitResults: [String: [TurnWaitResult]] = [:],
         pushReceipt: DevicePushRegistration.Receipt = DevicePushRegistration.Receipt(),
+        deskPresence: DeskPresence? = nil,
         serverQueue: Bool = false,
         schedules: [MachineSchedule]? = nil,
         machineAgents: MachineAgentsReport? = nil,
@@ -189,6 +192,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsSchedules: schedules != nil, supportsMachineAgents: machineAgents != nil,
                 supportsServerQueue: serverQueue, supportsQueueEdit: serverQueue)
         mutable.withLock {
+            $0.desks = deskPresence
             $0.chapters = chapters
             $0.machineSchedules = schedules
             $0.machineAgents = machineAgents
@@ -639,6 +643,37 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         _ registration: DevicePushRegistration
     ) async throws -> DevicePushRegistration.Receipt {
         pushReceipt
+    }
+
+    /// A mock that was given desks keeps them and every report it hears; one that was not keeps
+    /// none, like a bridge from before desks.
+    public func reportDesk(_ report: DeskReport) async throws -> Bool {
+        mutable.withLock {
+            guard $0.desks != nil else { return false }
+            $0.deskReports.append(report)
+            return true
+        }
+    }
+
+    public func deskPresence() async throws -> DeskPresence? {
+        mutable.withLock { $0.desks }
+    }
+
+    public func deskAwayRequest(awayAfter: TimeInterval) async throws -> TurnWaitRequest? {
+        guard mutable.withLock({ $0.desks != nil }) else { return nil }
+        var request = URLRequest(
+            url: URL(string: "https://mock.invalid/presence/wait?awayAfter=\(Int(awayAfter))")!)
+        request.httpMethod = "GET"
+        return TurnWaitRequest(request: request, uploadsEmptyBody: false)
+    }
+
+    /// The reports desks have sent this mock, oldest first.
+    public var reportedDesks: [DeskReport] { mutable.withLock { $0.deskReports } }
+
+    /// Changes what this mock says about the desks reporting to it, as a desk arriving or leaving
+    /// would.
+    public func setDeskPresence(_ presence: DeskPresence?) {
+        mutable.withLock { $0.desks = presence }
     }
 
     public func turnWaitSupport() async -> TurnWaitSupport { waitSupport }

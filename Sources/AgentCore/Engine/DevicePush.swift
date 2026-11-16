@@ -53,12 +53,23 @@ public struct DevicePushRules: Sendable, Codable, Equatable {
     public var minimumWork: Int?
     public var needsYou: Bool?
     public var muted: [String]?
+    /// Hold this device's notices while the person is at a desk (``DeskPresence``) and hand them
+    /// over, the ones still unread, once they have left. Nil or false: push as always.
+    public var quietAtDesk: Bool?
+    /// Seconds without input before the person counts as away from a desk; the bridge's default
+    /// when nil.
+    public var awayAfter: Int?
 
-    public init(finish: String, minimumWork: Int? = nil, needsYou: Bool? = nil, muted: [String]? = nil) {
+    public init(
+        finish: String, minimumWork: Int? = nil, needsYou: Bool? = nil, muted: [String]? = nil,
+        quietAtDesk: Bool? = nil, awayAfter: Int? = nil
+    ) {
         self.finish = finish
         self.minimumWork = minimumWork
         self.needsYou = needsYou
         self.muted = muted
+        self.quietAtDesk = quietAtDesk
+        self.awayAfter = awayAfter
     }
 }
 
