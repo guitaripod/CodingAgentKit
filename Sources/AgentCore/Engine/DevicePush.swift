@@ -8,11 +8,18 @@ public struct DevicePushRegistration: Sendable, Codable {
     /// What the person wants to hear about, so the server that holds the work pushes only that.
     /// Nil leaves the server's own default, which is what a device that predates the rules sends.
     public var rules: DevicePushRules?
+    /// How the server may start this installation's Live Activities itself; nil from a device
+    /// that cannot, or that predates it, and the server then starts none.
+    public var liveActivity: LiveActivityStarter?
 
-    public init(token: String, environment: String, rules: DevicePushRules? = nil) {
+    public init(
+        token: String, environment: String, rules: DevicePushRules? = nil,
+        liveActivity: LiveActivityStarter? = nil
+    ) {
         self.token = token
         self.environment = environment
         self.rules = rules
+        self.liveActivity = liveActivity
     }
 
     /// What registering actually left the bridge able to do. A bridge can answer `{"ok":true}`
