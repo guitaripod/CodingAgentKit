@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.58.0
+
+A listing says whether a conversation's own turn is open, and a bridge says it starts cards.
+
+### Added
+- **`AgentSession.turnOpen`.** claude-bridge's listing has long sent `turnOpen` beside `active`; the Kit now carries it, so a client can tell a conversation running a turn from one whose only activity is agents or background work left running between turns. Nil from a server that does not say.
+- **`DevicePushRegistration.Receipt.startsCards`.** claude-bridge 1.31.0 answers a device registration with `startsCards: true` once it holds the device's push-to-start token, so a device knows to hand the token to a bridge that has not taken it yet. Nil from an older bridge.
+
 ## 0.57.0
 
 A server can start a Live Activity for a turn the phone did not send.
