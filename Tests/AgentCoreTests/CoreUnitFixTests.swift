@@ -27,6 +27,20 @@ import Testing
         #expect(AgentError.server("overloaded").isRetryable)
     }
 
+    @Test func anAnswerStoppedByHandSaysSoWhateverTheServerCalledIt() {
+        for reason in ["aborted", "Cancelled", "interrupt", "stop-by-user"] {
+            let stopped = ChatMessage(
+                id: "a", role: .assistant, agentType: .openCode, parts: [], createdAt: .distantPast, finishReason: reason)
+            #expect(stopped.isHaltedByHand)
+        }
+        let finished = ChatMessage(
+            id: "a", role: .assistant, agentType: .openCode, parts: [], createdAt: .distantPast, finishReason: "stop")
+        #expect(!finished.isHaltedByHand)
+        let prompt = ChatMessage(
+            id: "u", role: .user, agentType: .openCode, parts: [], createdAt: .distantPast, finishReason: "aborted")
+        #expect(!prompt.isHaltedByHand)
+    }
+
     @Test func structuralClientErrorsAreNotRetryable() {
         #expect(!AgentError.decoding("bad json").isRetryable)
         #expect(!AgentError.invalidURL("nope").isRetryable)

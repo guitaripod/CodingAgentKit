@@ -343,7 +343,13 @@ public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public var isAnswerless: Bool {
         guard role == .assistant, !isStreaming, completedAt != nil else { return false }
         guard error == nil, !carriesAnswer else { return false }
-        return !Self.haltedByHand.contains(finishReason?.lowercased() ?? "")
+        return !isHaltedByHand
+    }
+
+    /// An answer somebody stopped by hand, on any machine, as the server recorded it: the person's
+    /// own decision rather than a failure or an ending worth telling them about.
+    public var isHaltedByHand: Bool {
+        role == .assistant && Self.haltedByHand.contains(finishReason?.lowercased() ?? "")
     }
 
     private static let haltedByHand: Set<String> = [

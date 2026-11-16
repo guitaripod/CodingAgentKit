@@ -695,7 +695,8 @@ extension OpenCodeV2Backend {
         let title = try? await client.session(sessionID).title
         return TurnWaitResult(
             state: .ended, waited: true, ending: outcome.ending, title: title,
-            toolCount: outcome.toolCount, lastMessageID: outcome.lastMessageID)
+            toolCount: outcome.toolCount, lastMessageID: outcome.lastMessageID,
+            endedAt: outcome.endedAt)
     }
 }
 

@@ -68,6 +68,7 @@ private let idleFailedTurn = #"""
         #expect(outcome.ending == .finished)
         #expect(outcome.toolCount == 1)
         #expect(outcome.lastMessageID == "msg_A2")
+        #expect(outcome.endedAt == Date(timeIntervalSince1970: 1_789_999_438.977))
     }
 
     @Test func aProviderErrorIsFailed() throws {

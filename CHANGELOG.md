@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.62.0
+
+A stopped answer says so, and opencode 2's turn wait says when the turn ended.
+
+### Added
+- **`ChatMessage.isHaltedByHand`.** Whether an answer was stopped by a person, on any machine, read from the finish reason the server recorded (`aborted`, `cancelled`, `interrupted` and the other words for it). A client can treat a stop as the person's own decision rather than a turn that finished.
+
+### Changed
+- **opencode 2's wait carries the ending's time.** `TurnWaitResult.endedAt` is the last answer's completion time from the transcript, as claude-bridge and omp-bridge already send, so a card or a notice settled from a wait is dated by the server's clock rather than by when the phone woke to read it.
+
 ## 0.61.0
 
 A line the harness wrote is a note, not a prompt.

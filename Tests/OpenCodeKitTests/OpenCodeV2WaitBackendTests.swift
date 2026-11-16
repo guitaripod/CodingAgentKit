@@ -237,6 +237,7 @@ final class WaitServer: @unchecked Sendable {
         #expect(result.ending == .finished)
         #expect(result.title == "A session")
         #expect(result.lastMessageID == "msg_A1")
+        #expect(result.endedAt == Date(timeIntervalSince1970: 1.02))
     }
 
     @Test func theEndOfAConversationIsReadNewestFirstAndHandedBackOldestFirst() async throws {

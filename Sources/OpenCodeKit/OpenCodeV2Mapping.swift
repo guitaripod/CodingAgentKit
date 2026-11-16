@@ -478,6 +478,7 @@ enum OpenCodeV2Mapping {
         var ending: TurnWaitResult.Ending
         var toolCount: Int
         var lastMessageID: String
+        var endedAt: Date?
     }
 
     /// `raw` is the same tail before `transcript(_:)` drops its bookkeeping records — the trailing
@@ -492,7 +493,8 @@ enum OpenCodeV2Mapping {
             count += message.parts.filter(isToolPart).count
         }
         let ending = idleEnding(raw) ?? heuristicEnding(last)
-        return WaitOutcome(ending: ending, toolCount: toolCount, lastMessageID: last.id)
+        return WaitOutcome(
+            ending: ending, toolCount: toolCount, lastMessageID: last.id, endedAt: last.completedAt)
     }
 
     /// The trailing `idle` record's own outcome, mapped by its name rather than guessed at —
