@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.60.0
+
+A phone can hand a notice it would hold to the bridge that pushes to it, and a desk says when each look happened.
+
+### Added
+- **`DeskHeldNotice` and `holdNotice(_:)`.** A device that raises its own notice while its person is at a desk hands it to a claude-bridge 1.33.0 that pushes to it (`POST /push/hold`), which sends it through APNs once they leave; `false` from a bridge that cannot. A protocol requirement, so it dispatches through `any CodingAgentBackend`.
+- **`DeskReport.lookedAgo`.** Seconds before the report each look happened, so a bridge never mistakes a look from before a held notice for one after it.
+- **`DevicePushRegistration.deviceID`.** The installation, so a bridge applies the device's quiet-at-desk rule to its Live Activities whether or not it can start them.
+
+### Changed
+- **`DeskPresence` reads leniently.** One look a server wrote oddly costs only itself, and a look in the same second as a notice counts as after it, since bridges write whole seconds.
+
 ## 0.59.0
 
 A desk says when its person is at it, and a phone can stay quiet while they are.
