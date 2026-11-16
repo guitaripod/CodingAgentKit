@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.56.0
+
+A Live Activity's server can open the Dynamic Island when a turn ends.
+
+### Added
+- **`LiveActivityRegistration.endAlert`.** claude-bridge 1.29.0 reads it and, at the ending it pushes, alerts the card so the Dynamic Island opens on how the turn ended: `"silent"` without a sound, `"sound"` with one, nil (the default, and what every app before it sends) settling the card in place as before. It is left out of the body when nil.
+
 ## 0.55.0
 
 A usage window says whether the provider is refusing it.
