@@ -166,12 +166,15 @@ public struct MessageReducer: Sendable {
         return index
     }
 
-    /// The newest assistant message that has words, provided no prompt has come after it.
+    /// The newest assistant message that has words, provided no turn has started after it: a
+    /// prompt, or the server's note that work the agent left running came back, which the agent
+    /// answers as it would a prompt and which is therefore just as much the end of the answer
+    /// before it.
     private func newestAnswerSincePrompt() -> Int? {
         var index = messages.count - 1
         while index >= 0 {
             let candidate = messages[index]
-            if candidate.role == .user { return nil }
+            if candidate.role == .user || candidate.reportsWorkBack { return nil }
             if candidate.role == .assistant, Self.hasWords(candidate) { return index }
             index -= 1
         }

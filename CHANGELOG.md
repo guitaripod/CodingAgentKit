@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.61.0
+
+A line the harness wrote is a note, not a prompt.
+
+### Added
+- **A bridge message's `notice` becomes a note.** claude-bridge 1.35.0 says beside the sentence it always sent that a message is the harness reporting work back (a background command or agent ending). `ClaudeCodeBackend` turns such a message into the `.workFinished` note opencode 2 already sends, so every client draws a quiet line between turns instead of a prompt in the reader's voice. An older bridge, and a word this Kit does not know, read as before.
+- **`ChatMessage.reportsWorkBack`.** Whether a message is the server's note that work the agent left running has ended.
+
+### Changed
+- **Work coming back ends the answer before it.** The reducer's test for an answer arriving again under a second id stopped at the last prompt; a harness line used to be one. It now stops at a note that reports work back too, so the answer the agent gives to it is never folded into the one before.
+
 ## 0.60.0
 
 A phone can hand a notice it would hold to the bridge that pushes to it, and a desk says when each look happened.

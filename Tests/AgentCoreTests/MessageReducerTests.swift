@@ -163,6 +163,26 @@ struct RenamedCopyTests {
         #expect(reducer.snapshot[1].parts.map(\.id) == ["text"])
     }
 
+    @Test("An answer after work came back is its own, however it begins")
+    func workComingBackEndsTheAnswerBeforeIt() {
+        var reducer = held()
+        let note = ChatMessage(
+            id: "N", role: .system, agentType: .claudeCode,
+            parts: [
+                MessagePart(
+                    id: "N/note",
+                    kind: .note(
+                        TranscriptNote(.workFinished("Run the suite", work: .command, outcome: .completed))))
+            ],
+            createdAt: Date(timeIntervalSince1970: 1))
+        #expect(note.reportsWorkBack)
+        #expect(!message("U", .user, "make a table").reportsWorkBack)
+        reducer.apply(.messageUpserted(note, replaceParts: true))
+        reducer.apply(
+            .messageUpserted(message("B", .assistant, Self.answer), replaceParts: true))
+        #expect(reducer.snapshot.map(\.id) == ["U", "A", "N", "B"])
+    }
+
     @Test("Parts addressed to the second name never write the words twice")
     func aliasPartsAreIgnored() {
         var reducer = held()

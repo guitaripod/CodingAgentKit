@@ -947,12 +947,21 @@ struct BRMessage: Decodable {
     /// a client that opens the chat afterwards still sees the failed turn rather than a prompt
     /// that was never answered.
     let error: String?
+    /// What the message is when nobody typed it: the harness reporting that work the agent left
+    /// running has ended. A bridge that says so sends it beside the sentence it always sent.
+    let notice: BRNotice?
 
     /// Duplicate part ids (the bridge assigns text parts the fixed id "text")
     /// get an index suffix so `messageID:partID` row identifiers stay unique. The
     /// suffix scheme ("text", "text-1", …) is the same one `MessageReducer` numbers a newly
     /// opened text block by, so streamed tokens and full-message upserts converge on the same part.
     func chat(agentType: AgentType) -> ChatMessage {
+        if let note = notice?.note {
+            return ChatMessage(
+                id: id, role: .system, agentType: agentType,
+                parts: [MessagePart(id: "\(id)/note", kind: .note(note))], createdAt: createdAt,
+                completedAt: createdAt)
+        }
         var counts: [String: Int] = [:]
         let uniqueParts = parts.map { raw -> MessagePart in
             let part = raw.part
@@ -969,6 +978,27 @@ struct BRMessage: Decodable {
             providerID: named.providerID, modelID: named.modelID,
             totalTokens: tiers.map(\.total), usage: tiers, context: context?.usage,
             duration: seconds)
+    }
+}
+
+/// The harness's own line as a bridge names it: which kind of work came back, how it ended and
+/// what it was called. A word this Kit does not know is no notice at all, and the message reads
+/// as the sentence it carries, the way it always has.
+struct BRNotice: Decodable {
+    let work: String
+    let outcome: String
+    let title: String
+
+    var note: TranscriptNote? {
+        guard let work = TranscriptNote.Work(rawValue: work), !title.isEmpty else { return nil }
+        let ended: TranscriptNote.Outcome
+        switch outcome {
+        case "completed": ended = .completed
+        case "stopped": ended = .cancelled
+        case "failed": ended = .failed
+        default: return nil
+        }
+        return TranscriptNote(.workFinished(title, work: work, outcome: ended))
     }
 }
 

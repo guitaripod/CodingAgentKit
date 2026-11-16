@@ -224,6 +224,20 @@ public struct MessageUsage: Sendable, Hashable, Codable {
     public var isEmpty: Bool { total == 0 }
 }
 
+extension ChatMessage {
+    /// Whether this message is the server's note that work the agent left running has ended.
+    /// Nobody typed it, and the agent takes a turn on it all the same, so wherever a prompt marks
+    /// the line between one answer and the next, this does too.
+    public var reportsWorkBack: Bool {
+        parts.contains { part in
+            guard case .note(let note) = part.kind, case .workFinished = note.subject else {
+                return false
+            }
+            return true
+        }
+    }
+}
+
 public struct ChatMessage: Identifiable, Sendable, Hashable, Codable {
     public let id: String
     public var role: MessageRole

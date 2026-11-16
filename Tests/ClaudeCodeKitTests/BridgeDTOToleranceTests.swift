@@ -34,6 +34,62 @@ import Testing
         #expect(try decode(BRPushReceipt.self, #"{"ok":true,"delivers":true}"#).startsCards == nil)
     }
 
+    /// The harness's line about work coming back used to reach every client as a prompt. A bridge
+    /// that says whose line it is sends a notice beside the sentence, and the message becomes the
+    /// note the transcript already draws; an older bridge, and a word this Kit does not know,
+    /// leave it the prompt it always was.
+    @Test func aMessageTheHarnessWroteBecomesANote() throws {
+        let noted = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"n1","role":"user","createdAt":"\#(Self.fixedTimestamp)",
+             "parts":[{"kind":"text","text":"Background command \"Wait for the release\" completed (exit code 0)"}],
+             "notice":{"work":"command","outcome":"completed","title":"Wait for the release"}}
+            """#
+        ).chat(agentType: .claudeCode)
+        #expect(noted.role == .system)
+        #expect(noted.parts.count == 1)
+        #expect(noted.parts.first?.id == "n1/note")
+        guard case .note(let note)? = noted.parts.first?.kind else {
+            Issue.record("the message is not a note")
+            return
+        }
+        #expect(note.subject == .workFinished("Wait for the release", work: .command, outcome: .completed))
+
+        let stopped = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"n2","role":"user","createdAt":"\#(Self.fixedTimestamp)","parts":[{"kind":"text","text":"x"}],
+             "notice":{"work":"agent","outcome":"stopped","title":"Audit the auth module"}}
+            """#
+        ).chat(agentType: .claudeCode)
+        guard case .note(let ended)? = stopped.parts.first?.kind else {
+            Issue.record("a stopped agent is not a note")
+            return
+        }
+        #expect(ended.subject == .workFinished("Audit the auth module", work: .agent, outcome: .cancelled))
+
+        let older = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"n3","role":"user","createdAt":"\#(Self.fixedTimestamp)",
+             "parts":[{"kind":"text","text":"Background command \"x\" completed"}]}
+            """#
+        ).chat(agentType: .claudeCode)
+        #expect(older.role == .user)
+        #expect(older.parts.first?.text == "Background command \"x\" completed")
+
+        let unknown = try decode(
+            BRMessage.self,
+            #"""
+            {"id":"n4","role":"user","createdAt":"\#(Self.fixedTimestamp)","parts":[{"kind":"text","text":"y"}],
+             "notice":{"work":"ritual","outcome":"completed","title":"z"}}
+            """#
+        ).chat(agentType: .claudeCode)
+        #expect(unknown.role == .user)
+        #expect(unknown.parts.first?.text == "y")
+    }
+
     @Test func aUsageGaugeCarriesTheLimitersVerdict() throws {
         let usage = try decode(
             BRUsage.self,
