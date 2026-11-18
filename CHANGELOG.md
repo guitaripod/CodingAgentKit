@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.63.0
+
+opencode 2's queue can be edited and cancelled from any client.
+
+### Added
+- **`OpenCodeV2Backend` edits and cancels a waiting prompt.** The inbox has no edit of its own, so a rewrite takes the prompt and everything behind it back out and admits them again in the same order under the same ids, the rewritten one carrying the new words: the queue keeps its place and its identities, and what each item carried — files, agents, skills, its delivery — goes back with it. An edit never wakes the session, so the running turn or the Stop that paused the queue still decides when the queue goes. Cancelling reads the inbox first: an id the server no longer holds has started, and answers `QueueError.alreadyStarted` rather than a cancellation that quietly did nothing.
+- **`BackendCapabilities.supportsQueueEdit` for opencode 2**, so the Apple clients offer the edit they already had for a bridge's queue.
+
+### Changed
+- **`OC2InboxItem` reads `delivery`**, which a rewrite hands back with the item it belongs to.
+
 ## 0.62.0
 
 A stopped answer says so, and opencode 2's turn wait says when the turn ended.

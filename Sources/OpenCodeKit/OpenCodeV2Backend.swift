@@ -29,7 +29,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         reportsInterruptions: true,
         transcriptCarriesSidecar: true,
         supportsRevert: true,
-        supportsServerQueue: true
+        supportsServerQueue: true,
+        supportsQueueEdit: true
     )
 
     let client: OpenCodeV2Client
@@ -429,6 +430,51 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
 
     public func abort(sessionID: String) async throws {
         try await client.interrupt(sessionID: sessionID)
+    }
+
+    /// Takes a waiting prompt out of the inbox and answers the queue as it now stands. The server
+    /// cancels an item it no longer holds without complaint, so the inbox is read first: an id it
+    /// does not hold has already started, which is what the caller has to hear rather than a
+    /// cancellation that quietly did nothing.
+    public func cancelQueued(sessionID: String, id: String) async throws -> QueueSnapshot {
+        let items = try await client.inbox(sessionID: sessionID)
+        guard items.contains(where: { $0.id == id }) else { throw QueueError.alreadyStarted }
+        try await client.cancelInbox(sessionID: sessionID, inboxID: id)
+        return OpenCodeV2Mapping.queue(try await client.inbox(sessionID: sessionID))
+    }
+
+    /// Rewrites a waiting prompt. The inbox has no edit of its own, so the prompt and everything
+    /// behind it are taken back and admitted again in the same order under the same ids, the
+    /// rewritten one carrying the new words: the queue keeps its place and its identities. An
+    /// edit never wakes the session — it changes the words of something already waiting, not the
+    /// flow it waits in — so the running turn, or the Stop that paused the queue, still decides
+    /// when the queue goes.
+    public func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
+        -> QueueSnapshot
+    {
+        let items = try await client.inbox(sessionID: sessionID)
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].type == "user"
+        else { throw QueueError.alreadyStarted }
+        guard let text = edit.text else { return OpenCodeV2Mapping.queue(items) }
+        let tail = Array(items[index...])
+        for item in tail { try await client.cancelInbox(sessionID: sessionID, inboxID: item.id) }
+        for (offset, item) in tail.enumerated() {
+            let body = Self.readmitted(item, text: offset == 0 ? text : nil)
+            try await client.admit(sessionID: sessionID, body: body)
+        }
+        return OpenCodeV2Mapping.queue(try await client.inbox(sessionID: sessionID))
+    }
+
+    /// The input that puts a taken-back item where it was: everything it carried, its own id and
+    /// delivery, and the new words when this is the one being rewritten.
+    private static func readmitted(_ item: OC2InboxItem, text: String?) -> JSONValue {
+        var body: [String: JSONValue] = [:]
+        if case .object(let payload)? = item.payload { body = payload }
+        if let text { body["text"] = .string(text) }
+        body["id"] = .string(item.id)
+        if let delivery = item.delivery { body["delivery"] = .string(delivery) }
+        body["resume"] = .bool(false)
+        return .object(body)
     }
 
     public func events(for sessionID: String) -> AsyncThrowingStream<BackendEvent, Error> {

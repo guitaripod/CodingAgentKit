@@ -101,9 +101,11 @@ struct OC2InboxItem: Decodable, Sendable {
     let type: String
     let payload: JSONValue?
     let time: OC2MessageTime?
+    /// `steer` or `queue`; absent from an older server, which leaves the default to apply.
+    let delivery: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, type, payload, time
+        case id, type, payload, time, delivery
     }
 
     /// The clock is a nicety, so a server that writes it in a shape this client does not know
@@ -114,13 +116,18 @@ struct OC2InboxItem: Decodable, Sendable {
         type = try container.decode(String.self, forKey: .type)
         payload = try container.decodeIfPresent(JSONValue.self, forKey: .payload)
         time = try? container.decodeIfPresent(OC2MessageTime.self, forKey: .time)
+        delivery = try? container.decodeIfPresent(String.self, forKey: .delivery)
     }
 
-    init(id: String, type: String, payload: JSONValue?, time: OC2MessageTime? = nil) {
+    init(
+        id: String, type: String, payload: JSONValue?, time: OC2MessageTime? = nil,
+        delivery: String? = nil
+    ) {
         self.id = id
         self.type = type
         self.payload = payload
         self.time = time
+        self.delivery = delivery
     }
 }
 

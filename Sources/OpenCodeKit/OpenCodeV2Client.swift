@@ -184,6 +184,22 @@ public struct OpenCodeV2Client: Sendable {
         try unwrap(await http.send(builder.request(.get, "/api/session/\(sessionID)/inbox")))
     }
 
+    /// Takes a waiting item back out of the inbox. An item that already left is answered without
+    /// complaint, so the caller reads the inbox first when a missing id means something.
+    func cancelInbox(sessionID: String, inboxID: String) async throws {
+        _ = try await http.send(
+            builder.request(.delete, "/api/session/\(sessionID)/inbox/\(inboxID)"))
+    }
+
+    /// Admits one input as written — the words, what it carries, the id it keeps — and wakes the
+    /// session to act on it only when `resume` says so.
+    func admit(sessionID: String, body: JSONValue) async throws {
+        _ = try await http.send(
+            builder.request(
+                .post, "/api/session/\(sessionID)/prompt",
+                body: try JSONCoding.encoder.encode(body)))
+    }
+
     /// The newest `limit` records rather than the whole transcript — `messages(sessionID:)` walks
     /// forward from the start until a short page, which on a long conversation means paging
     /// through everything just to reach the end. Asking for the first page in descending order

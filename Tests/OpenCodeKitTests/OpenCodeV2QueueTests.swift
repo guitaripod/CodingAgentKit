@@ -225,11 +225,11 @@ final class InboxServer: @unchecked Sendable {
         InboxServer.shared.publish(200, "{}", method: "POST", at: "/api/session/ses_1/prompt")
     }
 
-    @Test func version2OffersAServerQueueWithoutEditing() {
+    @Test func version2OffersAServerQueueAndItsEditing() {
         let capabilities = Self.backend().capabilities
 
         #expect(capabilities.supportsServerQueue)
-        #expect(!capabilities.supportsQueueEdit)
+        #expect(capabilities.supportsQueueEdit)
     }
 
     @Test func version1KeepsItsQueueOnTheDevice() async {
@@ -281,16 +281,9 @@ final class InboxServer: @unchecked Sendable {
         #expect(result.queue.items.map(\.id) == ["msg_1"])
     }
 
-    @Test func cancellingAndEditingAreNotOfferedBecauseTheServerHasNoRouteForThem() async {
+    @Test func resumingIsNotOfferedBecauseTheServerHasNoRouteForIt() async {
         let backend = Self.backend()
 
-        await #expect(throws: AgentError.unsupported("queue")) {
-            try await backend.cancelQueued(sessionID: "ses_1", id: "msg_1")
-        }
-        await #expect(throws: AgentError.unsupported("queue")) {
-            try await backend.editQueued(
-                sessionID: "ses_1", id: "msg_1", edit: QueuedPromptEdit(text: "x"))
-        }
         await #expect(throws: AgentError.unsupported("queue")) {
             try await backend.resumeQueue(sessionID: "ses_1")
         }
