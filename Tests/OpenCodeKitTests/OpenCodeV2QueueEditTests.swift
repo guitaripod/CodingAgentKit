@@ -35,6 +35,7 @@ final class QueueEditServer: @unchecked Sendable {
     private var clock: Double = 1_790_000_000_000
     private var cancelledIDs: [String] = []
     private var admittedBodies: [JSONValue] = []
+    private var refusedAdmits: Set<String> = []
 
     func reset(_ seeded: [Item]) {
         lock.withLock {
@@ -42,7 +43,14 @@ final class QueueEditServer: @unchecked Sendable {
             clock = 1_790_000_000_000
             cancelledIDs = []
             admittedBodies = []
+            refusedAdmits = []
         }
+    }
+
+    /// One id whose admission the server answers with a failure, standing in for a request lost on
+    /// the way.
+    func refuseAdmit(_ id: String) {
+        lock.withLock { _ = refusedAdmits.insert(id) }
     }
 
     var cancelled: [String] { lock.withLock { cancelledIDs } }
@@ -67,6 +75,7 @@ final class QueueEditServer: @unchecked Sendable {
                 admittedBodies.append(value)
                 guard let id = value["id"]?.stringValue, !items.contains(where: { $0.id == id })
                 else { return (200, nil, Self.json) }
+                guard !refusedAdmits.contains(id) else { return Self.refused }
                 clock += 13
                 items.append(
                     Item(
@@ -103,6 +112,7 @@ final class QueueEditServer: @unchecked Sendable {
     private static let json = "application/json"
     private static let notFound = (404, Data(#"{"_tag":"SessionNotFoundError"}"#.utf8), "application/json")
     private static let badRequest = (400, Data(#"{"_tag":"InvalidRequestError"}"#.utf8), "application/json")
+    private static let refused = (500, Data(#"{"_tag":"UnknownError"}"#.utf8), "application/json")
 
     private static func encode(_ value: JSONValue) -> Data? {
         try? JSONCoding.encoder.encode(value)
@@ -221,6 +231,19 @@ final class QueueEditServerProtocol: URLProtocol {
                 ]))
         #expect(admitted[1]["id"]?.stringValue == "msg_3")
         #expect(admitted[1]["text"]?.stringValue == "three")
+    }
+
+    @Test func oneRefusedAdmissionStillPutsTheRestOfTheQueueBack() async throws {
+        Self.seed([.user("msg_1", "one"), .user("msg_2", "two"), .user("msg_3", "three")])
+        QueueEditServer.shared.refuseAdmit("msg_2")
+
+        await #expect(throws: AgentError.self) {
+            try await Self.backend().editQueued(
+                sessionID: Self.sessionID, id: "msg_1", edit: QueuedPromptEdit(text: "one again"))
+        }
+        #expect(QueueEditServer.shared.held == ["msg_1", "msg_3"])
+        #expect(QueueEditServer.shared.admitted.first?["text"]?.stringValue == "one again")
+        #expect(QueueEditServer.shared.admitted.count == 3)
     }
 
     @Test func editingWhatHasStartedSaysSoAndLeavesTheQueueAlone() async {

@@ -448,7 +448,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     /// rewritten one carrying the new words: the queue keeps its place and its identities. An
     /// edit never wakes the session — it changes the words of something already waiting, not the
     /// flow it waits in — so the running turn, or the Stop that paused the queue, still decides
-    /// when the queue goes.
+    /// when the queue goes. Every item is admitted even when one of them is refused, so a blip
+    /// costs the message it touched rather than the rest of the queue behind it.
     public func editQueued(sessionID: String, id: String, edit: QueuedPromptEdit) async throws
         -> QueueSnapshot
     {
@@ -458,10 +459,14 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         guard let text = edit.text else { return OpenCodeV2Mapping.queue(items) }
         let tail = Array(items[index...])
         for item in tail { try await client.cancelInbox(sessionID: sessionID, inboxID: item.id) }
+        var refusal: (any Error)?
         for (offset, item) in tail.enumerated() {
             let body = Self.readmitted(item, text: offset == 0 ? text : nil)
-            try await client.admit(sessionID: sessionID, body: body)
+            do { try await client.admit(sessionID: sessionID, body: body) } catch {
+                refusal = refusal ?? error
+            }
         }
+        if let refusal { throw refusal }
         return OpenCodeV2Mapping.queue(try await client.inbox(sessionID: sessionID))
     }
 

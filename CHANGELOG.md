@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.63.1
+
+An edit that meets a refusal still puts back the rest of the queue.
+
+### Changed
+- **`OpenCodeV2Backend.editQueued` admits every item it took back**, not up to the first one the server refuses, so a request lost on a flaky tailnet costs the message it touched rather than everything queued behind it. The refusal still reaches the caller.
+
 ## 0.63.0
 
 opencode 2's queue can be edited and cancelled from any client.
