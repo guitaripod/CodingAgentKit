@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.64.0
+
+The experts a claude-bridge keeps.
+
+### Added
+- **`MachineExperts`** — a server that keeps experts (claude-bridge 1.37+): list, read (optionally proving the bench), create, change, delete and draft an expert (from a conversation or a skill), its skills, notebook (live and retired notes, one note's body), journal and brief, running its guards, starting a task, and a task's debrief: read it, finish the task (the debrief drafts in the background) and decide its proposals.
+- **Wire types** — `MachineExpert` with its `ExpertBenchItem`s (proved state, facts and holder), `ExpertGuard`s (metric, latest run, history, `failingSince`), `ExpertNotebookFacts`, `ExpertJournalEntry`, `ExpertTaskRef`; `ExpertDebrief` with its `ExpertProposal`s; `ExpertDraft`, `ExpertChange`, `ExpertTaskRequest`, `ExpertDebriefDecision`, `ExpertSkill`, `ExpertBriefPreview`. Every list is read element by element, so one this client cannot read is left out rather than losing the rest.
+- **`BackendCapabilities.supportsExperts`**, from the bridge's `/status`, and **`AgentSession.expertID`**, the expert a conversation is a task of.
+- **`MockExperts`** for `MockBackend`: experts, notebooks, journals and debriefs kept in memory for demos and tests.
+
 ## 0.63.1
 
 An edit that meets a refusal still puts back the rest of the queue.
