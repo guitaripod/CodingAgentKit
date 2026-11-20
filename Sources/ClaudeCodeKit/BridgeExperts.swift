@@ -72,7 +72,7 @@ extension ClaudeCodeBackend: MachineExperts {
 
     public func expertNote(_ id: String, note: String) async throws -> ExpertNote {
         let data = try await http.send(
-            builder.request(.get, "/experts/\(Self.expertPath(id))/notebook/\(Self.expertPath(note))"))
+            builder.request(.get, "/experts/\(Self.expertPath(id))/notebook/\(note)"))
         return try BridgeCoding.decoder.decode(ExpertNote.self, from: data)
     }
 

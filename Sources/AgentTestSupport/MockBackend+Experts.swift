@@ -163,6 +163,7 @@ extension MockBackend: MachineExperts {
         try withMachine { state in
             guard let session = state.sessions.first(where: { $0.id == sessionID }), let expertID = session.expertID
             else { throw AgentError.http(status: 404, body: "That conversation is not one of this machine's expert tasks.") }
+            if let existing = state.expertDebriefs[sessionID], existing.state != .failed { return existing }
             let journal = ExpertJournalEntry(
                 sessionID: sessionID, title: session.title, at: Date(),
                 outcome: "Posts zoom out of their card and close by any back gesture; swiping right always goes back.",

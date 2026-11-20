@@ -180,16 +180,21 @@ public struct ExpertGuard: Codable, Sendable, Hashable, Identifiable {
     public var isFailing: Bool { last.map { !$0.passed } ?? false }
 
     /// When the guard began failing: the oldest run in the unbroken stretch of failures that ends
-    /// with the latest one.
+    /// with the latest one. Nil when every run the machine kept failed, since the stretch began
+    /// before the history does and its start is not known.
     public var failingSince: Date? {
         guard isFailing else { return nil }
+        let runs = history ?? []
         var since = last?.at
-        for run in history ?? [] {
-            guard !run.passed else { break }
+        for run in runs {
+            guard !run.passed else { return since }
             since = run.at
         }
-        return since
+        return runs.count >= Self.keptRuns ? nil : since
     }
+
+    /// How many runs a machine keeps for one guard.
+    public static let keptRuns = 30
 }
 
 public struct ExpertNotebookFacts: Codable, Sendable, Hashable {
