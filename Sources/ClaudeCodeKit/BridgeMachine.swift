@@ -8,16 +8,19 @@ final class BridgeMachineFacts: @unchecked Sendable {
     private let lock = NSLock()
     private var schedules = false
     private var agents = false
+    private var experts = false
     private var agentIDs: Set<String> = []
     private var agentNames: [String: String] = [:]
 
     var keepsSchedules: Bool { lock.withLock { schedules } }
     var hostsAgents: Bool { lock.withLock { agents } }
+    var keepsExperts: Bool { lock.withLock { experts } }
 
-    func record(schedules: Bool, agents: Bool) {
+    func record(schedules: Bool, agents: Bool, experts: Bool) {
         lock.withLock {
             self.schedules = schedules
             self.agents = agents
+            self.experts = experts
         }
     }
 

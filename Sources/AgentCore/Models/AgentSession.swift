@@ -101,6 +101,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
     public var agentName: String?
     /// A schedule on the machine made this conversation and runs into it.
     public var isScheduled: Bool?
+    /// The expert this conversation is a task of, by id, on a machine that keeps experts.
+    public var expertID: String?
     /// What the answer that closed the last turn began with, as one plain line a list can quote
     /// on a row nobody has read. Nil while a turn is open, once the chat has been read, and from a
     /// server that does not quote (opencode, a bridge before claude-bridge 1.26).
@@ -155,7 +157,8 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         agentName: String? = nil,
         isScheduled: Bool? = nil,
         lastWords: String? = nil,
-        turnOpen: Bool? = nil
+        turnOpen: Bool? = nil,
+        expertID: String? = nil
     ) {
         self.id = id
         self.agentType = agentType
@@ -182,6 +185,7 @@ public struct AgentSession: Identifiable, Sendable, Hashable, Codable {
         self.isScheduled = isScheduled
         self.lastWords = lastWords
         self.turnOpen = turnOpen
+        self.expertID = expertID
     }
 
     /// Whether the server reports this person's marks at all. A listing that says `false` for a

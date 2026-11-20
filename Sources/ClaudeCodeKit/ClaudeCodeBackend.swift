@@ -13,6 +13,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         value.supportsQueueEdit = queueSupport.isSupported
         value.supportsSchedules = machineFacts.keepsSchedules
         value.supportsMachineAgents = machineFacts.hostsAgents
+        value.supportsExperts = agentType == .claudeCode && machineFacts.keepsExperts
         value.transcriptCarriesSidecar = detailSupport.isSupported
         if agentType == .omp {
             value.supportsGoals = false
@@ -131,7 +132,9 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         }
         queueSupport.record((status.queue ?? 0) >= 1)
         detailSupport.record((status.detail ?? 0) >= 1)
-        machineFacts.record(schedules: (status.schedules ?? 0) >= 1, agents: (status.agents ?? 0) >= 1)
+        machineFacts.record(
+            schedules: (status.schedules ?? 0) >= 1, agents: (status.agents ?? 0) >= 1,
+            experts: (status.experts ?? 0) >= 1)
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
@@ -717,6 +720,7 @@ struct BRSummary: Decodable {
     let agentName: String?
     let scheduled: Bool?
     let lastWords: String?
+    let expert: String?
 
     func session(agentType: AgentType) -> AgentSession {
         let named = BridgeModelName.split(model, agentType: agentType)
@@ -732,7 +736,8 @@ struct BRSummary: Decodable {
                 stalled: backgroundStalled),
             pinned: pinned, pinnedAt: pinnedAt, archived: archived, readAt: readAt,
             agentID: agent, agentName: agentName, isScheduled: scheduled,
-            lastWords: (lastWords?.isEmpty ?? true) ? nil : lastWords, turnOpen: turnOpen)
+            lastWords: (lastWords?.isEmpty ?? true) ? nil : lastWords, turnOpen: turnOpen,
+            expertID: (expert?.isEmpty ?? true) ? nil : expert)
     }
 }
 
@@ -807,6 +812,7 @@ struct BRSession: Decodable {
     let agent: String?
     let agentName: String?
     let scheduleID: String?
+    let expertID: String?
     /// The conversation's chapters, from a bridge that keeps them; each on its own, so one this
     /// client cannot read is left out rather than losing the rest.
     let chapters: [BRLenient<ConversationChapter>]?
@@ -820,7 +826,8 @@ struct BRSession: Decodable {
             updatedAt: updatedAt ?? createdAt ?? .distantPast,
             model: named.modelID, modelProviderID: named.providerID,
             reasoningEffort: (effort?.isEmpty ?? true) ? nil : effort,
-            agentID: agent, agentName: agentName, isScheduled: scheduleID == nil ? nil : true)
+            agentID: agent, agentName: agentName, isScheduled: scheduleID == nil ? nil : true,
+            expertID: (expertID?.isEmpty ?? true) ? nil : expertID)
     }
 }
 
@@ -1422,6 +1429,8 @@ struct BRStatus: Decodable {
     /// a bridge that has neither.
     let schedules: Int?
     let agents: Int?
+    /// The version of the experts a machine keeps, absent on a bridge that keeps none.
+    let experts: Int?
     /// The version of the session read's sidecar: from 1, `GET /sessions/:id` carries the goal and
     /// the cut-off turn as the whole answer about each, so a refresh needs no separate lookups.
     let detail: Int?

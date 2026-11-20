@@ -102,6 +102,11 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var machineSchedules: [MachineSchedule]?
         var machineAgents: MachineAgentsReport?
         var signIns: [String: AgentSignInRelay] = [:]
+        var machineExperts: [MachineExpert]?
+        var expertNotes: [String: [ExpertNote]] = [:]
+        var expertJournals: [String: [ExpertJournalEntry]] = [:]
+        var expertDebriefs: [String: ExpertDebrief] = [:]
+        var expertSkills: [ExpertSkill] = []
     }
 
     let agentRegistry: [RegistryAgent]
@@ -148,7 +153,8 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         schedules: [MachineSchedule]? = nil,
         machineAgents: MachineAgentsReport? = nil,
         agentRegistry: [RegistryAgent] = [],
-        chapters: [String: [ConversationChapter]] = [:]
+        chapters: [String: [ConversationChapter]] = [:],
+        experts: MockExperts? = nil
     ) {
         self.agentRegistry = agentRegistry
         self.agentType = agentType
@@ -190,12 +196,18 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsQuestions: true, supportsCommands: !commands.isEmpty,
                 supportsCompaction: true, supportsCompactionInstructions: true,
                 supportsSchedules: schedules != nil, supportsMachineAgents: machineAgents != nil,
-                supportsServerQueue: serverQueue, supportsQueueEdit: serverQueue)
+                supportsExperts: experts != nil, supportsServerQueue: serverQueue,
+                supportsQueueEdit: serverQueue)
         mutable.withLock {
             $0.desks = deskPresence
             $0.chapters = chapters
             $0.machineSchedules = schedules
             $0.machineAgents = machineAgents
+            $0.machineExperts = experts?.experts
+            $0.expertNotes = experts?.notes ?? [:]
+            $0.expertJournals = experts?.journals ?? [:]
+            $0.expertDebriefs = experts?.debriefs ?? [:]
+            $0.expertSkills = experts?.skills ?? []
             $0.modelsFailures = modelsFailures
             $0.sessions =
                 sessions

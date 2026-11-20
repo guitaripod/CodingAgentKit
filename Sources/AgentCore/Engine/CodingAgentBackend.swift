@@ -78,6 +78,9 @@ public struct BackendCapabilities: Sendable, Hashable {
     public var supportsSchedules: Bool
     /// The server hosts ACP agents beside its own (``MachineAgentHosting``).
     public var supportsMachineAgents: Bool
+    /// The server keeps experts: standing roles whose tasks start with a brief and end with a
+    /// debrief (``MachineExperts``).
+    public var supportsExperts: Bool
     /// Whether the backend can wind a conversation back to a message (setting aside what came
     /// after it and the file changes the agent made since) and bring it back again
     /// (``CodingAgentBackend/revert(sessionID:to:)``, ``CodingAgentBackend/restoreRevert(sessionID:)``).
@@ -124,6 +127,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         supportsBackgroundStop: Bool = false,
         supportsSchedules: Bool = false,
         supportsMachineAgents: Bool = false,
+        supportsExperts: Bool = false,
         supportsRevert: Bool = false,
         supportsServerQueue: Bool = false,
         supportsQueueEdit: Bool = false
@@ -159,6 +163,7 @@ public struct BackendCapabilities: Sendable, Hashable {
         self.supportsBackgroundStop = supportsBackgroundStop
         self.supportsSchedules = supportsSchedules
         self.supportsMachineAgents = supportsMachineAgents
+        self.supportsExperts = supportsExperts
         self.supportsRevert = supportsRevert
         self.supportsServerQueue = supportsServerQueue
         self.supportsQueueEdit = supportsQueueEdit
