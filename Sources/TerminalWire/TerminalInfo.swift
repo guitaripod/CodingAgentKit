@@ -8,7 +8,7 @@ import Foundation
 /// Every field is the server's own reading, taken when asked.
 public struct TerminalInfo: Codable, Sendable, Equatable, Identifiable {
     public var id: String
-    /// The shell's name as a person knows it (`zsh`), never its path.
+    /// The shell's name as a person knows it (`bash`), never its path.
     public var shell: String
     /// The folder the shell is standing in now, read from the process itself so every `cd`,
     /// `pushd` and jump counts. Absent when the machine could not read it.

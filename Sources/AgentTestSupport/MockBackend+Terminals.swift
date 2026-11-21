@@ -53,7 +53,7 @@ final class MockShell: @unchecked Sendable {
     var info: TerminalInfo {
         lock.withLock {
             TerminalInfo(
-                id: id, shell: "zsh", directory: exitCode == nil ? directory : nil, cols: cols, rows: rows,
+                id: id, shell: "bash", directory: exitCode == nil ? directory : nil, cols: cols, rows: rows,
                 startedAt: startedAt, session: session, desk: desk, exitCode: exitCode,
                 attached: readers.count,
                 offset: UInt64(log.count))
@@ -84,7 +84,7 @@ final class MockShell: @unchecked Sendable {
                 continuation.yield(
                     .state(
                         TerminalInfo(
-                            id: id, shell: "zsh", directory: exitCode == nil ? directory : nil, cols: cols,
+                            id: id, shell: "bash", directory: exitCode == nil ? directory : nil, cols: cols,
                             rows: rows, startedAt: startedAt, session: session, desk: desk, exitCode: exitCode,
                             attached: readers.count + 1, offset: held)))
                 let backlog = log.dropFirst(Int(from ?? 0))
@@ -233,7 +233,7 @@ final class MockShell: @unchecked Sendable {
         case "exit":
             end(code: words.count > 1 ? Int(words[1]) ?? 0 : 0)
         default:
-            emit("zsh: command not found: \(words[0])\r\n")
+            emit("bash: \(words[0]): command not found\r\n")
         }
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.65.1
+
+### Changed
+- **`MockTerminalWorld`'s shell is bash**: the mock names itself `bash` and refuses an unknown command in bash's words, so a demo shows the shell the author's machines run.
+
 ## 0.65.0
 
 A shell a server holds.
