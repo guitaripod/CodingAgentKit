@@ -14,6 +14,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         value.supportsSchedules = machineFacts.keepsSchedules
         value.supportsMachineAgents = machineFacts.hostsAgents
         value.supportsExperts = agentType == .claudeCode && machineFacts.keepsExperts
+        value.supportsTerminals = machineFacts.holdsTerminals
         value.transcriptCarriesSidecar = detailSupport.isSupported
         if agentType == .omp {
             value.supportsGoals = false
@@ -134,7 +135,7 @@ public struct ClaudeCodeBackend: CodingAgentBackend {
         detailSupport.record((status.detail ?? 0) >= 1)
         machineFacts.record(
             schedules: (status.schedules ?? 0) >= 1, agents: (status.agents ?? 0) >= 1,
-            experts: (status.experts ?? 0) >= 1)
+            experts: (status.experts ?? 0) >= 1, terminals: (status.terminals ?? 0) >= 1)
         return ServerHealth(healthy: true, version: status.version, access: status.access)
     }
 
@@ -1431,6 +1432,9 @@ struct BRStatus: Decodable {
     let agents: Int?
     /// The version of the experts a machine keeps, absent on a bridge that keeps none.
     let experts: Int?
+    /// The version of the terminals a bridge holds for its clients, absent on a bridge that holds
+    /// none.
+    let terminals: Int?
     /// The version of the session read's sidecar: from 1, `GET /sessions/:id` carries the goal and
     /// the cut-off turn as the whole answer about each, so a refresh needs no separate lookups.
     let detail: Int?

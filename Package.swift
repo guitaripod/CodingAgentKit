@@ -38,6 +38,8 @@ let package = Package(
         .library(name: "VoiceKit", targets: ["VoiceKit"]),
         .library(name: "SetupKit", targets: ["SetupKit"]),
         .library(name: "PairingKit", targets: ["PairingKit"]),
+        .library(name: "TerminalWire", targets: ["TerminalWire"]),
+        .library(name: "TerminalHost", targets: ["TerminalHost"]),
         .library(name: "AgentTestSupport", targets: ["AgentTestSupport"]),
         .library(name: "CodingAgentKitApple", targets: ["CodingAgentKitApple"]),
         .executable(name: "codeagent", targets: ["CodeAgentCLI"]),
@@ -50,8 +52,18 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "TerminalWire",
+            swiftSettings: strict
+        ),
+        .target(
+            name: "TerminalHost",
+            dependencies: ["TerminalWire"],
+            swiftSettings: strict
+        ),
+        .target(
             name: "AgentCore",
             dependencies: [
+                "TerminalWire",
                 .product(
                     name: "AsyncHTTPClient", package: "async-http-client",
                     condition: .when(platforms: [.linux])),
@@ -118,6 +130,11 @@ let package = Package(
             ],
             swiftSettings: cliSwiftSettings,
             linkerSettings: linuxLinkerSettings
+        ),
+        .testTarget(
+            name: "TerminalHostTests",
+            dependencies: ["TerminalHost", "TerminalWire"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "AgentCoreTests",

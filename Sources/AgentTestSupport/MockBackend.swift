@@ -107,7 +107,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         var expertJournals: [String: [ExpertJournalEntry]] = [:]
         var expertDebriefs: [String: ExpertDebrief] = [:]
         var expertSkills: [ExpertSkill] = []
+        var shells: [String: MockShell] = [:]
     }
+
+    let terminalWorld: MockTerminalWorld
 
     let agentRegistry: [RegistryAgent]
 
@@ -154,9 +157,11 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         machineAgents: MachineAgentsReport? = nil,
         agentRegistry: [RegistryAgent] = [],
         chapters: [String: [ConversationChapter]] = [:],
-        experts: MockExperts? = nil
+        experts: MockExperts? = nil,
+        terminals: MockTerminalWorld? = nil
     ) {
         self.agentRegistry = agentRegistry
+        self.terminalWorld = terminals ?? MockTerminalWorld()
         self.agentType = agentType
         self.script = script
         self.transcriptPrefix = transcriptPrefix
@@ -197,7 +202,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
                 supportsCompaction: true, supportsCompactionInstructions: true,
                 supportsSchedules: schedules != nil, supportsMachineAgents: machineAgents != nil,
                 supportsExperts: experts != nil, supportsServerQueue: serverQueue,
-                supportsQueueEdit: serverQueue)
+                supportsQueueEdit: serverQueue, supportsTerminals: terminals != nil)
         mutable.withLock {
             $0.desks = deskPresence
             $0.chapters = chapters

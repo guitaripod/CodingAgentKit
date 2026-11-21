@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.65.0
+
+A shell a server holds.
+
+### Added
+- **`TerminalHostingBackend`** — a server that holds shells for its clients (claude-bridge 1.38+, omp-bridge 0.19+): list, open, read one, close, resize, send input, and the terminal's output as a stream of `TerminalFrame`s read from a byte position. The shell runs on the machine the agent works on and outlives the client that opened it.
+- **`TerminalLink`** — one client's hold on one terminal: a stream that drops is asked for again from the byte it reached, so nothing is drawn twice and nothing is missed; keys leave in the order they were pressed, several at a time on a slow connection; a resize sends the last size asked for; a shell that ended and a server that no longer holds it are told apart.
+- **`TerminalWire`** — the wire both ends share: `TerminalInfo` (shell, folder, the program in front, size, the desk that opened it), `TerminalOpenRequest`, and `TerminalFrame` with `TerminalFrameReader`, which reads frames out of pieces of any size and skips a kind it does not know.
+- **`TerminalHost`** — what a bridge runs: `TerminalHall` and `TerminalSeat` start the account's login shell on a pseudo-terminal with `posix_spawn` (its own session, the terminal as its controlling one, none of the server's descriptors or secrets), keep the end of its output in a ring a late reader is started over from at a safe byte with the modes it missed (`EscapeScanner`), read the shell's folder and the program in front from the process, and close a shell left idle at its prompt.
+- **`BackendCapabilities.supportsTerminals`**, from the bridge's `/status`.
+- **`MockTerminalWorld`** for `MockBackend`: a shell with no machine under it, for demos and tests.
+
 ## 0.64.0
 
 The experts a claude-bridge keeps.
