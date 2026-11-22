@@ -475,3 +475,56 @@ final class OpenCodeNegotiation: Sendable {
         try await state.ask(resolve, known: known, fresh: true).value
     }
 }
+
+/// The shells the server holds. Only opencode 2 holds any; a 1.x server answers that it holds
+/// none, which its capabilities already say before anyone asks.
+extension OpenCodeBackend: TerminalHostingBackend {
+    private func hosting() async throws -> any TerminalHostingBackend {
+        guard let hosting = try await resolved() as? any TerminalHostingBackend else {
+            throw AgentError.unsupported("terminals")
+        }
+        return hosting
+    }
+
+    public func terminals() async throws -> [TerminalInfo] {
+        guard let hosting = try await resolved() as? any TerminalHostingBackend else { return [] }
+        return try await hosting.terminals()
+    }
+
+    public func openTerminal(_ request: TerminalOpenRequest) async throws -> TerminalInfo {
+        try await hosting().openTerminal(request)
+    }
+
+    public func terminal(_ id: String) async throws -> TerminalInfo? {
+        guard let hosting = try await resolved() as? any TerminalHostingBackend else { return nil }
+        return try await hosting.terminal(id)
+    }
+
+    public func terminalFrames(_ id: String, from offset: UInt64?) -> AsyncThrowingStream<TerminalFrame, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await frame in try await hosting().terminalFrames(id, from: offset) {
+                        continuation.yield(frame)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func sendTerminalInput(_ id: String, bytes: Data) async throws {
+        try await hosting().sendTerminalInput(id, bytes: bytes)
+    }
+
+    public func resizeTerminal(_ id: String, cols: Int, rows: Int) async throws {
+        try await hosting().resizeTerminal(id, cols: cols, rows: rows)
+    }
+
+    public func closeTerminal(_ id: String) async throws {
+        try await hosting().closeTerminal(id)
+    }
+}

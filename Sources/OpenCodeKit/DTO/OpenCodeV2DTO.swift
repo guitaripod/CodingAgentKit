@@ -397,9 +397,15 @@ struct OC2Diff: Decodable, Sendable {
     let deletions: Int?
 }
 
-struct OC2Pty: Decodable, Sendable {
+struct OC2Pty: Decodable, Sendable, Equatable {
     let id: String
+    let title: String?
+    let command: String?
+    let cwd: String?
     let status: String?
+    let exitCode: Int?
+
+    var hasExited: Bool { status == "exited" }
 }
 
 struct OC2PtyRequest: Encodable, Sendable {

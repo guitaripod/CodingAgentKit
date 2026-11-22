@@ -30,7 +30,8 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         transcriptCarriesSidecar: true,
         supportsRevert: true,
         supportsServerQueue: true,
-        supportsQueueEdit: true
+        supportsQueueEdit: true,
+        supportsTerminals: true
     )
 
     let client: OpenCodeV2Client

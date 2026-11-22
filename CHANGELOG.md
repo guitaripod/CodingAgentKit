@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.66.0
+
+opencode 2 holds a shell too.
+
+### Added
+- **`OpenCodeBackend` is a `TerminalHostingBackend`**: on opencode 2 the terminal is opencode's own pty (`/api/pty`, its WebSocket and its resize), spoken in the same `TerminalFrame` wire the bridges send. Positions the server counts in UTF-16 units are kept as the byte positions a `TerminalLink` resumes from, keys leave through the socket the terminal is read on with a character cut in two held back, a quiet connection is pinged, and a closed socket is told apart as a shell that ended, one the server let go, or a drop. The desk travels in the pty's title. opencode 1.x still holds none.
+- **`ShellMarks`**: the folder a shell stands in and the program in front, read from the shell's own marks (systemd's OSC 3008, OSC 133, OSC 7, OSC 1337), or by the alternate screen for a shell that marks nothing, so the pane's caption and the folder it follows work on opencode as they do on a bridge.
+
 ## 0.65.1
 
 ### Changed
