@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.67.0
+
+A workflow's agents sit on its card on opencode.
+
+### Added
+- **`SubagentSummary.workflowAgentType`**: the type every backend gives an agent a workflow run fanned out (`workflow-subagent`, claude-bridge's word).
+- **opencode 2 workflow children**: a child session the workflow runtime tagged (`metadata.workflow`: the run, the call that started it, the agent's label) is a workflow agent with its run id, its spawning call as `toolUseID`, its label as its title and its start time, so a client seats it on the call's card instead of listing it as a nameless subagent.
+
 ## 0.66.0
 
 opencode 2 holds a shell too.

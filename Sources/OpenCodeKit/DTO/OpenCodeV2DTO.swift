@@ -78,6 +78,9 @@ struct OC2Session: Decodable, Sendable {
     let title: String?
     let location: OC2Location?
     let revert: OC2Revert?
+    /// What whoever made the session wrote on it. The workflow runtime's children carry the run
+    /// that fanned them out under `workflow` (``OpenCodeV2Mapping/workflowTag(of:)``).
+    let metadata: JSONValue?
 }
 
 /// A revert standing on a session: the first message set aside, and the files it put back.

@@ -64,12 +64,27 @@ enum OpenCodeV2Mapping {
     }
 
     static func subagent(_ session: OC2Session, running: Bool) -> SubagentSummary {
-        SubagentSummary(
+        let workflow = workflowTag(of: session)
+        return SubagentSummary(
             id: session.id,
-            title: session.title ?? SubagentSummary.untitled,
+            title: workflow?.label ?? session.title ?? SubagentSummary.untitled,
+            agentType: workflow == nil ? nil : SubagentSummary.workflowAgentType,
+            toolUseID: workflow?.call,
             updatedAt: updatedAt(session),
             isActive: running,
-            isCompleted: !running)
+            isCompleted: !running,
+            startedAt: optionalDate(session.time?.created),
+            workflowRunID: workflow?.run)
+    }
+
+    /// The run a workflow child belongs to, as the workflow runtime wrote it on the session: the
+    /// run's id, the tool call that started it and the agent's own label. A child without it is an
+    /// ordinary subagent.
+    static func workflowTag(of session: OC2Session) -> (run: String, call: String?, label: String?)? {
+        guard let tag = session.metadata?["workflow"], let run = tag["run"]?.stringValue, !run.isEmpty
+        else { return nil }
+        let label = tag["label"]?.stringValue
+        return (run, tag["call"]?.stringValue, label?.isEmpty == false ? label : nil)
     }
 
     static func usage(_ tokens: OC2Tokens?) -> MessageUsage? {

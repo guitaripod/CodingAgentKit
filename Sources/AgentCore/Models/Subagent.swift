@@ -46,6 +46,9 @@ public struct SubagentSummary: Sendable, Hashable, Codable, Identifiable {
         self.workflowRunID = workflowRunID
     }
 
+    /// The type every backend gives an agent a workflow run fanned out, whichever harness ran it.
+    public static let workflowAgentType = "workflow-subagent"
+
     /// Fallback display title for a subagent the backend never named.
     public static var untitled: String { AgentText.string("Agent") }
 }

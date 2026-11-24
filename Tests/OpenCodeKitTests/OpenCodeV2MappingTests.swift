@@ -182,6 +182,29 @@ private func records(_ json: String) throws -> [OC2Message] {
         #expect(session.isActive == nil)
     }
 
+    @Test func aWorkflowChildIsSeatedOnTheCallThatStartedItsRun() throws {
+        let child = try JSONCoding.decoder.decode(
+            OC2Session.self,
+            from: Data(#"{"id":"ses_c","parentID":"ses_p","title":"pair: one","agent":"general","time":{"created":1000,"updated":2000},"metadata":{"workflow":{"run":"wf_41a3496b88e9","name":"pair","label":"one","index":1,"call":"call_980af","phase":"Fan"}}}"#.utf8))
+        let agent = OpenCodeV2Mapping.subagent(child, running: true)
+        #expect(agent.agentType == SubagentSummary.workflowAgentType)
+        #expect(agent.workflowRunID == "wf_41a3496b88e9")
+        #expect(agent.toolUseID == "call_980af")
+        #expect(agent.title == "one")
+        #expect(agent.startedAt == Date(timeIntervalSince1970: 1))
+        #expect(agent.isActive && !agent.isCompleted)
+
+        let plain = try JSONCoding.decoder.decode(
+            OC2Session.self,
+            from: Data(#"{"id":"ses_d","parentID":"ses_p","title":"Explore the repo","time":{"created":1000,"updated":2000},"metadata":{"other":true}}"#.utf8))
+        let ordinary = OpenCodeV2Mapping.subagent(plain, running: false)
+        #expect(ordinary.agentType == nil)
+        #expect(ordinary.workflowRunID == nil)
+        #expect(ordinary.toolUseID == nil)
+        #expect(ordinary.title == "Explore the repo")
+        #expect(ordinary.isCompleted)
+    }
+
     @Test func aFormAnswerIsWrittenInTheFormsOwnTerms() throws {
         let form = try JSONCoding.decoder.decode(
             OC2Form.self,
