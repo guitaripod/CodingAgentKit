@@ -54,6 +54,7 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
     private let usage: AgentUsage?
     private let fileTree: [String: [FileNode]]
     private let fileContents: [String: String]
+    private let serverFiles: [String: Data]
     private let diffs: [FileDiff]
     private let subagentSummaries: [SubagentSummary]
     private let subagentOwners: [String: [SubagentSummary]]
@@ -158,8 +159,10 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
         agentRegistry: [RegistryAgent] = [],
         chapters: [String: [ConversationChapter]] = [:],
         experts: MockExperts? = nil,
-        terminals: MockTerminalWorld? = nil
+        terminals: MockTerminalWorld? = nil,
+        serverFiles: [String: Data] = [:]
     ) {
+        self.serverFiles = serverFiles
         self.agentRegistry = agentRegistry
         self.terminalWorld = terminals ?? MockTerminalWorld()
         self.agentType = agentType
@@ -853,6 +856,18 @@ public final class MockBackend: FileBrowsingBackend, GitObservingBackend, Sendab
 
     public func fileContent(path: String) async throws -> String { fileContents[path] ?? "" }
 
+    /// The bytes of a file an agent named by its path, from `serverFiles`; a path the mock was not
+    /// given is missing, the way a real server answers for a file that is not there.
+    public func attachmentData(_ file: FileReference) async throws -> Data {
+        guard let path = ServerFile.path(of: file) else {
+            throw AgentError.unsupported("attachments")
+        }
+        guard let bytes = serverFiles[path] else {
+            throw AgentError.http(status: 404, body: #"{"error":"not readable"}"#)
+        }
+        return bytes
+    }
+
     public func gitSnapshot(directory: String?, sessionID: String?) async throws -> GitSnapshot? {
         git
     }
@@ -1059,4 +1074,10 @@ extension MockBackend {
             agentType: .openCode, script: events.map { MockScriptStep($0, delay: delay) })
     }
 
+}
+
+/// The mock hands out no tickets, so a client plays what it names through the fallback every
+/// server without tickets takes: the whole file fetched once.
+extension MockBackend: MediaStreamingBackend {
+    public func streamingURL(for file: FileReference) async throws -> URL? { nil }
 }

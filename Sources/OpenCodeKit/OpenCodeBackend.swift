@@ -183,7 +183,8 @@ public struct OpenCodeBackend: FileBrowsingBackend, RestartableBackend, GitObser
     }
 
     public func attachmentData(_ file: FileReference) async throws -> Data {
-        try OpenCodeCommon.attachmentData(file)
+        guard ServerFile.path(of: file) != nil else { return try OpenCodeCommon.attachmentData(file) }
+        return try await resolved().attachmentData(file)
     }
 
     public func availableModels() async throws -> [ModelInfo] {

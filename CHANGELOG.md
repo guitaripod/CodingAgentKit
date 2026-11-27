@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.69.0
+
+A file an agent names by its path can be fetched and played.
+
+### Added
+- **`ServerFile`**: a file on the conversation's machine known only by the path an agent wrote rides as a `FileReference` under `/files/raw?path=`, with a revision so a client caches each naming apart. Every backend reads such a reference from its own server: the bridges' `/files/raw`, opencode 2's `/api/fs/read`, and opencode 1.x's `/file/content`, which sends pictures only.
+- **`MediaStreamingBackend`**: a bridge hands a player a ticket URL for one file (`POST /files/ticket`) that AVPlayer and mpv stream and seek in without the password. A bridge from before tickets answers nil, and a client then fetches the whole file. `MockBackend` serves `serverFiles`.
+
 ## 0.68.0
 
 opencode 2 costs a phone less.

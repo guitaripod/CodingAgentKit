@@ -610,8 +610,11 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         return String(decoding: bytes, as: UTF8.self)
     }
 
+    /// A file the agent only named is read from the server's disk, every kind of it.
     public func attachmentData(_ file: FileReference) async throws -> Data {
-        try OpenCodeCommon.attachmentData(file)
+        guard let path = ServerFile.path(of: file) else { return try OpenCodeCommon.attachmentData(file) }
+        return try await client.fileBytes(
+            path: path, directory: path.hasPrefix("/") ? Self.readRoot : nil)
     }
 
     public func diff(sessionID: String) async throws -> [FileDiff] {

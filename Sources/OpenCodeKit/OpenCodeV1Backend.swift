@@ -573,8 +573,15 @@ public struct OpenCodeV1Backend: OpenCodeGeneration {
         try await client.fileContent(path: path).content
     }
 
+    /// A file the agent only named is asked of the server, which sends a picture as base64 and
+    /// says nothing about any other binary file: opencode 1.x cannot send a video or a song.
     public func attachmentData(_ file: FileReference) async throws -> Data {
-        try OpenCodeCommon.attachmentData(file)
+        guard let path = ServerFile.path(of: file) else { return try OpenCodeCommon.attachmentData(file) }
+        let read = try await client.fileContent(path: path)
+        guard read.encoding == "base64", let bytes = Data(base64Encoded: read.content) else {
+            throw AgentError.unsupported("this opencode server sends only pictures and text")
+        }
+        return bytes
     }
 
     public func diff(sessionID: String) async throws -> [FileDiff] {

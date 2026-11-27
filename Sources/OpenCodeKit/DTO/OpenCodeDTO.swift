@@ -188,6 +188,8 @@ struct OCFileNode: Decodable, Sendable {
 struct OCFileContent: Decodable, Sendable {
     let type: String?
     let content: String
+    let encoding: String?
+    let mimeType: String?
 }
 
 struct OCDiff: Decodable, Sendable {
