@@ -86,6 +86,9 @@ public struct RequestBuilder: Sendable {
     }
 
     private func applyAuthorization(to request: inout URLRequest) {
+        if let features = ClientFeatures.headerValue {
+            request.setValue(features, forHTTPHeaderField: ClientFeatures.header)
+        }
         guard let credentials = config.credentials else { return }
         request.setValue(credentials.authorizationHeaderValue, forHTTPHeaderField: "Authorization")
     }

@@ -1079,5 +1079,7 @@ extension MockBackend {
 /// The mock hands out no tickets, so a client plays what it names through the fallback every
 /// server without tickets takes: the whole file fetched once.
 extension MockBackend: MediaStreamingBackend {
-    public func streamingURL(for file: FileReference) async throws -> URL? { nil }
+    public func mediaStream(for file: FileReference, playback: MediaPlayback) async throws
+        -> MediaStream?
+    { nil }
 }

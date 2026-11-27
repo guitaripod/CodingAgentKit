@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.70.0
+
+A named video plays on any device, and a server knows what the app shows.
+
+### Added
+- **`mediaStream(for:playback:)`** on `MediaStreamingBackend`: an Apple client asks for `.apple`, and a bridge with ffmpeg answers with a copy AVFoundation reads (a WebM, a Matroska or an Ogg converted once); the answer carries the served type and size. `streamingURL(for:)` stays as the `.any` reading.
+- **`MediaDownloadingBackend`** and `fetchFile(_:to:)`: a file streams to disk as it arrives (`FileDownload`, a data delegate writing a `.part` sibling and moving it into place), and opencode 2 downloads a named file that way instead of holding it in memory.
+- **`ClientFeatures`**: what the app shows, declared once and sent on every request as `X-Client-Features` (`media-by-path`), so a bridge can tell its agent that a path it writes shows the file.
+
 ## 0.69.0
 
 A file an agent names by its path can be fetched and played.

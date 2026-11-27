@@ -529,3 +529,14 @@ extension OpenCodeBackend: TerminalHostingBackend {
         try await hosting().closeTerminal(id)
     }
 }
+
+extension OpenCodeBackend: MediaDownloadingBackend {
+    public func download(_ file: FileReference, to destination: URL) async throws {
+        let generation = try await resolved()
+        if let downloading = generation as? any MediaDownloadingBackend {
+            try await downloading.download(file, to: destination)
+        } else {
+            try await generation.attachmentData(file).write(to: destination, options: .atomic)
+        }
+    }
+}

@@ -940,3 +940,17 @@ extension OpenCodeV2Backend: SessionListStreaming {
         }
     }
 }
+
+/// A file an agent named is streamed to disk from opencode's file route, so a film is never held
+/// whole in a phone's memory on its way to a player.
+extension OpenCodeV2Backend: MediaDownloadingBackend {
+    public func download(_ file: FileReference, to destination: URL) async throws {
+        guard let path = ServerFile.path(of: file) else {
+            try OpenCodeCommon.attachmentData(file).write(to: destination, options: .atomic)
+            return
+        }
+        let request = try client.fileRequest(
+            path: path, directory: path.hasPrefix("/") ? Self.readRoot : nil)
+        try await FileDownload.perform(request, to: destination)
+    }
+}

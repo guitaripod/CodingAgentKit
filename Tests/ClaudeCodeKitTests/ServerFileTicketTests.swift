@@ -16,6 +16,8 @@ final class TicketBridgeProtocol: URLProtocol {
 
     override func startLoading() {
         guard let url = request.url, let client else { return }
+        let sent = request.httpBody ?? request.httpBodyStream.map(Self.drain) ?? Data()
+        TicketBridge.shared.record(sent, features: request.value(forHTTPHeaderField: ClientFeatures.header))
         let (status, body) = TicketBridge.shared.answer(host: url.host ?? "", path: url.path)
         let response = HTTPURLResponse(
             url: url, statusCode: status, httpVersion: "HTTP/1.1",
@@ -26,16 +28,47 @@ final class TicketBridgeProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    private static func drain(_ stream: InputStream) -> Data {
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: buffer.count)
+            guard read > 0 else { break }
+            data.append(buffer, count: read)
+        }
+        return data
+    }
 }
 
 final class TicketBridge: @unchecked Sendable {
     static let shared = TicketBridge()
+    private let lock = NSLock()
+    private var bodies: [Data] = []
+    private var features: [String?] = []
+
+    func record(_ body: Data, features value: String?) {
+        lock.withLock {
+            bodies.append(body)
+            features.append(value)
+        }
+    }
+
+    var lastBody: [String: String]? {
+        lock.withLock { bodies.last.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } }
+    }
+
+    var lastFeatures: String? { lock.withLock { features.last ?? nil } }
 
     func answer(host: String, path: String) -> (Int, String) {
         guard path == "/files/ticket" else { return (404, "") }
         switch host {
         case "new.test":
             return (200, #"{"url":"/files/raw?ticket=abc123","size":42,"mime":"video/mp4"}"#)
+        case "convert.test":
+            return (422, #"{"error":"cannot convert","reason":"no ffmpeg"}"#)
         case "missing.test":
             return (404, #"{"error":"not readable"}"#)
         default:
@@ -79,6 +112,28 @@ final class TicketBridge: @unchecked Sendable {
     @Test func aNewBridgeHandsBackAnAbsoluteTicketURL() async throws {
         let url = try await Self.backend("new.test").streamingURL(for: Self.clip)
         #expect(url?.absoluteString == "http://new.test:4098/files/raw?ticket=abc123")
+    }
+
+    @Test func anAppleClientAsksForAPlayableCopyAndReadsWhatCameBack() async throws {
+        let stream = try await Self.backend("new.test").mediaStream(for: Self.clip, playback: .apple)
+        #expect(TicketBridge.shared.lastBody == ["path": "/home/me/Clips/demo cut.mp4", "playable": "apple"])
+        #expect(stream?.mime == "video/mp4")
+        #expect(stream?.size == 42)
+        _ = try await Self.backend("new.test").mediaStream(for: Self.clip, playback: .any)
+        #expect(TicketBridge.shared.lastBody == ["path": "/home/me/Clips/demo cut.mp4"])
+    }
+
+    @Test func aFileThatCannotBeConvertedIsAnError() async {
+        await #expect(throws: AgentError.self) {
+            _ = try await Self.backend("convert.test").mediaStream(for: Self.clip, playback: .apple)
+        }
+    }
+
+    @Test func everyRequestSaysWhatTheAppDraws() async throws {
+        ClientFeatures.declare([ClientFeatures.mediaByPath])
+        defer { ClientFeatures.declare([]) }
+        _ = try await Self.backend("new.test").streamingURL(for: Self.clip)
+        #expect(TicketBridge.shared.lastFeatures == "media-by-path")
     }
 
     @Test func aBridgeFromBeforeTicketsAnswersNil() async throws {

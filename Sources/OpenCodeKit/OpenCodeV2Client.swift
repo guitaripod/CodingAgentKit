@@ -276,10 +276,15 @@ public struct OpenCodeV2Client: Sendable {
                 )))
     }
 
-    func fileBytes(path: String, directory: String?) async throws -> Data {
+    /// The request a file's bytes are read with, for a download that writes them to disk as they come.
+    func fileRequest(path: String, directory: String?) throws -> URLRequest {
         let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        return try await http.send(
-            builder.request(.get, "/api/fs/read/\(trimmed)", query: Self.locationQuery(directory)))
+        return try builder.request(
+            .get, "/api/fs/read/\(trimmed)", query: Self.locationQuery(directory))
+    }
+
+    func fileBytes(path: String, directory: String?) async throws -> Data {
+        try await http.send(fileRequest(path: path, directory: directory))
     }
 
     func find(query: String, directory: String?) async throws -> [OC2FSEntry] {
