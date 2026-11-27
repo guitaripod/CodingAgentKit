@@ -41,6 +41,27 @@ struct OpenCodeV2EventDecoder {
         self.sessionID = sessionID
     }
 
+    /// Whether an event on the server's one stream could be about `sessionID`: every event a
+    /// conversation reads names its session, and the server's greeting is read by every listener.
+    /// One connection carries every session's tokens, so a chat on a phone was decoding each
+    /// streamed word of every other conversation on the machine only to find it was not its own.
+    static func mayConcern(_ event: SSEvent, sessionID: String) -> Bool {
+        event.mentions(sessionID) || event.mentions("server.connected")
+    }
+
+    /// The event types a session listing changes on, as they appear on the wire. Anything else —
+    /// above all the stream of text and tool deltas — is passed over without being decoded.
+    static let listingTypes = [
+        "session.created", "session.renamed", "session.model.selected", "session.agent.selected",
+        "session.forked", "session.deleted", "session.execution.started",
+        "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted",
+        "session.idle", "session.status",
+    ]
+
+    static func listsCare(about event: SSEvent) -> Bool {
+        listingTypes.contains { event.mentions("\"\($0)\"") }
+    }
+
     static func frame(_ event: SSEvent) -> OC2Event? {
         guard let data = event.data.data(using: .utf8) else { return nil }
         return try? JSONCoding.decoder.decode(OC2Event.self, from: data)

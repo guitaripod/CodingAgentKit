@@ -60,7 +60,7 @@ actor OpenCodeV2EventHub {
 
     private func deliver(_ event: SSEvent, generation dialled: Int) {
         guard dialled == generation else { return }
-        if event.data.contains("server.connected"),
+        if event.mentions("server.connected"),
             OpenCodeV2EventDecoder.frame(event)?.type == "server.connected"
         {
             connectedFrame = event

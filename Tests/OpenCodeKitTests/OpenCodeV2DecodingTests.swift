@@ -21,6 +21,24 @@ private func decode(_ json: String) -> [BackendEvent] {
 }
 
 @Suite struct OpenCodeV2EventDecoderTests {
+    @Test func aConversationPassesOverOtherSessionsEventsUndecoded() {
+        func event(_ json: String) -> SSEvent { SSEvent(id: nil, type: nil, data: json) }
+        let mine = event(#"{"id":"e1","type":"session.text.delta","data":{"sessionID":"ses_S","delta":"a"}}"#)
+        let theirs = event(#"{"id":"e2","type":"session.text.delta","data":{"sessionID":"ses_T","delta":"a"}}"#)
+        let form = event(#"{"id":"e3","type":"form.created","data":{"form":{"sessionID":"ses_S"}}}"#)
+        let hello = event(#"{"type":"server.connected","data":{}}"#)
+        #expect(OpenCodeV2EventDecoder.mayConcern(mine, sessionID: "ses_S"))
+        #expect(OpenCodeV2EventDecoder.mayConcern(form, sessionID: "ses_S"))
+        #expect(OpenCodeV2EventDecoder.mayConcern(hello, sessionID: "ses_S"))
+        #expect(!OpenCodeV2EventDecoder.mayConcern(theirs, sessionID: "ses_S"))
+
+        #expect(!OpenCodeV2EventDecoder.listsCare(about: mine))
+        for type in OpenCodeV2EventDecoder.listingTypes {
+            #expect(OpenCodeV2EventDecoder.listsCare(about: event(#"{"type":"\#(type)","data":{"sessionID":"ses_S"}}"#)))
+        }
+        #expect(!OpenCodeV2EventDecoder.listsCare(about: event(#"{"type":"session.status.extra","data":{}}"#)))
+    }
+
     @Test func theSocketProvingItselfIsAttachment() {
         let events = decode(#"{"id":"evt_1","type":"server.connected","data":{}}"#)
         guard case .attached? = events.first, events.count == 1 else {

@@ -491,6 +491,7 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
                 var decoder = OpenCodeV2EventDecoder(sessionID: sessionID)
                 do {
                     for try await sse in await events.subscribe() {
+                        guard OpenCodeV2EventDecoder.mayConcern(sse, sessionID: sessionID) else { continue }
                         let frame = OpenCodeV2EventDecoder.frame(sse)
                         for event in frame.map({ decoder.decode($0) }) ?? [] {
                             continuation.yield(event)
@@ -883,7 +884,8 @@ extension OpenCodeV2Backend: SessionListStreaming {
     private func changes(from event: SSEvent, memory: OpenCodeListMemory) async
         -> [SessionListChange]
     {
-        guard let frame = OpenCodeV2EventDecoder.frame(event),
+        guard OpenCodeV2EventDecoder.listsCare(about: event),
+            let frame = OpenCodeV2EventDecoder.frame(event),
             let sessionID = frame.data?["sessionID"]?.stringValue
         else { return [] }
 

@@ -4,6 +4,30 @@ import Testing
 @testable import AgentCore
 
 @Suite struct JSONValueTests {
+    @Test func everyKindKeepsItsKindWhateverOrderItIsTried() throws {
+        let json = #"[true,false,0,1,-7,1.5,"1","true",null,[],{},{"a":[false,2,2.25,"x"]}]"#
+        let value = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+        #expect(
+            value
+                == .array([
+                    .bool(true), .bool(false), .integer(0), .integer(1), .integer(-7), .number(1.5),
+                    .string("1"), .string("true"), .null, .array([]), .object([:]),
+                    .object(["a": .array([.bool(false), .integer(2), .number(2.25), .string("x")])]),
+                ]))
+    }
+
+    @Test func anEventSaysWhetherItMentionsAWordByteForByte() {
+        let event = SSEvent(id: nil, type: nil, data: #"{"type":"session.text.delta","data":{"sessionID":"ses_Ab","delta":"héllo"}}"#)
+        #expect(event.mentions("ses_Ab"))
+        #expect(event.mentions("\"session.text.delta\""))
+        #expect(event.mentions("héllo"))
+        #expect(!event.mentions("ses_Abc"))
+        #expect(!event.mentions("ses_ab"))
+        #expect(event.mentions(""))
+        #expect(!SSEvent(id: nil, type: nil, data: "").mentions("x"))
+        #expect(!SSEvent(id: nil, type: nil, data: "ab").mentions("abc"))
+    }
+
     @Test func roundTripAndSubscript() throws {
         let json = #"{"a":1,"b":"two","c":[true,null],"d":{"e":3.5}}"#
         let value = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))

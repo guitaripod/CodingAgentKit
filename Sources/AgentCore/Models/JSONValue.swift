@@ -7,22 +7,27 @@ public enum JSONValue: Sendable, Hashable, Codable {
     case array([JSONValue])
     case object([String: JSONValue])
 
+    /// Every failed guess throws a `DecodingError` that is built and thrown away, so the kinds are
+    /// tried in the order a payload holds them — strings, then objects and arrays, numbers last —
+    /// where trying booleans first made every string pay for three errors. The decoder is strict
+    /// about kinds (a number is never a Bool, a fraction never an integer), so the order changes
+    /// only the cost, never the value.
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
             self = .null
-        } else if let value = try? container.decode(Bool.self) {
-            self = .bool(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([JSONValue].self) {
+            self = .array(value)
         } else if let value = try? container.decode(Int64.self) {
             self = .integer(value)
         } else if let value = try? container.decode(Double.self) {
             self = .number(value)
-        } else if let value = try? container.decode(String.self) {
-            self = .string(value)
-        } else if let value = try? container.decode([JSONValue].self) {
-            self = .array(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
-            self = .object(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
         } else {
             throw DecodingError.dataCorruptedError(
                 in: container,
