@@ -114,7 +114,7 @@ public struct OpenCodeV2Client: Sendable {
         var cursor: String?
         while true {
             let page: OC2Page<OC2Message> = try decode(
-                await http.send(
+                await http.sendLarge(
                     builder.request(
                         .get, "/api/session/\(sessionID)/message",
                         query: Self.messageQuery(cursor: cursor))))
@@ -207,7 +207,7 @@ public struct OpenCodeV2Client: Sendable {
     /// every mapping function expects.
     func recentMessages(sessionID: String, limit: Int) async throws -> [OC2Message] {
         let page: OC2Page<OC2Message> = try decode(
-            await http.send(
+            await http.sendLarge(
                 builder.request(
                     .get, "/api/session/\(sessionID)/message",
                     query: [

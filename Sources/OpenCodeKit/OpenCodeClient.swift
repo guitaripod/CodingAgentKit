@@ -113,7 +113,7 @@ public struct OpenCodeClient: Sendable {
     }
 
     func messages(sessionID: String) async throws -> [OCMessageEnvelope] {
-        try decode(await http.send(builder.request(.get, "/session/\(sessionID)/message")))
+        try decode(await http.sendLarge(builder.request(.get, "/session/\(sessionID)/message")))
     }
 
     func promptAsync(sessionID: String, request: OCPromptRequest) async throws {

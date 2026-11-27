@@ -53,6 +53,24 @@ public struct HTTPClient: Sendable {
         return data
     }
 
+    /// A read whose answer may be tens of megabytes: a transcript with the pictures its tools read
+    /// inside it. On Apple platforms the body is received into a file and read mapped, because a
+    /// body gathered in memory by `URLSession` cost a phone more than five times its size while it
+    /// arrived (362 MB for a 57 MB page on an iPhone XS) and a mapped file costs nothing until it
+    /// is decoded. Elsewhere it is the same read as ``send(_:)``.
+    public func sendLarge(_ request: URLRequest) async throws -> Data {
+        #if canImport(FoundationNetworking)
+            return try await send(request)
+        #else
+            let (data, http) = try await exchangeThroughFile(request, timeout: policy.requestTimeout)
+            guard (200..<300).contains(http.statusCode) else {
+                throw AgentError.http(
+                    status: http.statusCode, body: String(data: data.prefix(4096), encoding: .utf8) ?? "")
+            }
+            return data
+        #endif
+    }
+
     /// What a conditional read came back with: a body and the validator the server gave it, or
     /// the server's word that the copy already held is still the current one.
     public enum ConditionalReply: Sendable {
@@ -137,6 +155,49 @@ public struct HTTPClient: Sendable {
         logger.debug("← \(http.statusCode) \(request.url?.path ?? "")")
         return (data, http)
     }
+
+    #if !canImport(FoundationNetworking)
+        private func exchangeThroughFile(_ request: URLRequest, timeout: Duration) async throws
+            -> (Data, HTTPURLResponse)
+        {
+            logger.debug("→ \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "?") to a file")
+            let file: URL
+            let response: URLResponse
+            let sentAt: Date
+            let receivedAt: Date
+            do {
+                var req = request
+                req.cachePolicy = .reloadIgnoringLocalCacheData
+                req.timeoutInterval = timeout.timeInterval
+                sentAt = Date()
+                (file, response) = try await session.download(for: req)
+                receivedAt = Date()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as URLError where error.code == .cancelled {
+                throw CancellationError()
+            } catch {
+                throw AgentError.transport(error)
+            }
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard let http = response as? HTTPURLResponse else {
+                throw AgentError.connection("Non-HTTP response")
+            }
+            if let url = request.url,
+                let header = http.value(forHTTPHeaderField: "Date"),
+                let serverDate = ServerClockLedger.parseHTTPDate(header)
+            {
+                ServerClockLedger.shared.record(
+                    url: url, serverDate: serverDate, sentAt: sentAt, receivedAt: receivedAt)
+            }
+            logger.debug("← \(http.statusCode) \(request.url?.path ?? "")")
+            do {
+                return (try Data(contentsOf: file, options: .alwaysMapped), http)
+            } catch {
+                throw AgentError.transport(error)
+            }
+        }
+    #endif
 
     #if canImport(FoundationNetworking)
         /// A request whose answer may be a challenge — a probe against a server that has not been

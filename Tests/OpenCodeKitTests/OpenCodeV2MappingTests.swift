@@ -143,6 +143,23 @@ private func records(_ json: String) throws -> [OC2Message] {
         #expect(try OpenCodeCommon.attachmentData(notes) == Data("ABC".utf8))
     }
 
+    @Test func aPictureOfAnySizeLeavesTheTranscriptForTheShelf() throws {
+        let bytes = Data((0..<6000).map { UInt8(truncatingIfNeeded: $0 &* 7) })
+        let message = try records(
+            #"[{"id":"msg_U","time":{"created":1},"text":"look","files":[{"data":""#
+                + bytes.base64EncodedString()
+                + #"","mime":"image/png","name":"shot.png","source":{"type":"inline"}}],"type":"user"}]"#)
+        guard case .file(let file) = OpenCodeV2Mapping.transcript(message)[0].parts[1].kind else {
+            Issue.record("expected a file part")
+            return
+        }
+        let url = try #require(file.url)
+        #expect(EmbeddedFileShelf.isShelved(url))
+        #expect(url.utf8.count < 80)
+        #expect(file.mime == "image/png")
+        #expect(try OpenCodeCommon.attachmentData(file) == bytes)
+    }
+
     @Test func aShellThatRanOutOfTimeOrWasKilledFailedWithoutAnExitCode() throws {
         for status in ["timeout", "killed"] {
             let shell = try records(#"""

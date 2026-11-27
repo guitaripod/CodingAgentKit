@@ -57,6 +57,21 @@ final class DownloadStubProtocol: URLProtocol {
         #expect(try Data(contentsOf: target) == DownloadStubProtocol.bytes)
     }
 
+    @Test func aLargeReadComesBackWholeAndLeavesNoFile() async throws {
+        let client = HTTPClient(session: URLSession(configuration: stubbed))
+        let before = try FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()).count
+        let body = try await client.sendLarge(URLRequest(url: URL(string: "http://download.test/page")!))
+        #expect(body == DownloadStubProtocol.bytes)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()).count <= before)
+    }
+
+    @Test func aLargeReadThrowsTheServersRefusal() async throws {
+        let client = HTTPClient(session: URLSession(configuration: stubbed))
+        await #expect(throws: AgentError.http(status: 404, body: "")) {
+            try await client.sendLarge(URLRequest(url: URL(string: "http://download.test/missing")!))
+        }
+    }
+
     @Test func aMissingFileIsTheServersAnswer() async throws {
         let folder = try folder()
         defer { try? FileManager.default.removeItem(at: folder) }

@@ -310,18 +310,16 @@ enum OpenCodeV2Mapping {
             MessagePart(
                 id: toolFilePartID(messageID, callID: callID, index: index),
                 kind: .file(
-                    FileReference(
-                        path: nil, mime: file.mime, url: file.uri, filename: displayName(file.name))))
+                    EmbeddedFileShelf.shared.shelved(
+                        FileReference(
+                            path: nil, mime: file.mime, url: file.uri, filename: displayName(file.name)))))
         }
     }
 
-    /// Where a prompt's file can be read back: its bytes as a data URL, since they travel with the
+    /// Where a prompt's file can be read back: its bytes on the shelf, since they travel with the
     /// message, or the uri it came from when the server kept none.
     static func promptFileURL(_ file: OC2PromptFile) -> String? {
-        if let data = file.data, !data.isEmpty {
-            return "data:\(file.mime ?? "application/octet-stream");base64,\(data)"
-        }
-        return file.source?.uri
+        file.embedded ?? file.source?.uri
     }
 
     static func displayName(_ filename: String?) -> String? {
@@ -393,9 +391,10 @@ enum OpenCodeV2Mapping {
                 MessagePart(
                     id: "\(message.id)/file/\(index)",
                     kind: .file(
-                        FileReference(
-                            path: nil, mime: file.mime, url: promptFileURL(file),
-                            filename: displayName(file.name)))))
+                        EmbeddedFileShelf.shared.shelved(
+                            FileReference(
+                                path: nil, mime: file.mime, url: promptFileURL(file),
+                                filename: displayName(file.name))))))
         }
         return ChatMessage(
             id: message.id,

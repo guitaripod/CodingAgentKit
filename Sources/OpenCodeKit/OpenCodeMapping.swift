@@ -131,9 +131,10 @@ enum OpenCodeMapping {
                 ))
         case "file":
             kind = .file(
-                FileReference(
-                    path: nil, mime: part.mime, url: part.url,
-                    filename: Self.displayName(part.filename)))
+                EmbeddedFileShelf.shared.shelved(
+                    FileReference(
+                        path: nil, mime: part.mime, url: part.url,
+                        filename: Self.displayName(part.filename))))
         case "compaction":
             kind = .compaction(
                 Compaction(trigger: part.auto.map { $0 ? .auto : .manual }, summary: nil))

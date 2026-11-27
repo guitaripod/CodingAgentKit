@@ -39,9 +39,16 @@ enum OpenCodeCommon {
     /// tool result carries a file — so no bridge round-trip is needed: decode
     /// locally. A `file://` URL (what @-mentioned text files use) is read from
     /// local disk where the path exists, i.e. desktop clients; on iOS it fails
-    /// harmlessly and the row falls back to a plain file chip.
+    /// harmlessly and the row falls back to a plain file chip. A picture whose bytes were put on
+    /// the shelf as the conversation was read (``EmbeddedFileShelf``) is read back from it.
     static func attachmentData(_ file: FileReference) throws -> Data {
         if let url = file.url {
+            if EmbeddedFileShelf.isShelved(url) {
+                guard let shelved = EmbeddedFileShelf.shared.bytes(of: url) else {
+                    throw AgentError.unsupported("attachment no longer on this device")
+                }
+                return shelved
+            }
             if let decoded = dataURLBytes(url) { return decoded }
             if url.hasPrefix("file://") {
                 let path = String(url.dropFirst("file://".count))
@@ -58,15 +65,7 @@ enum OpenCodeCommon {
     }
 
     static func dataURLBytes(_ url: String) -> Data? {
-        guard url.hasPrefix("data:") else { return nil }
-        guard let comma = url.firstIndex(of: ",") else { return nil }
-        let header = url[url.index(url.startIndex, offsetBy: 5)..<comma]
-        let payload = String(url[url.index(after: comma)...])
-        if header.hasSuffix(";base64") {
-            let cleaned = (payload.removingPercentEncoding ?? payload).filter { !$0.isWhitespace }
-            return Data(base64Encoded: cleaned)
-        }
-        return Data((payload.removingPercentEncoding ?? payload).utf8)
+        EmbeddedFileShelf.dataURLBytes(url)
     }
 
     /// The menu wants ascending effort. Known effort names sort by rank, anything else lands

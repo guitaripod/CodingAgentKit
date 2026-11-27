@@ -246,7 +246,7 @@ struct OC2ToolState: Decodable, Sendable {
 struct OC2ToolContent: Decodable, Sendable {
     let type: String
     let text: String?
-    let uri: String?
+    @ShelvedURL var uri: String?
     let mime: String?
     let name: String?
 }
@@ -260,10 +260,54 @@ struct OC2FileAttachment: Encodable, Sendable {
 /// A file as a stored or queued prompt holds it: the bytes inline, whatever uri they came from
 /// recorded as their source.
 struct OC2PromptFile: Decodable, Sendable {
-    let data: String?
+    /// Where the bytes can be read back: the shelf's reference to them, since they travel with
+    /// the message, or nil when the server kept none.
+    let embedded: String?
     let mime: String?
     let name: String?
     let source: OC2PromptFileSource?
+
+    private enum CodingKeys: String, CodingKey {
+        case data, mime, name, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mime = try container.decodeIfPresent(String.self, forKey: .mime)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        source = try container.decodeIfPresent(OC2PromptFileSource.self, forKey: .source)
+        if let data = try container.decodeIfPresent(String.self, forKey: .data), !data.isEmpty {
+            embedded = EmbeddedFileShelf.shared.shelved(
+                "data:\(mime ?? "application/octet-stream");base64,\(data)")
+        } else {
+            embedded = nil
+        }
+    }
+}
+
+/// A URL as it is read off the wire: a `data:` URL's bytes go to the shelf while the page that
+/// carried them is still being decoded, so a transcript's pictures are never all held as text at
+/// once. Walking a long chat page by page and mapping it afterwards held every picture in it,
+/// which took a phone opening one two hundred megabytes over what it kept.
+@propertyWrapper
+struct ShelvedURL: Decodable, Sendable {
+    var wrappedValue: String?
+
+    init(wrappedValue: String?) {
+        self.wrappedValue = wrappedValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        wrappedValue =
+            container.decodeNil() ? nil : EmbeddedFileShelf.shared.shelved(try container.decode(String.self))
+    }
+}
+
+extension KeyedDecodingContainer {
+    func decode(_ type: ShelvedURL.Type, forKey key: Key) throws -> ShelvedURL {
+        try decodeIfPresent(type, forKey: key) ?? ShelvedURL(wrappedValue: nil)
+    }
 }
 
 struct OC2PromptFileSource: Decodable, Sendable {

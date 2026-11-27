@@ -122,7 +122,7 @@ struct OCPart: Decodable, Sendable {
     let tool: String?
     let state: OCToolState?
     let mime: String?
-    let url: String?
+    @ShelvedURL var url: String?
     let filename: String?
     /// opencode's compaction marker: `auto` says whether the machine compacted on its own, and
     /// `tail_start_id` appears once the summary's start point has been chosen. The marker carries

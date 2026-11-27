@@ -8,6 +8,30 @@ import Testing
     private static let empty = TranscriptSnapshot(messages: [])
     private static let megabyte = 1_048_576
 
+    @Test func aCopyNobodyAsksAboutIsLetGo() {
+        nonisolated(unsafe) var now = Date(timeIntervalSince1970: 1000)
+        let held = BridgeTranscripts(clock: { now })
+        held.hold("closed", etag: "e", snapshot: Self.empty, bytes: Self.megabyte)
+        held.hold("open", etag: "e", snapshot: Self.empty, bytes: Self.megabyte)
+        now += BridgeTranscripts.idleLife - 1
+        #expect(held.held("open") != nil)
+        now += 2
+        #expect(held.held("closed") == nil)
+        #expect(held.heldIDs == ["open"])
+        #expect(held.totalBytes == Self.megabyte)
+    }
+
+    @Test func everythingIsLetGoWhenAsked() {
+        let held = BridgeTranscripts()
+        held.hold("a", etag: "e", snapshot: Self.empty, bytes: Self.megabyte)
+        held.holdList(etag: "l", sessions: [])
+        held.releaseAll()
+        #expect(held.heldIDs.isEmpty)
+        #expect(held.totalBytes == 0)
+        #expect(held.heldList == nil)
+        #expect(held.held("a") == nil)
+    }
+
     @Test func holdsAtMostTheCountWhateverTheirSize() {
         let held = BridgeTranscripts()
         for index in 0..<(BridgeTranscripts.capacity + 5) {

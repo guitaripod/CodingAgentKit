@@ -23,10 +23,21 @@ final class BridgeTranscripts: @unchecked Sendable {
     /// read last is always kept, however large, because it is the one the next read asks about.
     static let byteBudget = 64 * 1_048_576
 
+    /// How long a copy nobody has asked about is kept. A conversation somebody is looking at asks
+    /// every few seconds; one that was closed never asks again, and its copy was megabytes held
+    /// for as long as the process lived on every server it had ever read from.
+    static let idleLife: TimeInterval = 600
+
     private let lock = NSLock()
+    private let clock: @Sendable () -> Date
     private var held: [String: Held] = [:]
+    private var asked: [String: Date] = [:]
     private var order: [String] = []
     private var heldBytes = 0
+
+    init(clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.clock = clock
+    }
     private var list: (etag: String, sessions: [AgentSession])?
 
     /// The session list as last read, with its validator. A list is re-read on every stream
@@ -39,7 +50,12 @@ final class BridgeTranscripts: @unchecked Sendable {
     }
 
     func held(_ sessionID: String) -> Held? {
-        lock.withLock { held[sessionID] }
+        lock.withLock {
+            sweep()
+            guard let copy = held[sessionID] else { return nil }
+            asked[sessionID] = clock()
+            return copy
+        }
     }
 
     func hold(_ sessionID: String, etag: String?, snapshot: TranscriptSnapshot, bytes: Int = 0) {
@@ -47,8 +63,10 @@ final class BridgeTranscripts: @unchecked Sendable {
             drop(sessionID)
             guard let etag else { return }
             held[sessionID] = Held(etag: etag, snapshot: snapshot, bytes: bytes)
+            asked[sessionID] = clock()
             heldBytes += bytes
             order.append(sessionID)
+            sweep()
             while order.count > Self.capacity || (heldBytes > Self.byteBudget && order.count > 1) {
                 drop(order[0])
             }
@@ -63,7 +81,27 @@ final class BridgeTranscripts: @unchecked Sendable {
 
     var heldIDs: [String] { lock.withLock { order } }
 
+    /// Lets go of every copy and the list, for a process the system has asked for memory back.
+    /// The next read of each is simply answered in full.
+    func releaseAll() {
+        lock.withLock {
+            held = [:]
+            asked = [:]
+            order = []
+            heldBytes = 0
+            list = nil
+        }
+    }
+
+    /// Drops the copies nobody has asked about within ``idleLife``. Called with the lock held, on
+    /// the reads and writes that happen anyway, so nothing here needs a clock of its own.
+    private func sweep() {
+        let now = clock()
+        for id in order where now.timeIntervalSince(asked[id] ?? now) > Self.idleLife { drop(id) }
+    }
+
     private func drop(_ sessionID: String) {
+        asked[sessionID] = nil
         order.removeAll { $0 == sessionID }
         if let removed = held.removeValue(forKey: sessionID) { heldBytes -= removed.bytes }
     }
@@ -84,5 +122,19 @@ enum BridgeTranscriptRegistry {
             caches[key] = created
             return created
         }
+    }
+
+    static func releaseAll() {
+        let all = lock.withLock { Array(caches.values) }
+        for cache in all { cache.releaseAll() }
+    }
+}
+
+/// The transcripts and lists this process keeps to be answered "unchanged" by a bridge. A client
+/// that has been asked for memory back lets go of them here; nothing is lost but the saving, since
+/// the next read of each is answered in full.
+public enum HeldTranscripts {
+    public static func release() {
+        BridgeTranscriptRegistry.releaseAll()
     }
 }

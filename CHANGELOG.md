@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.71.0
+
+A chat full of screenshots costs a device what it shows, not what it carries.
+
+### Added
+- **`EmbeddedFileShelf`**: opencode hands a picture a tool read back as a `data:` URL inside the part that names it, and a transcript with a dozen screenshots held tens of megabytes of base64 as strings for as long as the chat was open. The bytes go to a shelf under the caches folder while the page that carried them is decoded (`ShelvedURL` on opencode 2's tool content and 1.x's file parts, a prompt's inline files the same) and the part keeps a short `embedded:` reference that `attachmentData` reads back. A file nothing asked for in a month is cleared, and the oldest past a gigabyte.
+- **`HeldTranscripts.release()`**: a bridge's held transcripts and lists, kept to be answered "unchanged", are let go when a client is asked for memory back, and a copy nobody has asked about in ten minutes is dropped on the next read; they were held per server for the life of the process.
+- **`HTTPClient.sendLarge`**: on Apple platforms a transcript page is received into a file and read mapped. A 57 MB page gathered in memory by `URLSession` held an iPhone XS at 362 MB at the moment it arrived; received to a file, opening that chat peaks at 50-54 MB, and an iPad Pro at 142 MB where it was 277-366.
+
 ## 0.70.0
 
 A named video plays on any device, and a server knows what the app shows.
