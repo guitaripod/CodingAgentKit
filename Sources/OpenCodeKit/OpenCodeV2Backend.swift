@@ -195,23 +195,27 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
         try await transcript(for: sessionID).messages
     }
 
+    /// The session record, its inbox and the server's running set go out beside the messages
+    /// rather than after them: asked in turn, a chat opened over a phone's network waited one
+    /// round trip more than it had to, and a cut-off turn read the inbox a second time.
     public func transcript(for sessionID: String) async throws -> TranscriptSnapshot {
         async let record = try? client.session(sessionID)
         async let inbox = try? client.inbox(sessionID: sessionID)
+        async let running = liveness()
         let records = try await client.messages(sessionID: sessionID)
         await compactions.record(OpenCodeV2Mapping.compactionInFlight(records), for: sessionID)
-        let running = await liveness()
         let session = await record
-        let isRunning = running.map { $0.contains(sessionID) }
+        let waiting = await inbox
+        let isRunning = await running.map { $0.contains(sessionID) }
         let cutOff = await settled(
-            Self.cutOff(records, session: session, running: isRunning), sessionID)
+            Self.cutOff(records, session: session, running: isRunning), sessionID, waiting: waiting)
         if isRunning != nil { await cutOffs.record(cutOff, for: sessionID) }
         return TranscriptSnapshot(
             messages: OpenCodeV2Mapping.transcript(records),
             status: isRunning.map { $0 ? .running : .idle },
             retry: isRunning == true ? OpenCodeV2Mapping.pendingRetry(records) : nil,
             revert: session?.revert.map(OpenCodeV2Mapping.revert),
-            queue: await inbox.map(OpenCodeV2Mapping.queue),
+            queue: waiting.map(OpenCodeV2Mapping.queue),
             sidecar: isRunning == nil ? nil : TranscriptSidecar(interruption: cutOff))
     }
 
@@ -261,9 +265,13 @@ public struct OpenCodeV2Backend: OpenCodeGeneration {
     /// A cut-off turn somebody already let go is not an offer any more. The line saying so waits in
     /// the session's inbox until the next turn delivers it, so the inbox is asked, though only when
     /// the records say a turn was cut off, which is rare, rather than on every read.
-    private func settled(_ turn: TurnInterruption?, _ sessionID: String) async -> TurnInterruption? {
+    private func settled(
+        _ turn: TurnInterruption?, _ sessionID: String, waiting read: [OC2InboxItem]? = nil
+    ) async -> TurnInterruption? {
         guard let turn else { return nil }
-        guard let waiting = try? await client.inbox(sessionID: sessionID) else { return turn }
+        let inbox: [OC2InboxItem]?
+        if let read { inbox = read } else { inbox = try? await client.inbox(sessionID: sessionID) }
+        guard let waiting = inbox else { return turn }
         return waiting.contains(where: OpenCodeV2Mapping.isDismissal) ? nil : turn
     }
 
