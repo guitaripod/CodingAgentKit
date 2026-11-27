@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.68.0
+
+opencode 2 costs a phone less.
+
+### Changed
+- **opencode 2 events are passed over before they are decoded**: one connection carries every session's tokens, so a conversation's stream skips an event that does not name its session, and the session listing skips every event type it does not act on, by a byte search (`SSEvent.mentions`) before any JSON is read. On an iPhone XS the listing alone had been decoding about a second of every thirty-five while another session streamed.
+- **`JSONValue` decodes in the order payloads hold their kinds** (strings, objects, arrays, numbers, booleans), so a string no longer pays for three thrown errors. The decoder is strict about kinds, so values are unchanged.
+- **An opencode 2 transcript reads its status beside its messages**: the running set, the record and the inbox go out with the first page, and a cut-off turn reuses the inbox it already read.
+
 ## 0.67.0
 
 A workflow's agents sit on its card on opencode.
