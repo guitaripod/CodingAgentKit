@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.72.0
+
+An agent that signs in its own way says its key is the other way in.
+
+### Added
+- **`MachineAgent.Key.alternative`**: claude-bridge 1.41 marks a key this way for an agent whose own sign-in is the usual way in (Antigravity: a Google account first, a Gemini API key as the other way), so a client offers the key beside the sign-in instead of as a step every setup takes. Absent from older bridges and for every other agent.
+
+### Changed
+- The mock machine's sign-in leaves an agent that offered no model with its default one, as a key or an install already did, so a demo agent signed in from its card has a model to pick.
+
 ## 0.71.0
 
 A chat full of screenshots costs a device what it shows, not what it carries.

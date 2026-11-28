@@ -19,6 +19,26 @@ import Testing
         {"agents": [{"version": "0.19.0", "brain": {"model": "nemotron-3.5-bolt-74b-a9b-24gb-abliterated-gguf", "kind": "local", "name": "llama-swap", "baseURL": "http://127.0.0.1:8081/v1"}, "source": "available", "distribution": "uvx", "website": "https://hermes-agent.nousresearch.com", "brainStyle": "hermes", "state": "ready", "currentModel": "custom:nemotron-3.5-bolt-74b-a9b-24gb-abliterated-gguf", "signIn": [{"kind": "agent", "id": "custom", "name": "custom runtime credentials"}, {"kind": "terminal", "id": "hermes-setup", "name": "Configure Hermes provider"}], "id": "hermes", "name": "Hermes", "efforts": [], "keys": [], "models": [{"id": "custom:flint", "name": "Flint", "description": "Provider: Custom endpoint"}, {"id": "custom:groot-19b-a3b-nvfp4", "name": "Groot"}], "added": true, "checkedAt": "2026-11-02T19:01:25Z"}, {"source": "found", "distribution": "download", "state": "notAdded", "signIn": [], "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/opencode.svg", "id": "opencode", "name": "OpenCode", "efforts": [], "models": [], "added": false, "keys": []}, {"id": "future", "name": "Future", "source": "found", "added": true, "state": "somethingNew"}], "brains": [{"id": "llama-swap", "name": "llama-swap", "models": [{"id": "flint", "name": "Flint"}], "baseURL": "http://127.0.0.1:8081/v1"}]}
         """
 
+    /// Antigravity as claude-bridge 1.41 lists it on a machine where it is signed out.
+    private static let antigravity = """
+        {"agents":[{"name":"Antigravity","distribution":"download","checkedAt":"2026-11-28T05:18:30Z","description":"Google's coding agent on Gemini, with your Google AI plan or a Gemini API key.","source":"found","website":"https://antigravity.google","id":"antigravity-acp","icon":"https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg","state":"needsSignIn","models":[],"keys":[{"name":"Gemini API key","url":"https://aistudio.google.com/apikey","alternative":true,"env":"GEMINI_API_KEY","set":false}],"added":true,"signIn":[{"name":"Log in with Google","kind":"agent","description":"Log in with your Google account","id":"oauth-personal"},{"name":"Log in with Gemini Enterprise","kind":"agent","description":"Log in with your Gemini Enterprise account","id":"oauth-business"},{"name":"Gemini API key","kind":"agent","description":"Use an API key with Gemini Developer API","id":"gemini-api-key"},{"name":"Gemini Enterprise Agent Platform","kind":"agent","description":"Use Gemini Enterprise Agent Platform (formerly Vertex AI) with Application Default Credentials","id":"agent-platform"},{"name":"Log in from the terminal","kind":"terminal","description":"Log in with your Google account by pasting a code in a terminal; works over SSH","id":"terminal-login"}],"failure":"Authentication required","version":"1.5.18","efforts":[]}],"brains":[]}
+        """
+
+    @Test func anAgentSignedInItsOwnWayOffersItsKeyAsAnotherWay() throws {
+        let report = try decode(MachineAgentsReport.self, Self.antigravity)
+        let agent = try #require(report.agents.first)
+        #expect(agent.state == .needsSignIn)
+        #expect(agent.keys.map(\.env) == ["GEMINI_API_KEY"])
+        #expect(agent.keys.first?.alternative == true)
+        #expect(agent.signIn.last?.kind == "terminal")
+        #expect(agent.signIn.last?.id == "terminal-login")
+        let hermes = try #require(try decode(MachineAgentsReport.self, Self.agents).agents.first)
+        #expect(hermes.keys.allSatisfy { $0.alternative == nil })
+        let named = BridgeModelName.split("antigravity-acp/gemini-4-neon", agentType: .claudeCode)
+        #expect(named.providerID == "antigravity-acp")
+        #expect(named.modelID == "gemini-4-neon")
+    }
+
     @Test func schedulesDecodeAsTheBridgeWritesThem() throws {
         let decoded = try decode([MachineSchedule].self, Self.schedules)
         let schedule = try #require(decoded.first)

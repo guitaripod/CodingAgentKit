@@ -156,6 +156,7 @@ extension MockBackend: MachineAgentHosting {
         _ = try? settle(id) { agent in
             agent.state = .ready
             agent.added = true
+            if agent.models.isEmpty { agent.models = [MachineAgent.Choice(id: "default", name: agent.name)] }
         }
     }
 

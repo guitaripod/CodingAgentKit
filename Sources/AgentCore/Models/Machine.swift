@@ -261,12 +261,16 @@ public struct MachineAgent: Codable, Sendable, Hashable, Identifiable {
         public var name: String
         public var url: String?
         public var set: Bool
+        /// True when the agent's own sign-in is the usual way in and this key is another way, so
+        /// a client offers it beside the sign-in rather than as a step every setup takes.
+        public var alternative: Bool?
 
-        public init(env: String, name: String, url: String? = nil, set: Bool) {
+        public init(env: String, name: String, url: String? = nil, set: Bool, alternative: Bool? = nil) {
             self.env = env
             self.name = name
             self.url = url
             self.set = set
+            self.alternative = alternative
         }
     }
 
